@@ -36,3 +36,4 @@ starroom-ai-denoise = { path = "../crates/starroom-ai-denoise" }
 starroom-reference = { path = "../crates/starroom-reference" }
 starroom-look = { path = "../crates/starroom-look" }
 starroom-library = { path = "../crates/starroom-library" }
+starroom-history = { path = "../crates/starroom-history" }

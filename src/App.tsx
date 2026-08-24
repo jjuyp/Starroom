@@ -23,6 +23,8 @@ import {
   addNativeLibraryKeywords, chooseNativeLibraryFolder, importNativeLibraryFolder, nativeLibraryThumbnail,
   openNativeLibrary, queryNativeLibrary, updateNativeLibraryWorkflow,
   type NativeLibraryAsset, type NativeAssetFlag, type NativeColorLabel,
+  commitNativeHistory, createNativeSnapshot, openNativeHistory, redoNativeHistory, restoreNativeSnapshot, undoNativeHistory,
+  type NativeHistoryResult,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -447,6 +449,14 @@ const libraryPhoto = (asset: NativeLibraryAsset, thumbnail: string): PhotoItem =
   history: [],
   future: [],
 })
+
+const applyNativeHistoryState = (photo: PhotoItem, state: NativeEditSettings): PhotoItem => {
+  const mapped = fromNativeSettings(photo.adjustments, state)
+  return { ...photo, adjustments: mapped.adjustments, curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
+    whiteBalanceMode: state.whiteBalanceMode, whiteBalanceSample: state.whiteBalanceSample,
+    opticsState: { matchMode: state.optics.matchMode, manualIdentity: state.optics.manualIdentity },
+    layers: state.layers, skinRetouch: state.skinRetouch, healingOperations: state.healingOperations }
+}
 
 function CurveChannelTabs({ value, onChange }: { value: keyof NativeToneCurves; onChange: (value: keyof NativeToneCurves) => void }) {
   return <div className="curve-tabs" aria-label="Tone curve channel">{(['master', 'red', 'green', 'blue'] as const).map((channel) => <button key={channel}
@@ -873,6 +883,12 @@ export function App() {
   const [librarySearch, setLibrarySearch] = useState('')
   const [libraryBusy, setLibraryBusy] = useState(false)
   const libraryAnchor = useRef<number | null>(null)
+  const [nativeHistory, setNativeHistory] = useState<NativeHistoryResult | null>(null)
+  const [snapshotName, setSnapshotName] = useState('Version 1')
+  const openedHistoryAsset = useRef<number | null>(null)
+  const pendingNativeBefore = useRef<NativeEditSettings | null>(null)
+  const nativeHistoryTimer = useRef<number | null>(null)
+  const applyingNativeHistory = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -924,6 +940,37 @@ export function App() {
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
+  const nativeHistoryState = useMemo(() => toNativeSettings(
+    selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
+    selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
+    selected.skinRetouch, selected.healingOperations,
+  ), [selected])
+
+  useEffect(() => {
+    const assetId = selected.libraryAsset?.id
+    if (!assetId || openedHistoryAsset.current === assetId) return
+    openedHistoryAsset.current = assetId
+    void openNativeHistory(assetId, nativeHistoryState).then((result) => {
+      applyingNativeHistory.current = true
+      setNativeHistory(result)
+      setPhotos((current) => current.map((photo) => photo.libraryAsset?.id === assetId ? applyNativeHistoryState(photo, result.state) : photo))
+      window.setTimeout(() => { applyingNativeHistory.current = false }, 0)
+    }).catch((error) => setNotice(error instanceof Error ? error.message : 'History open failed'))
+  }, [selected, nativeHistoryState])
+
+  useEffect(() => {
+    const assetId = selected.libraryAsset?.id
+    const before = pendingNativeBefore.current
+    if (!assetId || !before || applyingNativeHistory.current) return
+    if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current)
+    nativeHistoryTimer.current = window.setTimeout(() => {
+      pendingNativeBefore.current = null
+      if (JSON.stringify(before) === JSON.stringify(nativeHistoryState)) return
+      void commitNativeHistory(assetId, 'Edit interaction', 'sharedGraph', before, nativeHistoryState)
+        .then(setNativeHistory).catch((error) => setNotice(error instanceof Error ? error.message : 'History commit failed'))
+    }, 220)
+    return () => { if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current) }
+  }, [nativeHistoryState, selected.libraryAsset?.id])
   const activeLayer = selected.layers.find((layer) => layer.id === selectedLayerId)
   const activeLayerIsBrush = Boolean(activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'brush')
   const filteredPhotos = useMemo(() => photos.filter((photo) => {
@@ -1062,7 +1109,16 @@ export function App() {
   }
 
   function updateSelected(mutator: (photo: PhotoItem) => PhotoItem) {
-    setPhotos((current) => current.map((photo) => photo.id === selected.id ? mutator(photo) : photo))
+    setPhotos((current) => current.map((photo) => {
+      if (photo.id !== selected.id) return photo
+      const next = mutator(photo)
+      if (photo.libraryAsset && next.history.length > photo.history.length && !pendingNativeBefore.current) {
+        pendingNativeBefore.current = toNativeSettings(photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
+          photo.whiteBalanceSample, photo.curveChannels, photo.opticsState, photo.layers, photo.mask,
+          photo.skinRetouch, photo.healingOperations)
+      }
+      return next
+    }))
   }
 
   function removePhoto(id: string) {
@@ -1570,7 +1626,19 @@ export function App() {
     adjust(key, defaultAdjustments[key])
   }
 
+  function applyHistoryResult(result: NativeHistoryResult) {
+    applyingNativeHistory.current = true
+    pendingNativeBefore.current = null
+    setNativeHistory(result)
+    updateSelected((photo) => applyNativeHistoryState(photo, result.state))
+    window.setTimeout(() => { applyingNativeHistory.current = false }, 0)
+  }
+
   function undo() {
+    if (selected.libraryAsset) {
+      void undoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(error instanceof Error ? error.message : 'Undo failed'))
+      return
+    }
     updateSelected((photo) => {
       const previous = photo.history.at(-1)
       if (!previous) return photo
@@ -1579,11 +1647,27 @@ export function App() {
   }
 
   function redo() {
+    if (selected.libraryAsset) {
+      void redoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(error instanceof Error ? error.message : 'Redo failed'))
+      return
+    }
     updateSelected((photo) => {
       const next = photo.future[0]
       if (!next) return photo
       return { ...applySnapshot(photo, next), history: [...photo.history, takeSnapshot(photo)], future: photo.future.slice(1) }
     })
+  }
+
+  function createSnapshot() {
+    if (!selected.libraryAsset) return
+    void createNativeSnapshot(selected.libraryAsset.id, snapshotName).then((result) => { setNativeHistory(result); setSnapshotName(`Version ${result.snapshots.length + 1}`) })
+      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot creation failed'))
+  }
+
+  function restoreSnapshot(snapshotId: string) {
+    if (!selected.libraryAsset) return
+    void restoreNativeSnapshot(selected.libraryAsset.id, snapshotId).then(applyHistoryResult)
+      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot restore failed'))
   }
 
   function toggleRating() {
@@ -1633,7 +1717,8 @@ export function App() {
 
   return <main className={`app theme-${theme}`} data-theme={theme}>
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
-      canUndo={selected.history.length > 0} canRedo={selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} />
+      canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
+      canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} />
     <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
       <aside className="library-panel">
         <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
@@ -1855,6 +1940,12 @@ export function App() {
           <label>Look B weight <input aria-label="Look B weight" type="number" min="0" max="100" value={lookBWeight}
             onChange={(event) => setLookBWeight(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
         </section>
+        {view !== 'library' && selected.libraryAsset && <section className="history-panel" aria-label="Edit history and snapshots">
+          <div className="layer-stack-head"><strong>History / Snapshots</strong><small>{nativeHistory?.stateVersion.slice(0, 8) ?? 'opening'}</small></div>
+          <div className="snapshot-create"><input aria-label="Snapshot name" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} /><button onClick={createSnapshot}>Save snapshot</button></div>
+          <div className="history-list">{nativeHistory?.snapshots.map((snapshot) => <button key={snapshot.id} onClick={() => restoreSnapshot(snapshot.id)}><strong>{snapshot.name}</strong><small>Restore as undoable edit</small></button>)}</div>
+          <div className="history-list">{nativeHistory?.entries.slice(-8).reverse().map((entry) => <div key={entry.sequence}><span>{entry.sequence}</span><strong>{entry.description}</strong><small>{entry.affectedStage}</small></div>)}</div>
+        </section>}
         <div className="tool-layout">
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
             className={tool === id ? 'active' : ''} aria-label={label}

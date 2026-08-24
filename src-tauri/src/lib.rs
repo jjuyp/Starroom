@@ -14,6 +14,7 @@ use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameter
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
 use starroom_heal::HealingOperation;
+use starroom_history::{EditCommand, EditHistory, HistoryEntry, NamedSnapshot};
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
 };
@@ -74,6 +75,7 @@ struct EngineCapabilities {
     reference_match: bool,
     portable_looks: bool,
     local_library: bool,
+    persistent_history: bool,
 }
 
 #[tauri::command]
@@ -100,6 +102,7 @@ fn engine_capabilities() -> EngineCapabilities {
         reference_match: true,
         portable_looks: true,
         local_library: true,
+        persistent_history: true,
     }
 }
 
@@ -269,6 +272,179 @@ async fn library_thumbnail(
     })
     .await
     .map_err(|error| format!("ThumbnailFailed: worker failed: {error}"))?
+}
+
+#[derive(Default)]
+struct NativeHistoryRuntime(Mutex<BTreeMap<i64, EditHistory>>);
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeHistoryResult {
+    state: serde_json::Value,
+    can_undo: bool,
+    can_redo: bool,
+    entries: Vec<HistoryEntry>,
+    snapshots: Vec<NamedSnapshot>,
+    state_version: String,
+}
+
+fn history_path(asset_id: i64) -> Result<PathBuf, String> {
+    let root = default_library_path()?
+        .parent()
+        .ok_or_else(|| "HistoryPersistenceFailed: invalid app data directory".to_owned())?
+        .join("history");
+    Ok(root.join(format!("asset-{asset_id}.history.json")))
+}
+
+fn history_result(history: &EditHistory) -> NativeHistoryResult {
+    NativeHistoryResult {
+        state: history.state().clone(),
+        can_undo: history.can_undo(),
+        can_redo: history.can_redo(),
+        entries: history.entries().to_vec(),
+        snapshots: history.snapshots().to_vec(),
+        state_version: history.state_version().0,
+    }
+}
+
+fn persist_history(asset_id: i64, history: &EditHistory) -> Result<(), String> {
+    history
+        .persist(history_path(asset_id)?)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn history_open(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    initial_state: serde_json::Value,
+) -> Result<NativeHistoryResult, String> {
+    let path = history_path(asset_id)?;
+    let history = if path.is_file() {
+        EditHistory::load(&path)
+    } else {
+        EditHistory::new(initial_state)
+    }
+    .map_err(|error| error.to_string())?;
+    let result = history_result(&history);
+    runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?
+        .insert(asset_id, history);
+    Ok(result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryCommitRequest {
+    asset_id: i64,
+    description: String,
+    affected_stage: String,
+    before: serde_json::Value,
+    after: serde_json::Value,
+}
+
+#[tauri::command]
+fn history_commit(
+    runtime: State<'_, NativeHistoryRuntime>,
+    request: HistoryCommitRequest,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&request.asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    if history.state() != &request.before {
+        return Err("InvalidHistoryEntry: before state does not match active history".into());
+    }
+    history
+        .commit(
+            request.description,
+            request.affected_stage,
+            EditCommand::ReplaceState {
+                before: request.before,
+                after: request.after,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    persist_history(request.asset_id, history)?;
+    Ok(history_result(history))
+}
+
+fn history_step(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    undo: bool,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    if undo { history.undo() } else { history.redo() }.map_err(|error| error.to_string())?;
+    persist_history(asset_id, history)?;
+    Ok(history_result(history))
+}
+
+#[tauri::command]
+fn history_undo(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+) -> Result<NativeHistoryResult, String> {
+    history_step(runtime, asset_id, true)
+}
+
+#[tauri::command]
+fn history_redo(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+) -> Result<NativeHistoryResult, String> {
+    history_step(runtime, asset_id, false)
+}
+
+#[tauri::command]
+fn history_snapshot_create(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    name: String,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    history
+        .create_snapshot(name)
+        .map_err(|error| error.to_string())?;
+    persist_history(asset_id, history)?;
+    Ok(history_result(history))
+}
+
+#[tauri::command]
+fn history_snapshot_restore(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    snapshot_id: String,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    history
+        .restore_snapshot(&snapshot_id)
+        .map_err(|error| error.to_string())?;
+    persist_history(asset_id, history)?;
+    Ok(history_result(history))
 }
 
 #[derive(Debug, Serialize)]
@@ -2059,6 +2235,7 @@ pub fn run() {
         .manage(NativeAiMaskRuntime::default())
         .manage(NativeAiDenoiseRuntime::default())
         .manage(NativeLibraryRuntime::default())
+        .manage(NativeHistoryRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
@@ -2086,7 +2263,13 @@ pub fn run() {
             library_query,
             library_set_workflow,
             library_add_keywords,
-            library_thumbnail
+            library_thumbnail,
+            history_open,
+            history_commit,
+            history_undo,
+            history_redo,
+            history_snapshot_create,
+            history_snapshot_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");

@@ -24,6 +24,9 @@ export interface NativeLibraryQuery {
   missing?: boolean | null; sort?: 'captureTime' | 'importTime' | 'filename' | 'rating'
   direction?: 'ascending' | 'descending'; limit?: number; offset?: number
 }
+export interface NativeHistoryEntry { sequence: number; timestamp: number; description: string; affectedStage: string; version: string }
+export interface NativeNamedSnapshot { id: string; name: string; createdAt: number; stateVersion: string; state: NativeEditSettings }
+export interface NativeHistoryResult { state: NativeEditSettings; canUndo: boolean; canRedo: boolean; entries: NativeHistoryEntry[]; snapshots: NativeNamedSnapshot[]; stateVersion: string }
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
@@ -468,6 +471,19 @@ export async function nativeLibraryThumbnail(assetId: number, size: 'small256' |
   const path = await invoke<string>('library_thumbnail', { assetId, size })
   return convertFileSrc(path)
 }
+
+export async function openNativeHistory(assetId: number, initialState: NativeEditSettings) {
+  return invoke<NativeHistoryResult>('history_open', { assetId, initialState })
+}
+
+export async function commitNativeHistory(assetId: number, description: string, affectedStage: string, before: NativeEditSettings, after: NativeEditSettings) {
+  return invoke<NativeHistoryResult>('history_commit', { request: { assetId, description, affectedStage, before, after } })
+}
+
+export async function undoNativeHistory(assetId: number) { return invoke<NativeHistoryResult>('history_undo', { assetId }) }
+export async function redoNativeHistory(assetId: number) { return invoke<NativeHistoryResult>('history_redo', { assetId }) }
+export async function createNativeSnapshot(assetId: number, name: string) { return invoke<NativeHistoryResult>('history_snapshot_create', { assetId, name }) }
+export async function restoreNativeSnapshot(assetId: number, snapshotId: string) { return invoke<NativeHistoryResult>('history_snapshot_restore', { assetId, snapshotId }) }
 
 export async function exportNativeJpeg(
   sourcePath: string,

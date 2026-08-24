@@ -10,6 +10,11 @@ export const targets = {
     web: ['src/nativeRender.test.ts'],
     golden: [],
   },
+  history: {
+    rust: [['test', '--locked', '-p', 'starroom-history']],
+    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts'],
+    golden: [],
+  },
   color: {
     rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
     web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],
