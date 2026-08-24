@@ -476,7 +476,7 @@ mod tests {
             9,
             1,
             (0..9)
-                .flat_map(|index| {
+                .flat_map(|index: usize| {
                     let base = if index < 4 { 0.12 } else { 0.62 };
                     let noise = if index.is_multiple_of(2) {
                         0.025

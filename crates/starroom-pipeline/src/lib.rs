@@ -2072,7 +2072,7 @@ mod tests {
             height: 3,
             format: RenderedFormat::Png,
             rgba: (0..15)
-                .flat_map(|index| {
+                .flat_map(|index: usize| {
                     let edge = if index % 5 < 2 { 0.12 } else { 0.68 };
                     let noise = if index.is_multiple_of(2) {
                         0.025
