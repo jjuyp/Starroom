@@ -50,7 +50,9 @@ math, cloud catalog, telemetry or database raster storage was added.
 
 - M24 acceptance commit: `d867018`; dependency-corrected acceptance is included in `a6c82d2`.
 - M25 acceptance commit: `a6c82d2`; push and PR workflow runs `32746036320` and `32746029652` passed.
-- M26 acceptance and final Level 3 run IDs are recorded after the final `[full-acceptance]` push.
+- M26 acceptance commit: `38dd905`; push and PR workflow runs `32746978693` and `32746984258`
+  passed. Final Level 3 evidence is the successful GitHub Actions `Blueprint Check` attached to the
+  branch's final `[full-acceptance]` HEAD, so this document does not retain a stale pre-fix run ID.
 - The final `[full-acceptance]` commit runs warning-denied workspace Clippy, rustfmt, every Rust
   test, all frontend tests/lint/build, JSON/schema, Golden/RAW manifests and packaging validation.
 - Cross-milestone regression binds Library identity/project state to persistent history/snapshots and
