@@ -663,16 +663,15 @@ impl Library {
             return Err(LibraryError::InvalidCollection(collection_id));
         }
         let transaction = self.connection.transaction().map_err(sql_error)?;
-        let mut position: i64 = transaction
+        let start_position: i64 = transaction
             .query_row(
                 "SELECT COALESCE(MAX(position)+1,0) FROM collection_assets WHERE collection_id=?",
                 [collection_id],
                 |row| row.get(0),
             )
             .map_err(sql_error)?;
-        for asset_id in asset_ids {
+        for (position, asset_id) in (start_position..).zip(asset_ids) {
             transaction.execute("INSERT OR IGNORE INTO collection_assets(collection_id,asset_id,position) VALUES(?,?,?)", params![collection_id,asset_id,position]).map_err(sql_error)?;
-            position += 1;
         }
         transaction.commit().map_err(sql_error)
     }
