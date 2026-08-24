@@ -55,6 +55,8 @@ The authoritative resolved versions are in `Cargo.lock`. “Direct” means decl
 | `sha2` | SHA-256 fingerprint of the exact resolved camera-profile ID/version/matrix policy persisted in projects and reported by Native export | resolved by `Cargo.lock` (0.10 series) | MIT OR Apache-2.0 | No | Yes | Retain the selected permissive notice; profile fingerprints are reproducibility identifiers, not security signatures. |
 | `quick-xml` | Streaming parser for the embedded, pinned Lensfun XML database | 0.41.0 | MIT | No | Yes | Retain MIT notice; malformed database input is a typed provider error, not a fallback. |
 | `kamadak-exif` | Extract camera/lens/focal/aperture/distance metadata from rendered JPEG/TIFF EXIF for Lensfun matching | 0.6.1 | BSD-2-Clause | No | Yes | Retain BSD-2-Clause notice; missing or invalid EXIF remains an explicit profile status. |
+| `rusqlite` | M24 local-first asset/workflow catalog, typed parameterized queries and migrations | 0.37.0 | MIT | No | Yes | Uses the `bundled` feature for a reproducible SQLite engine; retain rusqlite and SQLite public-domain notices and re-audit compile options on upgrade. |
+| `libsqlite3-sys` / SQLite | FFI and bundled SQLite engine selected by `rusqlite` | 0.35.0 / lockfile-pinned bundled source | MIT wrapper / SQLite public domain | No | Yes | Database files are runtime user data and never shipped in source or release assets; migrations remain Starroom-owned GPL code. |
 
 ## Current desktop transport dependencies
 

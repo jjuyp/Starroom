@@ -1,5 +1,15 @@
 # Complete Internal Build Plan
 
+## M24-M26 local workflow / history / export (accepted 2026-08-24)
+
+- [x] M24: local-first `rusqlite`/SQLite Library with versioned migration, WAL/foreign-key/busy policy, reference imports, fingerprint V1 duplicate/relink rules, existing RAW/image metadata providers and filesystem thumbnail cache.
+- [x] M24: typed parameterized search/filter/sort/paging, workflow enums, normalized keywords, normal/smart collections, missing/relink/project relationship and native Library grid/multi-select/metadata UI.
+- [x] M25: versioned command/state history, deterministic undo/redo, interaction and brush coalescing, redo-branch truncation, periodic checkpoints, crash-safe persistence and cache/state identity.
+- [x] M25: named snapshot lifecycle and undoable restore, full non-destructive state preservation, comparison through the shared Native graph and 5,000-entry replay regression.
+- [x] M26: immutable full-resolution shared Native export for JPEG/PNG/TIFF 8-bit, LittleCMS sRGB/P3/Adobe RGB/Rec.2020 profiles, Lanczos sizing, Screen output sharpen, metadata privacy intent, safe templates/collision and recipe identity.
+- [x] M26: Library batch export, per-item isolation, cancellation, memory preflight, atomic temp/fsync/rename, versioned presets and typed capability/error surface. 16-bit PNG/TIFF and Print sharpening remain explicitly unsupported.
+- [x] M24-M26 cross-integration and final Level 3 acceptance; keep Draft PR #2 unmerged and stop before M27.
+
 ## M21-M23 native intelligence / look batch (accepted 2026-08-20)
 
 - [x] M21: pin local-only NAFNet-SIDD width-32, deterministic static 512/opset20 ONNX export and exact hashes; implement Linear Rec.2020 D65 model-domain V1, 512/64 raised-cosine tiling, visible-first priority, cancellation, typed errors and distinct inference/adjustment cache keys.

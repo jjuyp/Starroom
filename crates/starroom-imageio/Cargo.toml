@@ -11,3 +11,4 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 serde.workspace = true
 starroom-raw = { path = "../starroom-raw" }
 thiserror.workspace = true
+tiff = "=0.11.3"

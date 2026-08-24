@@ -4,7 +4,10 @@ use image::{ImageBuffer, Rgb, imageops};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use starroom_color_management::{BuiltinOutputProfile, LittleCmsProvider};
-use starroom_imageio::{decode_source, encode_jpeg_rgb8, encode_png_rgb8, encode_tiff_rgb8};
+use starroom_imageio::{
+    DecodedSourceImage, decode_source, encode_jpeg_rgb8_with_metadata,
+    encode_png_rgb8_with_metadata, encode_tiff_rgb8_with_metadata,
+};
 use starroom_pipeline::{
     RenderSettings, render_source_export_to_icc8, render_source_export_to_srgb8,
 };
@@ -283,6 +286,7 @@ pub struct RenderedBuffer {
     pub width: u32,
     pub height: u32,
     pub rgb8: Vec<u8>,
+    pub source_exif: Option<Vec<u8>>,
 }
 
 pub trait FullResolutionRenderer {
@@ -309,6 +313,10 @@ impl FullResolutionRenderer for NativeSharedGraphRenderer {
         }
         let decoded = decode_source(source)
             .map_err(|error| ExportError::ProjectInvalid(error.to_string()))?;
+        let source_exif = match &decoded {
+            DecodedSourceImage::Rendered(image) => image.exif.clone(),
+            DecodedSourceImage::Raw(_) => None,
+        };
         let rendered = if color == OutputColorSpace::Srgb {
             render_source_export_to_srgb8(&decoded, settings)
         } else {
@@ -322,6 +330,7 @@ impl FullResolutionRenderer for NativeSharedGraphRenderer {
             width: rendered.width,
             height: rendered.height,
             rgb8: rendered.data,
+            source_exif,
         })
     }
 }
@@ -559,16 +568,22 @@ pub fn export_one<R: FullResolutionRenderer>(
     } else {
         None
     };
+    let exif = export_exif(request, rendered.source_exif.as_deref())?;
     let bytes = match request.settings.format {
-        ExportFormat::Jpeg => encode_jpeg_rgb8(
+        ExportFormat::Jpeg => encode_jpeg_rgb8_with_metadata(
             &rendered.rgb8,
             width,
             height,
             request.settings.quality,
             profile,
+            exif,
         ),
-        ExportFormat::Png => encode_png_rgb8(&rendered.rgb8, width, height, profile),
-        ExportFormat::Tiff => encode_tiff_rgb8(&rendered.rgb8, width, height, profile),
+        ExportFormat::Png => {
+            encode_png_rgb8_with_metadata(&rendered.rgb8, width, height, profile, exif)
+        }
+        ExportFormat::Tiff => {
+            encode_tiff_rgb8_with_metadata(&rendered.rgb8, width, height, profile, exif)
+        }
     }
     .map_err(|error| ExportError::EncodeFailed(error.to_string()))?;
     fs::create_dir_all(&request.destination_directory)
@@ -590,6 +605,92 @@ pub fn export_one<R: FullResolutionRenderer>(
         recipe_identity: export_recipe_identity(request)?,
         error: None,
     })
+}
+
+fn export_exif(
+    request: &ExportRequest,
+    source_exif: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>, ExportError> {
+    match request.settings.metadata {
+        MetadataPolicy::None => Ok(None),
+        MetadataPolicy::AllMetadata if request.settings.include_location => source_exif
+            .map(|value| value.to_vec())
+            .map(Some)
+            .ok_or_else(|| {
+                ExportError::MetadataWriteFailed(
+                    "location was requested but the source has no transferable EXIF".into(),
+                )
+            }),
+        MetadataPolicy::CopyrightOnly => Ok(minimal_exif(
+            None,
+            None,
+            request.settings.copyright.as_deref(),
+        )),
+        MetadataPolicy::CameraMetadata => Ok(minimal_exif(
+            request.camera.as_deref(),
+            request.capture_date.as_deref(),
+            None,
+        )),
+        MetadataPolicy::AllMetadata => Ok(minimal_exif(
+            request.camera.as_deref(),
+            request.capture_date.as_deref(),
+            request.settings.copyright.as_deref(),
+        )),
+    }
+}
+
+/// Creates a small IFD0 EXIF payload containing only explicitly allowed ASCII fields. It has no
+/// GPS IFD pointer, so the default metadata path cannot disclose source location.
+fn minimal_exif(
+    camera: Option<&str>,
+    date: Option<&str>,
+    copyright: Option<&str>,
+) -> Option<Vec<u8>> {
+    let date = date.map(|value| {
+        let normalized = value.replace('-', ":");
+        if normalized.len() == 10 {
+            format!("{normalized} 00:00:00")
+        } else {
+            normalized
+        }
+    });
+    let mut fields = Vec::new();
+    if let Some(value) = camera.filter(|value| !value.trim().is_empty()) {
+        fields.push((0x0110_u16, value.trim().to_owned()));
+    }
+    if let Some(value) = date.as_deref().filter(|value| !value.trim().is_empty()) {
+        fields.push((0x0132_u16, value.trim().to_owned()));
+    }
+    if let Some(value) = copyright.filter(|value| !value.trim().is_empty()) {
+        fields.push((0x8298_u16, value.trim().to_owned()));
+    }
+    if fields.is_empty() {
+        return None;
+    }
+    fields.sort_by_key(|(tag, _)| *tag);
+    let count = u16::try_from(fields.len()).ok()?;
+    let data_start = 8_u32 + 2 + u32::from(count) * 12 + 4;
+    let mut out = vec![b'I', b'I', 42, 0, 8, 0, 0, 0];
+    out.extend_from_slice(&count.to_le_bytes());
+    let mut extra = Vec::new();
+    for (tag, text) in fields {
+        let mut value = text.replace('\0', " ").into_bytes();
+        value.push(0);
+        out.extend_from_slice(&tag.to_le_bytes());
+        out.extend_from_slice(&2_u16.to_le_bytes());
+        out.extend_from_slice(&u32::try_from(value.len()).ok()?.to_le_bytes());
+        if value.len() <= 4 {
+            value.resize(4, 0);
+            out.extend_from_slice(&value);
+        } else {
+            let offset = data_start.checked_add(u32::try_from(extra.len()).ok()?)?;
+            out.extend_from_slice(&offset.to_le_bytes());
+            extra.extend_from_slice(&value);
+        }
+    }
+    out.extend_from_slice(&0_u32.to_le_bytes());
+    out.extend_from_slice(&extra);
+    Some(out)
 }
 
 pub fn export_batch<R: FullResolutionRenderer>(
@@ -790,6 +891,7 @@ mod tests {
                 width: 4,
                 height: 3,
                 rgb8: vec![128; 4 * 3 * 3],
+                source_exif: None,
             })
         }
     }
@@ -955,6 +1057,68 @@ mod tests {
             Err(ExportError::UnsupportedBitDepth(16))
         ));
         assert!(memory_preflight(100_000, 100_000).is_err());
+    }
+
+    #[test]
+    fn quality_endpoints_and_metadata_privacy_policy() {
+        let root = root("metadata");
+        for (id, quality) in [(1, 1), (2, 100)] {
+            let mut value = request(&root, id, ExportFormat::Jpeg);
+            value.settings.quality = quality;
+            value.settings.filename_template = format!("quality-{quality}");
+            assert!(
+                export_one(
+                    &MockRenderer,
+                    &value,
+                    &RenderSettings::default(),
+                    &AtomicBool::new(false)
+                )
+                .is_ok()
+            );
+        }
+        let mut none = request(&root, 3, ExportFormat::Png);
+        none.settings.metadata = MetadataPolicy::None;
+        none.settings.filename_template = "metadata-none".into();
+        assert!(
+            export_one(
+                &MockRenderer,
+                &none,
+                &RenderSettings::default(),
+                &AtomicBool::new(false)
+            )
+            .is_ok()
+        );
+        let safe = minimal_exif(Some("Nikon D750"), Some("2026-08-24"), Some("Owner"))
+            .expect("safe metadata");
+        let parsed = exif::Reader::new().read_raw(safe).expect("valid EXIF");
+        assert!(
+            parsed
+                .get_field(exif::Tag::GPSInfoIFDPointer, exif::In::PRIMARY)
+                .is_none()
+        );
+        let mut unavailable_location = request(&root, 4, ExportFormat::Jpeg);
+        unavailable_location.settings.include_location = true;
+        assert!(matches!(
+            export_one(
+                &MockRenderer,
+                &unavailable_location,
+                &RenderSettings::default(),
+                &AtomicBool::new(false)
+            ),
+            Err(ExportError::MetadataWriteFailed(_))
+        ));
+    }
+
+    #[test]
+    fn megapixel_memory_preflight_covers_queue_classes() {
+        for (width, height) in [(6000, 4000), (8192, 5492), (9500, 6316), (12_250, 8164)] {
+            let bytes = memory_preflight(width, height).expect("supported memory class");
+            assert_eq!(bytes, u64::from(width) * u64::from(height) * 32);
+        }
+        assert!(matches!(
+            memory_preflight(u32::MAX, u32::MAX),
+            Err(ExportError::OutOfMemory(_))
+        ));
     }
     #[test]
     fn deterministic_recipe_and_atomic_cancel_cleanup() {

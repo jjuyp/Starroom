@@ -20,10 +20,10 @@ import {
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
-  addNativeLibraryKeywords, chooseNativeLibraryFolder, importNativeLibraryFolder, nativeLibraryThumbnail,
-  openNativeLibrary, queryNativeLibrary, updateNativeLibraryWorkflow,
-  type NativeLibraryAsset, type NativeAssetFlag, type NativeColorLabel,
-  commitNativeHistory, createNativeSnapshot, openNativeHistory, redoNativeHistory, restoreNativeSnapshot, undoNativeHistory,
+  addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
+  openNativeLibrary, queryNativeLibrary, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
+  type NativeLibraryAsset, type NativeLibraryCollection, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
+  commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
   cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, type NativeProfessionalExportSettings,
 } from './nativeRender'
@@ -92,10 +92,11 @@ const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance
   return { type: 'none' }
 }
 
-function LibraryMetadataPanel({ asset, selectedCount, onWorkflow, onAddKeyword }: {
+function LibraryMetadataPanel({ asset, selectedCount, onWorkflow, onAddKeyword, onRemoveKeyword }: {
   asset: NativeLibraryAsset | null; selectedCount: number
   onWorkflow: (value: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) => void
   onAddKeyword: (keyword: string) => void
+  onRemoveKeyword?: (keyword: string) => void
 }) {
   const [keyword, setKeyword] = useState('')
   return <section className="library-metadata" aria-label="Library metadata">
@@ -109,7 +110,7 @@ function LibraryMetadataPanel({ asset, selectedCount, onWorkflow, onAddKeyword }
       <label>Rating<select value={asset.rating} onChange={(event) => onWorkflow({ rating: Number(event.target.value) })}>{[0,1,2,3,4,5].map((value) => <option key={value} value={value}>{value ? `${value} star${value === 1 ? '' : 's'}` : 'Unrated'}</option>)}</select></label>
       <label>Flag<select value={asset.flag} onChange={(event) => onWorkflow({ flag: event.target.value as NativeAssetFlag })}><option value="unflagged">Unflagged</option><option value="pick">Pick</option><option value="reject">Reject</option></select></label>
       <label>Color label<select value={asset.colorLabel} onChange={(event) => onWorkflow({ colorLabel: event.target.value as NativeColorLabel })}>{['none','red','yellow','green','blue','purple'].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-      <div className="keyword-editor"><span>{asset.keywords.length ? asset.keywords.join(' · ') : 'No keywords'}</span><input value={keyword} placeholder="Add keyword" onChange={(event) => setKeyword(event.target.value)} /><button onClick={() => { if (keyword.trim()) { onAddKeyword(keyword); setKeyword('') } }}>Add</button></div>
+      <div className="keyword-editor"><span>{asset.keywords.length ? asset.keywords.map((name) => <button key={name} title="Remove keyword from selection" onClick={() => onRemoveKeyword?.(name)}>{name} ×</button>) : 'No keywords'}</span><input value={keyword} placeholder="Add keyword" onChange={(event) => setKeyword(event.target.value)} /><button onClick={() => { if (keyword.trim()) { onAddKeyword(keyword); setKeyword('') } }}>Add</button></div>
     </>}
   </section>
 }
@@ -907,12 +908,15 @@ export function App() {
   const [lookAWeight, setLookAWeight] = useState(70)
   const [lookBWeight, setLookBWeight] = useState(30)
   const [libraryAssets, setLibraryAssets] = useState<NativeLibraryAsset[]>([])
+  const [libraryCollections, setLibraryCollections] = useState<NativeLibraryCollection[]>([])
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<number[]>([])
   const [librarySearch, setLibrarySearch] = useState('')
   const [libraryBusy, setLibraryBusy] = useState(false)
+  const [libraryPage, setLibraryPage] = useState(0)
   const libraryAnchor = useRef<number | null>(null)
   const [nativeHistory, setNativeHistory] = useState<NativeHistoryResult | null>(null)
   const [snapshotName, setSnapshotName] = useState('Version 1')
+  const [snapshotCompareId, setSnapshotCompareId] = useState<string | null>(null)
   const openedHistoryAsset = useRef<number | null>(null)
   const pendingNativeBefore = useRef<NativeEditSettings | null>(null)
   const nativeHistoryTimer = useRef<number | null>(null)
@@ -932,11 +936,13 @@ export function App() {
       try {
         await openNativeLibrary()
         const assets = await queryNativeLibrary({ limit: 200 })
+        const collections = await nativeLibraryCollections()
         const thumbnails = await Promise.all(assets.map(async (asset) => {
           try { return await nativeLibraryThumbnail(asset.id) } catch { return '' }
         }))
         if (!active) return
         setLibraryAssets(assets)
+        setLibraryCollections(collections)
         const libraryPhotos = assets.map((asset, index) => libraryPhoto(asset, thumbnails[index]))
         if (libraryPhotos.length) {
           setPhotos((current) => [...libraryPhotos, ...current.filter((photo) => !photo.libraryAsset)])
@@ -969,6 +975,7 @@ export function App() {
     setAiMaskResult(null)
     setAiMaskRequestId(null)
     setMaskOverlayVisible(false)
+    setSnapshotCompareId(null)
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
@@ -977,6 +984,8 @@ export function App() {
     selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
     selected.skinRetouch, selected.healingOperations,
   ), [selected])
+  const comparedSnapshot = nativeHistory?.snapshots.find((snapshot) => snapshot.id === snapshotCompareId) ?? null
+  const snapshotComparePhoto = comparedSnapshot ? applyNativeHistoryState(selected, comparedSnapshot.state) : null
 
   useEffect(() => {
     const assetId = selected.libraryAsset?.id
@@ -1047,11 +1056,11 @@ export function App() {
     setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported`)
   }
 
-  async function refreshLibrary(queryText = librarySearch) {
+  async function refreshLibrary(queryText = librarySearch, page = libraryPage) {
     if (!nativeRuntimeAvailable()) return
     setLibraryBusy(true)
     try {
-      const assets = await queryNativeLibrary({ text: queryText.trim() || null, limit: 500, sort: 'importTime', direction: 'descending' })
+      const assets = await queryNativeLibrary({ text: queryText.trim() || null, limit: 200, offset: page * 200, sort: 'importTime', direction: 'descending' })
       const existing = new Map(photos.filter((photo) => photo.libraryAsset).map((photo) => [photo.libraryAsset!.id, photo]))
       const rows = await Promise.all(assets.map(async (asset) => {
         const current = existing.get(asset.id)
@@ -1060,6 +1069,7 @@ export function App() {
         return libraryPhoto(asset, thumbnail)
       }))
       setLibraryAssets(assets)
+      setLibraryPage(page)
       setPhotos((current) => [...rows, ...current.filter((photo) => !photo.libraryAsset)])
       setSelectedLibraryIds((current) => current.filter((id) => assets.some((asset) => asset.id === id)))
     } finally { setLibraryBusy(false) }
@@ -1098,6 +1108,37 @@ export function App() {
     if (!selectedLibraryIds.length) return
     await addNativeLibraryKeywords(selectedLibraryIds, [keyword])
     await refreshLibrary()
+  }
+
+  async function removeLibraryKeyword(keyword: string) {
+    if (!selectedLibraryIds.length) return
+    await removeNativeLibraryKeywords(selectedLibraryIds, [keyword])
+    await refreshLibrary()
+  }
+
+  async function createLibraryCollection(kind: 'normal' | 'smart') {
+    const name = window.prompt(kind === 'normal' ? 'Collection name' : 'Smart collection name')?.trim()
+    if (!name) return
+    let rule: { all: NativeSmartPredicate[] } | null = null
+    if (kind === 'smart') {
+      const rating = Math.max(0, Math.min(5, Number(window.prompt('Minimum rating (0-5)', '4')) || 0))
+      const keyword = window.prompt('Required keyword (optional)', '')?.trim()
+      rule = { all: [{ rating: { minimum: rating } }, ...(keyword ? [{ keyword: { value: keyword } } as NativeSmartPredicate] : [])] }
+    }
+    const id = await createNativeLibraryCollection(name, kind, rule)
+    if (kind === 'normal' && selectedLibraryIds.length) await addNativeLibraryCollectionAssets(id, selectedLibraryIds)
+    setLibraryCollections(await nativeLibraryCollections())
+    setNotice(`${kind === 'smart' ? 'Smart collection' : 'Collection'} created · ${name}`)
+  }
+
+  async function openLibraryCollection(collection: NativeLibraryCollection) {
+    const assets = await nativeLibraryCollectionAssets(collection.id, 200, 0)
+    const thumbnails = await Promise.all(assets.map((asset) => nativeLibraryThumbnail(asset.id).catch(() => '')))
+    setLibraryAssets(assets)
+    setPhotos((current) => [...assets.map((asset, index) => libraryPhoto(asset, thumbnails[index])), ...current.filter((photo) => !photo.libraryAsset)])
+    setSelectedLibraryIds(assets.length ? [assets[0].id] : [])
+    setView('library')
+    setNotice(`${collection.name} · ${assets.length} asset${assets.length === 1 ? '' : 's'}`)
   }
 
   async function requestPhotoImport() {
@@ -1708,6 +1749,20 @@ export function App() {
       .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot restore failed'))
   }
 
+  function renameSnapshot(snapshotId: string, currentName: string) {
+    if (!selected.libraryAsset) return
+    const name = window.prompt('Snapshot name', currentName)?.trim()
+    if (!name) return
+    void renameNativeSnapshot(selected.libraryAsset.id, snapshotId, name).then(setNativeHistory)
+      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot rename failed'))
+  }
+
+  function deleteSnapshot(snapshotId: string) {
+    if (!selected.libraryAsset) return
+    void deleteNativeSnapshot(selected.libraryAsset.id, snapshotId).then((result) => { setNativeHistory(result); if (snapshotCompareId === snapshotId) setSnapshotCompareId(null) })
+      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot delete failed'))
+  }
+
   function toggleRating() {
     updateSelected((photo) => ({ ...photo, rating: photo.rating === 5 ? 0 : 5 }))
   }
@@ -1784,14 +1839,19 @@ export function App() {
           <button className={`library-item ${filter === 'five-star' ? 'selected' : ''}`} onClick={() => chooseFilter('five-star')}><Star size={16} /> Five Stars <small>{counts.five}</small></button>
           <button className={`library-item ${filter === 'edited' ? 'selected' : ''}`} onClick={() => chooseFilter('edited')}><Contrast size={16} /> Edited <small>{counts.edited}</small></button>
         </div>
+        <div className="library-group"><span className="eyebrow">Collections</span>
+          {libraryCollections.map((collection) => <button className="library-item" key={collection.id} onClick={() => void openLibraryCollection(collection)}><Folder size={16} /> {collection.name}<small>{collection.kind}</small></button>)}
+          <div className="portrait-regions"><button onClick={() => void createLibraryCollection('normal')}>+ Collection</button><button onClick={() => void createLibraryCollection('smart')}>+ Smart</button></div>
+        </div>
         <div className="library-summary"><Library size={15} /><span>{filteredPhotos.length} visible photos</span></div>
       </aside>
       {!leftOpen && <button className="edge-toggle left" aria-label="Open library" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
 
       {view === 'library' ? <section className="library-browser" aria-label="Photo library">
         <div className="library-browser-head"><div><span className="eyebrow">Local-first Library</span><h1>{libraryAssets.length} assets</h1></div>
-          <div className="library-actions"><input aria-label="Search Library" value={librarySearch} placeholder="Filename, camera, lens, keyword" onChange={(event) => setLibrarySearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refreshLibrary() }} />
-            <button disabled={libraryBusy} onClick={() => void refreshLibrary()}>{libraryBusy ? 'Working…' : 'Search'}</button>
+          <div className="library-actions"><input aria-label="Search Library" value={librarySearch} placeholder="Filename, camera, lens, keyword" onChange={(event) => setLibrarySearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refreshLibrary(librarySearch, 0) }} />
+            <button disabled={libraryBusy} onClick={() => void refreshLibrary(librarySearch, 0)}>{libraryBusy ? 'Working…' : 'Search'}</button>
+            <button disabled={libraryBusy || libraryPage === 0} onClick={() => void refreshLibrary(librarySearch, libraryPage - 1)}>Previous</button><button disabled={libraryBusy || libraryAssets.length < 200} onClick={() => void refreshLibrary(librarySearch, libraryPage + 1)}>Next</button>
             <button className="import-button compact" disabled={libraryBusy} onClick={() => void importLibraryFolder()}><ImagePlus size={16} /> Import folder</button></div></div>
         <div className="photo-grid virtual-grid" role="grid" aria-rowcount={libraryAssets.length}>{libraryAssets.map((asset, index) => {
           const photo = photos.find((value) => value.libraryAsset?.id === asset.id)
@@ -1812,7 +1872,7 @@ export function App() {
             <button className={zoom === '100' ? 'active' : ''} onClick={() => { setZoom('100'); setZoomScale(1); setPan({ x: 0, y: 0 }) }}>100%</button>
           </div></div>
           {view === 'compare' ? <div className="compare-stage">
-            <div className="compare-pane"><PreviewCanvas photo={selected} before zoom={zoom} metric={false} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>Original</span></div>
+            <div className="compare-pane"><PreviewCanvas photo={snapshotComparePhoto ?? selected} before={!snapshotComparePhoto} zoom={zoom} metric={false} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>{comparedSnapshot?.name ?? 'Original'}</span></div>
             <div className="compare-pane"><PreviewCanvas photo={selected} before={false} zoom={zoom} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>Edited</span></div>
           </div> : <div className={`photo-stage ${before ? 'show-before' : ''} zoom-stage-${zoom} ${zoomScale > 1 ? 'is-zoomed' : ''} ${(tool === 'masks' || tool === 'heal') ? 'mask-mode' : ''}`}
             onWheel={(event) => {
@@ -1874,7 +1934,7 @@ export function App() {
           nativeAvailable={(view === 'library' && selectedLibraryIds.length ? selectedLibraryIds.map((id) => photos.find((photo) => photo.libraryAsset?.id === id)).filter(Boolean) : [selected]).every((photo) => photo?.renderBackend === 'native')}
           onChange={setExportSettings} onExport={() => void exportJpeg()} onCancel={() => void cancelNativeExport().then(() => setNotice('Export cancellation requested · completed files remain valid'))} />
         {view === 'library' && <LibraryMetadataPanel asset={libraryAssets.find((asset) => asset.id === selectedLibraryIds.at(-1)) ?? null}
-          selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} />}
+          selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} onRemoveKeyword={(keyword) => void removeLibraryKeyword(keyword)} />}
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
         <section className="portrait-panel" aria-label="Portrait masks">
           <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native'}>Detect faces</button></div>
@@ -1997,7 +2057,7 @@ export function App() {
         {view !== 'library' && selected.libraryAsset && <section className="history-panel" aria-label="Edit history and snapshots">
           <div className="layer-stack-head"><strong>History / Snapshots</strong><small>{nativeHistory?.stateVersion.slice(0, 8) ?? 'opening'}</small></div>
           <div className="snapshot-create"><input aria-label="Snapshot name" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} /><button onClick={createSnapshot}>Save snapshot</button></div>
-          <div className="history-list">{nativeHistory?.snapshots.map((snapshot) => <button key={snapshot.id} onClick={() => restoreSnapshot(snapshot.id)}><strong>{snapshot.name}</strong><small>Restore as undoable edit</small></button>)}</div>
+          <div className="history-list">{nativeHistory?.snapshots.map((snapshot) => <div className="snapshot-row" key={snapshot.id}><button onClick={() => restoreSnapshot(snapshot.id)}><strong>{snapshot.name}</strong><small>Restore</small></button><button onClick={() => { setSnapshotCompareId(snapshot.id); setView('compare') }}>Compare</button><button onClick={() => renameSnapshot(snapshot.id, snapshot.name)}>Rename</button><button onClick={() => deleteSnapshot(snapshot.id)}>Delete</button></div>)}</div>
           <div className="history-list">{nativeHistory?.entries.slice(-8).reverse().map((entry) => <div key={entry.sequence}><span>{entry.sequence}</span><strong>{entry.description}</strong><small>{entry.affectedStage}</small></div>)}</div>
         </section>}
         <div className="tool-layout">

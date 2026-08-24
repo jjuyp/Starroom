@@ -14,3 +14,8 @@ starroom-color-management = { path = "../starroom-color-management" }
 starroom-imageio = { path = "../starroom-imageio" }
 starroom-pipeline = { path = "../starroom-pipeline" }
 thiserror.workspace = true
+
+[dev-dependencies]
+kamadak-exif = "=0.6.1"
+starroom-history = { path = "../starroom-history" }
+starroom-library = { path = "../starroom-library" }

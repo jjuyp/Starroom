@@ -24,7 +24,8 @@ use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
 };
 use starroom_library::{
-    AssetFlag, AssetRecord, ColorLabel, ImportResult, Library, LibraryQuery, ThumbnailSize,
+    AssetFlag, AssetRecord, CollectionKind, CollectionRecord, ColorLabel, ImportResult, Library,
+    LibraryQuery, SmartCollectionRuleV1, ThumbnailSize,
 };
 use starroom_look::{
     GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
@@ -255,6 +256,96 @@ fn library_add_keywords(
 }
 
 #[tauri::command]
+fn library_remove_keywords(
+    runtime: State<'_, NativeLibraryRuntime>,
+    request: LibraryKeywordRequest,
+) -> Result<(), String> {
+    let mut guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_mut()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .remove_keywords(&request.asset_ids, &request.names)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryCollectionCreateRequest {
+    name: String,
+    kind: CollectionKind,
+    rule: Option<SmartCollectionRuleV1>,
+}
+
+#[tauri::command]
+fn library_collections(
+    runtime: State<'_, NativeLibraryRuntime>,
+) -> Result<Vec<CollectionRecord>, String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .collections()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn library_collection_create(
+    runtime: State<'_, NativeLibraryRuntime>,
+    request: LibraryCollectionCreateRequest,
+) -> Result<i64, String> {
+    let mut guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_mut()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .create_collection(&request.name, request.kind, request.rule.as_ref())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn library_collection_add_assets(
+    runtime: State<'_, NativeLibraryRuntime>,
+    collection_id: i64,
+    asset_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_mut()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .add_collection_assets(collection_id, &asset_ids)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn library_collection_assets(
+    runtime: State<'_, NativeLibraryRuntime>,
+    collection_id: i64,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<AssetRecord>, String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .collection_assets(collection_id, limit.min(500), offset)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn library_thumbnail(
     runtime: State<'_, NativeLibraryRuntime>,
     asset_id: i64,
@@ -449,6 +540,47 @@ fn history_snapshot_restore(
         .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
     history
         .restore_snapshot(&snapshot_id)
+        .map_err(|error| error.to_string())?;
+    persist_history(asset_id, history)?;
+    Ok(history_result(history))
+}
+
+#[tauri::command]
+fn history_snapshot_rename(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    snapshot_id: String,
+    name: String,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    history
+        .rename_snapshot(&snapshot_id, &name)
+        .map_err(|error| error.to_string())?;
+    persist_history(asset_id, history)?;
+    Ok(history_result(history))
+}
+
+#[tauri::command]
+fn history_snapshot_delete(
+    runtime: State<'_, NativeHistoryRuntime>,
+    asset_id: i64,
+    snapshot_id: String,
+) -> Result<NativeHistoryResult, String> {
+    let mut histories = runtime
+        .0
+        .lock()
+        .map_err(|_| "HistoryCorrupt: runtime lock poisoned".to_owned())?;
+    let history = histories
+        .get_mut(&asset_id)
+        .ok_or_else(|| "HistoryCorrupt: history is not open".to_owned())?;
+    history
+        .delete_snapshot(&snapshot_id)
         .map_err(|error| error.to_string())?;
     persist_history(asset_id, history)?;
     Ok(history_result(history))
@@ -2396,6 +2528,11 @@ pub fn run() {
             library_query,
             library_set_workflow,
             library_add_keywords,
+            library_remove_keywords,
+            library_collections,
+            library_collection_create,
+            library_collection_add_assets,
+            library_collection_assets,
             library_thumbnail,
             history_open,
             history_commit,
@@ -2403,6 +2540,8 @@ pub fn run() {
             history_redo,
             history_snapshot_create,
             history_snapshot_restore,
+            history_snapshot_rename,
+            history_snapshot_delete,
             native_export_batch,
             native_export_cancel
         ])

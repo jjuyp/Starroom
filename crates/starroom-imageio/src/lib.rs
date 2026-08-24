@@ -21,6 +21,8 @@ pub enum ImageIoError {
     UnknownFormat,
     #[error("RGB buffer length does not match dimensions")]
     InvalidBufferLength,
+    #[error("TIFF metadata encoder failed: {0}")]
+    TiffMetadata(String),
     #[error(transparent)]
     Raw(#[from] RawDecodeError),
 }
@@ -322,17 +324,43 @@ pub fn encode_tiff_rgb8_with_metadata(
     width: u32,
     height: u32,
     icc_profile: Option<Vec<u8>>,
-    _exif: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
     validate_rgb8(rgb, width, height)?;
     let mut cursor = Cursor::new(Vec::new());
-    let mut encoder = image::codecs::tiff::TiffEncoder::new(&mut cursor);
-    if let Some(profile) = icc_profile {
-        encoder
-            .set_icc_profile(profile)
-            .map_err(image::ImageError::Unsupported)?;
+    {
+        let mut encoder = tiff::encoder::TiffEncoder::new(&mut cursor)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        let mut image = encoder
+            .new_image::<tiff::encoder::colortype::RGB8>(width, height)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        if let Some(profile) = icc_profile {
+            image
+                .encoder()
+                .write_tag(tiff::tags::Tag::IccProfile, profile.as_slice())
+                .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        }
+        if let Some(exif) = exif
+            && let Ok(parsed) = exif::Reader::new().read_raw(exif)
+        {
+            for (source, destination) in [
+                (exif::Tag::Model, tiff::tags::Tag::Model),
+                (exif::Tag::DateTime, tiff::tags::Tag::DateTime),
+                (exif::Tag::Copyright, tiff::tags::Tag::Copyright),
+            ] {
+                let value = exif_text(&parsed, source);
+                if !value.is_empty() {
+                    image
+                        .encoder()
+                        .write_tag(destination, value.as_str())
+                        .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+                }
+            }
+        }
+        image
+            .write_data(rgb)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
     }
-    encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
     Ok(cursor.into_inner())
 }
 

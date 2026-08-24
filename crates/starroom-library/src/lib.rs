@@ -736,6 +736,38 @@ impl Library {
             .transpose()
     }
 
+    pub fn collections(&self) -> Result<Vec<CollectionRecord>, LibraryError> {
+        let mut statement = self.connection.prepare("SELECT c.id,c.name,c.type,s.rule_json FROM collections c LEFT JOIN smart_collection_rules s ON s.collection_id=c.id ORDER BY lower(c.name),c.id").map_err(sql_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(sql_error)?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, name, kind, rule) = row.map_err(sql_error)?;
+            result.push(CollectionRecord {
+                id,
+                name,
+                kind: if kind == "normal" {
+                    CollectionKind::Normal
+                } else {
+                    CollectionKind::Smart
+                },
+                rule: rule
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()
+                    .map_err(|error| LibraryError::CorruptDatabase(error.to_string()))?,
+            });
+        }
+        Ok(result)
+    }
+
     pub fn refresh_missing(&self) -> Result<usize, LibraryError> {
         let mut statement = self
             .connection
@@ -1252,7 +1284,7 @@ CREATE TABLE smart_collection_rules(collection_id INTEGER PRIMARY KEY REFERENCES
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs};
+    use std::{env, fs, time::Instant};
     fn temp(name: &str) -> PathBuf {
         let path = env::temp_dir().join(format!("starroom-library-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
@@ -1441,5 +1473,67 @@ mod tests {
         bytes[200_000] = 8;
         fs::write(&second, bytes).unwrap();
         assert_ne!(before, fingerprint_file(&second).unwrap());
+    }
+
+    #[test]
+    fn ten_thousand_metadata_assets_search_sort_and_page() {
+        let root = temp("ten-thousand");
+        let mut library = Library::open(root.join("db.sqlite")).unwrap();
+        let started = Instant::now();
+        let transaction = library.connection.transaction().unwrap();
+        {
+            let mut insert = transaction.prepare("INSERT INTO assets(source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").unwrap();
+            for index in 0..10_000_i64 {
+                let path = format!("C:/synthetic/{index:05}.jpg");
+                insert
+                    .execute(params![
+                        &path,
+                        &path,
+                        format!("asset-{index}"),
+                        FINGERPRINT_VERSION,
+                        format!("fingerprint-{index}"),
+                        1_000_i64,
+                        index,
+                        "jpeg",
+                        6000_i64,
+                        4000_i64,
+                        1_i64,
+                        index,
+                        index,
+                        "Synthetic",
+                        "Camera",
+                        "Synthetic",
+                        "Lens",
+                        50.0_f64,
+                        4.0_f64,
+                        0.01_f64,
+                        100.0_f64,
+                        (index % 6),
+                        "unflagged",
+                        "none",
+                        0_i64,
+                        index,
+                        index
+                    ])
+                    .unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+        let page = library
+            .query(&LibraryQuery {
+                text: Some("synthetic".into()),
+                sort: SortField::Filename,
+                direction: SortDirection::Descending,
+                limit: 200,
+                offset: 9_800,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(page.len(), 200);
+        assert!(page.windows(2).all(|pair| pair[0].id > pair[1].id));
+        eprintln!(
+            "M24 10,000 metadata rows insert+query: {:.3} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
     }
 }

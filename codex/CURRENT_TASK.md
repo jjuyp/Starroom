@@ -2,25 +2,25 @@
 
 ## Current Batch
 
-M21 → M22 → M23 — **Accepted 2026-08-20; stop before M24**.
+M24 → M25 → M26 — **Complete 2026-08-24; M27 Not Started**.
 
-M1-M20 remain accepted. This batch adds fixed local NAFNet denoise, Native perceptual reference
-matching and portable `.srlook` workflows through the existing Native shared render graph. Stop
-after M23 final acceptance; do not begin M24.
+M1-M23 remain accepted. This batch adds a local-first SQLite Library, persistent command/checkpoint
+history with named snapshots, and a full-resolution professional export system. Stop after final
+M24-M26 acceptance; do not begin M27.
 
 ## Goal
 
-Complete M21 local NAFNet-SIDD denoise, M22 perceptual/statistical Reference Match and M23
-portable Look Engine without resetting prior native pipelines. All Preview/Before-After/Export
-paths keep native cache bindings and one shared graph; React transports only compact intent.
+Complete M24 asset/workflow management, M25 deterministic history/snapshots and M26 professional
+export without resetting prior native pipelines. Preview, Before/After and Export retain one shared
+Rust graph; React transports only paths, queries, serialized edit intent and interaction state.
 
 ## Relevant modules
 
-- `crates/starroom-ai-denoise` fixed NAFNet registry, domain, tiling and residual adjustment
-- `crates/starroom-reference` Native analysis and existing-parameter match recipe
-- `crates/starroom-look` `.srlook` schema, semantic blending, grain and vignette
-- `crates/starroom-pipeline` shared precreative residual and finishing stages
-- `src-tauri/src/lib.rs` local cache and compact native IPC
+- `crates/starroom-library` SQLite schema, migrations, identity, import/query/workflow/cache
+- `crates/starroom-history` commands, checkpoints, persistence and named snapshots
+- `crates/starroom-export` full-resolution output, sizing, naming, queue and atomic files
+- `crates/starroom-pipeline`, `starroom-color-management`, `starroom-imageio` shared graph/output
+- `src-tauri/src/lib.rs` bounded native runtimes and compact IPC
 - `src/nativeRender.ts`, `src/App.tsx` interaction/state presentation only
 
 ## Required files
@@ -35,36 +35,35 @@ paths keep native cache bindings and one shared graph; React transports only com
 
 ## Open-source decision
 
-Reuse `ort 2.0.0-rc.10` for the pinned NAFNet-SIDD width-32 ONNX. The checkpoint and export remain
-local-only, Git-ignored, unbundled and absent from CI. M22/M23 reuse existing Native adjustment
-stages and add no browser color science, cloud, telemetry or substitute model.
+Use SQLite through pinned `rusqlite` with bundled SQLite, existing LibRaw/image metadata providers,
+LittleCMS output profiles and `image` Lanczos/codecs. No second RAW/color pipeline, React image
+math, cloud catalog, telemetry or database raster storage was added.
 
 ## Acceptance criteria
 
-- M21–M23 production implementation, targeted regressions, cross-milestone scenarios and Level 3
+- M24–M26 production implementation, targeted regressions, cross-milestone scenarios and Level 3
   acceptance all pass on the final acceptance commit.
 - Preview, Before/After and Export retain one Native shared graph; unavailable providers remain
   explicit typed states rather than transparent/silent fallbacks.
 
 ## Acceptance evidence
 
-- M21 targeted acceptance: push run `32378734268`.
-- M22 targeted acceptance: push run `32379178627`.
-- M23 targeted acceptance: push run `32379573766`.
+- M24 acceptance commit: `d867018`; dependency-corrected acceptance is included in `a6c82d2`.
+- M25 acceptance commit: `a6c82d2`; push and PR workflow runs `32746036320` and `32746029652` passed.
+- M26 acceptance and final Level 3 run IDs are recorded after the final `[full-acceptance]` push.
 - The final `[full-acceptance]` commit runs warning-denied workspace Clippy, rustfmt, every Rust
   test, all frontend tests/lint/build, JSON/schema, Golden/RAW manifests and packaging validation.
-- Cross-milestone regression binds M21 AI Denoise to M9 Detail and M16/M17 portrait retouch, and
-  binds M23 A70/B30 Style Mixer output to M14 Layer, M15 Mask and shared Preview/Export finishing.
+- Cross-milestone regression binds Library identity/project state to persistent history/snapshots and
+  binds full-resolution export to the M1-M23 shared graph, including layers/masks/denoise/retouch/heal/looks.
 
 ## Targeted tests
 
-- `npm.cmd run test:ai`
-- `npm.cmd run test:detail`
-- `npm.cmd run test:color`
+- `npm.cmd run test:library`
+- `npm.cmd run test:history`
+- `npm.cmd run test:export`
 - Native preview/export contract and shared graph Level 2, then Level 3 acceptance
 
 ## Stop conditions
 
-Do not merge `main`, force-push, make PR #2 ready, or begin M24. Only an unrecoverable repository
-risk, model-artifact corruption that cannot be reproduced, licensing decision not already covered,
-or architecture contradiction may stop this batch.
+Do not merge `main`, force-push, make PR #2 ready, or begin M27. M24 Complete. M25 Complete.
+M26 Complete. M27 Not Started.

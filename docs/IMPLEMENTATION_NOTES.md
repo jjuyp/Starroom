@@ -231,3 +231,11 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - Edit history snapshots now include adjustments, freeform curve points and mask geometry. Source files remain untouched.
 - Playwright validated numeric input, 9,000 K, curve add/drag/right-click-delete, on-photo mask placement/resize/rotation, 33.5-degree rotation, 47%/212% wheel zoom and drag pan. The final browser console check reported zero errors and zero warnings.
 - Remaining production gaps are unchanged: no RAW decoding, ICC display/output management, wgpu path, multi-mask stack/brush masks, lens-profile correction, crop or perspective correction.
+# M24-M26 Library, history and professional export (2026-08-24)
+
+- Added `starroom-library`: SQLite WAL/foreign-key/busy configuration, ordered migration V1, reference import, deterministic sampled asset fingerprint with full-hash escalation, duplicate/relink state, existing RAW/rendered metadata adapters, three-size native thumbnail cache, typed queries/workflow/keywords/collections/missing/project relationships and Tauri Library UI.
+- Added `starroom-history`: typed command/state history with stable SHA-256 edit versions, slider/curve/brush transaction coalescing, deterministic undo/redo and redo truncation, periodic checkpoints, atomic versioned persistence, named snapshot lifecycle/undoable restore and cache identity.
+- Added `starroom-export`: immutable full-source decode into the existing shared graph, LittleCMS sRGB/Display P3/Adobe RGB/Rec.2020 output, JPEG/PNG/TIFF 8-bit encode, Lanczos3 resize, separate Screen output sharpening, safe metadata intent, Windows-safe templates, collision policy, recipe identity, batch isolation/cancel and atomic writes.
+- React remains UI/interaction only. Library queries, history replay and all image/color/export processing remain Rust Native. Browser export survives only as an explicitly labelled fallback for browser-demo assets; native errors never activate it.
+- Current validated capability deliberately rejects 16-bit PNG/TIFF and Print sharpening with typed errors. No silent depth downgrade, ICC fallback, overwrite, duplicate, relink or source modification is permitted.
+- See `docs/29_M24_LIBRARY_WORKFLOW.md`, `docs/30_M25_HISTORY_SNAPSHOTS.md` and `docs/31_M26_EXPORT_ENGINE.md` for the durable architecture and acceptance contract.

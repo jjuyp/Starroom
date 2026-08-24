@@ -260,6 +260,7 @@ button:disabled { opacity: .35; cursor: default; }
 .export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .snapshot-create { display: grid; grid-template-columns: 1fr auto; gap: 5px; }.snapshot-create input { min-width: 0; padding: 5px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-1); background: var(--surface-2); }.snapshot-create button,.history-list button { padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-2); background: var(--surface-2); }
 .history-list { display: grid; gap: 4px; margin-top: 6px; }.history-list > div,.history-list > button { display: grid; grid-template-columns: 24px 1fr auto; align-items: center; gap: 5px; text-align: left; font-size: 8px; }.history-list > button { grid-template-columns: 1fr auto; }.history-list small { color: var(--text-3); }
+.history-list > .snapshot-row { grid-template-columns: minmax(80px, 1fr) auto auto auto; }.snapshot-row > button { padding: 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-2); background: var(--surface-2); font-size: 8px; }.snapshot-row > button:first-child { display: grid; text-align: left; }
 .portrait-panel { max-height: 160px; overflow: auto; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface-1); }
 .portrait-panel small { color: var(--text-3); font-size: 9px; }
 .portrait-status { display: grid; gap: 2px; margin: 5px 0; padding: 5px; border: 1px solid var(--border); border-radius: 5px; font-size: 9px; }

@@ -6,6 +6,8 @@ import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 export type RenderBackend = 'native' | 'browserFallback'
 export type NativeAssetFlag = 'unflagged' | 'pick' | 'reject'
 export type NativeColorLabel = 'none' | 'red' | 'yellow' | 'green' | 'blue' | 'purple'
+export type NativeSmartPredicate = { rating: { minimum: number } } | { flag: { value: NativeAssetFlag } } | { colorLabel: { value: NativeColorLabel } } | { camera: { value: string } } | { lens: { value: string } } | { fileType: { value: string } } | { keyword: { value: string } }
+export interface NativeLibraryCollection { id: number; name: string; kind: 'normal' | 'smart'; rule: { all: NativeSmartPredicate[] } | null }
 export interface NativeLibraryAsset {
   id: number; sourcePath: string; sourceIdentity: string; contentFingerprint: string
   fileSize: number; modifiedTime: number; rating: number; flag: NativeAssetFlag
@@ -481,6 +483,11 @@ export async function updateNativeLibraryWorkflow(assetIds: number[], values: { 
 export async function addNativeLibraryKeywords(assetIds: number[], names: string[]) {
   return invoke<void>('library_add_keywords', { request: { assetIds, names } })
 }
+export async function removeNativeLibraryKeywords(assetIds: number[], names: string[]) { return invoke<void>('library_remove_keywords', { request: { assetIds, names } }) }
+export async function nativeLibraryCollections() { return invoke<NativeLibraryCollection[]>('library_collections') }
+export async function createNativeLibraryCollection(name: string, kind: 'normal' | 'smart', rule: { all: NativeSmartPredicate[] } | null = null) { return invoke<number>('library_collection_create', { request: { name, kind, rule } }) }
+export async function addNativeLibraryCollectionAssets(collectionId: number, assetIds: number[]) { return invoke<void>('library_collection_add_assets', { collectionId, assetIds }) }
+export async function nativeLibraryCollectionAssets(collectionId: number, limit = 200, offset = 0) { return invoke<NativeLibraryAsset[]>('library_collection_assets', { collectionId, limit, offset }) }
 
 export async function nativeLibraryThumbnail(assetId: number, size: 'small256' | 'medium512' | 'large1024' = 'medium512') {
   const path = await invoke<string>('library_thumbnail', { assetId, size })
@@ -499,6 +506,8 @@ export async function undoNativeHistory(assetId: number) { return invoke<NativeH
 export async function redoNativeHistory(assetId: number) { return invoke<NativeHistoryResult>('history_redo', { assetId }) }
 export async function createNativeSnapshot(assetId: number, name: string) { return invoke<NativeHistoryResult>('history_snapshot_create', { assetId, name }) }
 export async function restoreNativeSnapshot(assetId: number, snapshotId: string) { return invoke<NativeHistoryResult>('history_snapshot_restore', { assetId, snapshotId }) }
+export async function renameNativeSnapshot(assetId: number, snapshotId: string, name: string) { return invoke<NativeHistoryResult>('history_snapshot_rename', { assetId, snapshotId, name }) }
+export async function deleteNativeSnapshot(assetId: number, snapshotId: string) { return invoke<NativeHistoryResult>('history_snapshot_delete', { assetId, snapshotId }) }
 
 export async function chooseNativeExportDirectory() {
   const value = await open({ title: 'Choose Starroom export folder', directory: true, multiple: false })
