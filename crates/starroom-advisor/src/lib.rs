@@ -331,7 +331,7 @@ pub fn analyze_linear_rgb(samples: &[[f32; 3]]) -> AnalysisStats {
 
     luminance_values.sort_by(|left, right| left.total_cmp(right));
     let middle = luminance_values.len() / 2;
-    let median_luminance = if luminance_values.len() % 2 == 0 {
+    let median_luminance = if luminance_values.len().is_multiple_of(2) {
         (luminance_values[middle - 1] + luminance_values[middle]) * 0.5
     } else {
         luminance_values[middle]

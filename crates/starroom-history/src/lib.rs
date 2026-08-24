@@ -305,7 +305,11 @@ impl EditHistory {
         });
         self.document.cursor += 1;
         self.state = next;
-        if self.document.cursor % self.document.checkpoint_interval == 0 {
+        if self
+            .document
+            .cursor
+            .is_multiple_of(self.document.checkpoint_interval)
+        {
             self.document.checkpoints.push(HistoryCheckpoint {
                 sequence,
                 state_version: version.clone(),

@@ -2074,7 +2074,11 @@ mod tests {
             rgba: (0..15)
                 .flat_map(|index| {
                     let edge = if index % 5 < 2 { 0.12 } else { 0.68 };
-                    let noise = if index % 2 == 0 { 0.025 } else { -0.02 };
+                    let noise = if index.is_multiple_of(2) {
+                        0.025
+                    } else {
+                        -0.02
+                    };
                     [edge + noise, edge, edge - noise, 1.0]
                 })
                 .collect(),

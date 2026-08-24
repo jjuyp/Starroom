@@ -478,7 +478,11 @@ mod tests {
             (0..9)
                 .flat_map(|index| {
                     let base = if index < 4 { 0.12 } else { 0.62 };
-                    let noise = if index % 2 == 0 { 0.025 } else { -0.025 };
+                    let noise = if index.is_multiple_of(2) {
+                        0.025
+                    } else {
+                        -0.025
+                    };
                     [base + noise, base, base - noise]
                 })
                 .collect(),
