@@ -303,7 +303,7 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
     }
 
     let mut components = Vec::with_capacity(image.data.len());
-    for pixel in image.data.chunks_exact(3) {
+    for pixel in image.data.as_chunks::<3>().0 {
         let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
         components.extend_from_slice(&[y, cb, cr]);
     }
