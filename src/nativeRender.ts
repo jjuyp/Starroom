@@ -27,6 +27,21 @@ export interface NativeLibraryQuery {
 export interface NativeHistoryEntry { sequence: number; timestamp: number; description: string; affectedStage: string; version: string }
 export interface NativeNamedSnapshot { id: string; name: string; createdAt: number; stateVersion: string; state: NativeEditSettings }
 export interface NativeHistoryResult { state: NativeEditSettings; canUndo: boolean; canRedo: boolean; entries: NativeHistoryEntry[]; snapshots: NativeNamedSnapshot[]; stateVersion: string }
+export interface NativeProfessionalExportSettings {
+  format: 'jpeg' | 'png' | 'tiff'; bitDepth: 8 | 16; quality: number
+  colorSpace: 'srgb' | 'displayP3' | 'adobeRgb' | 'rec2020'; embedProfile: boolean
+  resize: { mode: 'original' } | { mode: 'width' | 'height' | 'longEdge' | 'shortEdge'; pixels: number }
+    | { mode: 'percentage'; percent: number } | { mode: 'fitWithin'; width: number; height: number }
+  outputSharpen: 'off' | 'screen'; sharpenAmount: 'low' | 'standard' | 'high'
+  metadata: 'allMetadata' | 'copyrightOnly' | 'cameraMetadata' | 'none'; includeLocation: boolean
+  copyright: string | null; filenameTemplate: string; collision: 'fail' | 'autoRename' | 'overwrite'
+}
+export interface NativeProfessionalExportItem {
+  assetId: number; sourcePath: string; originalName: string; captureDate: string | null; rating: number
+  camera: string | null; look: string | null; sequence: number; sourceFingerprint: string
+  editStateIdentity: string; editSettings: NativeEditSettings
+}
+export interface NativeBatchExportResult { completed: unknown[]; failed: unknown[]; cancelled: unknown[]; skipped: unknown[] }
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
@@ -484,6 +499,17 @@ export async function undoNativeHistory(assetId: number) { return invoke<NativeH
 export async function redoNativeHistory(assetId: number) { return invoke<NativeHistoryResult>('history_redo', { assetId }) }
 export async function createNativeSnapshot(assetId: number, name: string) { return invoke<NativeHistoryResult>('history_snapshot_create', { assetId, name }) }
 export async function restoreNativeSnapshot(assetId: number, snapshotId: string) { return invoke<NativeHistoryResult>('history_snapshot_restore', { assetId, snapshotId }) }
+
+export async function chooseNativeExportDirectory() {
+  const value = await open({ title: 'Choose Starroom export folder', directory: true, multiple: false })
+  return typeof value === 'string' ? value : null
+}
+
+export async function exportNativeBatch(destinationDirectory: string, settings: NativeProfessionalExportSettings, items: NativeProfessionalExportItem[]) {
+  return invoke<NativeBatchExportResult>('native_export_batch', { request: { destinationDirectory, settings, items } })
+}
+
+export async function cancelNativeExport() { return invoke<boolean>('native_export_cancel') }
 
 export async function exportNativeJpeg(
   sourcePath: string,

@@ -1535,6 +1535,14 @@ pub fn render_source_export_to_srgb8(
     render_shared_source_graph(decoded, settings, None, None)
 }
 
+pub fn render_source_export_to_icc8(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    output_icc: &[u8],
+) -> Result<RenderedRgb8, PipelineError> {
+    render_shared_source_graph(decoded, settings, Some(output_icc), None)
+}
+
 /// M12 preview entry point. It shares all decode, colour-management, tone, geometry, detail and
 /// output stages with export; only the exposure node is delegated to a parity-checked GPU kernel.
 /// A caller must decide and report fallback rather than silently retrying this path on CPU.

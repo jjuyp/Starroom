@@ -15,6 +15,11 @@ export const targets = {
     web: ['src/editorState.test.ts', 'src/nativeRender.test.ts'],
     golden: [],
   },
+  export: {
+    rust: [['test', '--locked', '-p', 'starroom-export']],
+    web: ['src/nativeRender.test.ts'],
+    golden: ['raw', 'color', 'detail', 'portrait', 'mask', 'hdr'],
+  },
   color: {
     rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
     web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],

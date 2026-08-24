@@ -243,6 +243,17 @@ pub fn encode_jpeg_rgb8(
     quality: u8,
     icc_profile: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
+    encode_jpeg_rgb8_with_metadata(rgb, width, height, quality, icc_profile, None)
+}
+
+pub fn encode_jpeg_rgb8_with_metadata(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
     let expected = width as usize * height as usize * 3;
     if rgb.len() != expected {
         return Err(ImageIoError::InvalidBufferLength);
@@ -255,8 +266,83 @@ pub fn encode_jpeg_rgb8(
             .set_icc_profile(profile)
             .map_err(image::ImageError::Unsupported)?;
     }
+    if let Some(exif) = exif {
+        encoder
+            .set_exif_metadata(exif)
+            .map_err(image::ImageError::Unsupported)?;
+    }
     encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
     Ok(cursor.into_inner())
+}
+
+pub fn encode_png_rgb8(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    encode_png_rgb8_with_metadata(rgb, width, height, icc_profile, None)
+}
+
+pub fn encode_png_rgb8_with_metadata(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    validate_rgb8(rgb, width, height)?;
+    let mut cursor = Cursor::new(Vec::new());
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut cursor);
+    if let Some(profile) = icc_profile {
+        encoder
+            .set_icc_profile(profile)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    if let Some(exif) = exif {
+        encoder
+            .set_exif_metadata(exif)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
+    Ok(cursor.into_inner())
+}
+
+pub fn encode_tiff_rgb8(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    encode_tiff_rgb8_with_metadata(rgb, width, height, icc_profile, None)
+}
+
+pub fn encode_tiff_rgb8_with_metadata(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+    _exif: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    validate_rgb8(rgb, width, height)?;
+    let mut cursor = Cursor::new(Vec::new());
+    let mut encoder = image::codecs::tiff::TiffEncoder::new(&mut cursor);
+    if let Some(profile) = icc_profile {
+        encoder
+            .set_icc_profile(profile)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
+    Ok(cursor.into_inner())
+}
+
+fn validate_rgb8(rgb: &[u8], width: u32, height: u32) -> Result<(), ImageIoError> {
+    let expected = width as usize * height as usize * 3;
+    if rgb.len() == expected {
+        Ok(())
+    } else {
+        Err(ImageIoError::InvalidBufferLength)
+    }
 }
 
 #[cfg(test)]

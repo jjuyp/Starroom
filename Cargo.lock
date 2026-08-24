@@ -3733,6 +3733,7 @@ dependencies = [
  "starroom-color-management",
  "starroom-core",
  "starroom-detail",
+ "starroom-export",
  "starroom-geometry",
  "starroom-grading",
  "starroom-heal",
@@ -3756,6 +3757,20 @@ name = "starroom-detail"
 version = "0.2.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "starroom-export"
+version = "0.2.0"
+dependencies = [
+ "image",
+ "serde",
+ "serde_json",
+ "sha2",
+ "starroom-color-management",
+ "starroom-imageio",
+ "starroom-pipeline",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

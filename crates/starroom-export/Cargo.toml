@@ -1,0 +1,16 @@
+[package]
+name = "starroom-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+starroom-color-management = { path = "../starroom-color-management" }
+starroom-imageio = { path = "../starroom-imageio" }
+starroom-pipeline = { path = "../starroom-pipeline" }
+thiserror.workspace = true

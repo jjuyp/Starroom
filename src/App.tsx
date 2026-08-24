@@ -15,7 +15,7 @@ import {
   type RadialMask, type ToneCurvePoint,
 } from './imagePipeline'
 import {
-  adviseNativeImage, chooseNativeExportPath, chooseNativePhotoPaths, exportNativeJpeg, nativeRuntimeAvailable,
+  adviseNativeImage, chooseNativePhotoPaths, nativeRuntimeAvailable,
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
@@ -25,6 +25,7 @@ import {
   type NativeLibraryAsset, type NativeAssetFlag, type NativeColorLabel,
   commitNativeHistory, createNativeSnapshot, openNativeHistory, redoNativeHistory, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
+  cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, type NativeProfessionalExportSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -813,11 +814,38 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   </section>
 }
 
-function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo, canRedo, undo, redo, onExport }: {
+function ExportPanel({ settings, busy, selectedCount, nativeAvailable, onChange, onExport, onCancel }: {
+  settings: NativeProfessionalExportSettings; busy: boolean; selectedCount: number; nativeAvailable: boolean
+  onChange: (settings: NativeProfessionalExportSettings) => void; onExport: () => void; onCancel: () => void
+}) {
+  const resizePixels = 'pixels' in settings.resize ? settings.resize.pixels : 2048
+  return <section className="export-panel" aria-label="Professional export">
+    <div className="layer-stack-head"><strong>Professional Export</strong><small>{selectedCount > 1 ? `${selectedCount} selected` : 'Full resolution'}</small></div>
+    <small>Native shared graph · Browser fallback is explicit · originals stay untouched</small>
+    <div className="export-grid">
+      <label>Format<select aria-label="Export format" value={settings.format} onChange={(event) => onChange({ ...settings, format: event.target.value as NativeProfessionalExportSettings['format'] })}><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="tiff">TIFF</option></select></label>
+      <label>Bit depth<select aria-label="Export bit depth" value={settings.bitDepth} onChange={(event) => onChange({ ...settings, bitDepth: Number(event.target.value) as 8 | 16 })}><option value="8">8-bit</option><option value="16" disabled>16-bit (unsupported)</option></select></label>
+      {settings.format === 'jpeg' && <label>Quality<input aria-label="Export quality" type="number" min="1" max="100" value={settings.quality} onChange={(event) => onChange({ ...settings, quality: Math.max(1, Math.min(100, Number(event.target.value) || 1)) })} /></label>}
+      <label>Color space<select aria-label="Export color space" value={settings.colorSpace} onChange={(event) => onChange({ ...settings, colorSpace: event.target.value as NativeProfessionalExportSettings['colorSpace'] })}><option value="srgb">sRGB</option><option value="displayP3">Display P3</option><option value="adobeRgb">Adobe RGB</option><option value="rec2020">Rec.2020</option></select></label>
+      <label>Resize<select aria-label="Export resize mode" value={settings.resize.mode} onChange={(event) => { const mode = event.target.value; onChange({ ...settings, resize: mode === 'original' ? { mode } : { mode: mode as 'width' | 'height' | 'longEdge' | 'shortEdge', pixels: resizePixels } }) }}><option value="original">Original</option><option value="width">Width</option><option value="height">Height</option><option value="longEdge">Long edge</option><option value="shortEdge">Short edge</option></select></label>
+      {settings.resize.mode !== 'original' && 'pixels' in settings.resize && <label>Pixels<input aria-label="Export resize pixels" type="number" min="1" value={settings.resize.pixels} onChange={(event) => onChange({ ...settings, resize: { mode: settings.resize.mode as 'width' | 'height' | 'longEdge' | 'shortEdge', pixels: Math.max(1, Number(event.target.value) || 1) } })} /></label>}
+      <label>Sharpen<select aria-label="Output sharpen" value={settings.outputSharpen} onChange={(event) => onChange({ ...settings, outputSharpen: event.target.value as 'off' | 'screen' })}><option value="off">Off</option><option value="screen">Screen</option></select></label>
+      <label>Amount<select aria-label="Output sharpen amount" value={settings.sharpenAmount} disabled={settings.outputSharpen === 'off'} onChange={(event) => onChange({ ...settings, sharpenAmount: event.target.value as 'low' | 'standard' | 'high' })}><option value="low">Low</option><option value="standard">Standard</option><option value="high">High</option></select></label>
+      <label>Metadata<select aria-label="Export metadata policy" value={settings.metadata} onChange={(event) => onChange({ ...settings, metadata: event.target.value as NativeProfessionalExportSettings['metadata'] })}><option value="allMetadata">All safe metadata</option><option value="cameraMetadata">Camera only</option><option value="copyrightOnly">Copyright only</option><option value="none">None</option></select></label>
+      <label>Collision<select aria-label="Export collision policy" value={settings.collision} onChange={(event) => onChange({ ...settings, collision: event.target.value as NativeProfessionalExportSettings['collision'] })}><option value="autoRename">Auto rename</option><option value="fail">Fail</option><option value="overwrite">Overwrite</option></select></label>
+    </div>
+    <label>Filename<input aria-label="Export filename template" value={settings.filenameTemplate} onChange={(event) => onChange({ ...settings, filenameTemplate: event.target.value })} /></label>
+    <label><input type="checkbox" checked={settings.embedProfile} onChange={(event) => onChange({ ...settings, embedProfile: event.target.checked })} /> Embed ICC profile</label>
+    <label><input type="checkbox" checked={settings.includeLocation} disabled={settings.metadata === 'none' || settings.metadata === 'copyrightOnly'} onChange={(event) => onChange({ ...settings, includeLocation: event.target.checked })} /> Include GPS location (default off)</label>
+    <div className="portrait-regions"><button disabled={!nativeAvailable || busy} onClick={onExport}>{busy ? 'Exporting…' : `Export ${selectedCount > 1 ? selectedCount : 1}`}</button>{busy && <button onClick={onCancel}>Cancel safely</button>}</div>
+  </section>
+}
+
+function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo, canRedo, undo, redo, onExport, exportBusy }: {
   view: WorkspaceView; setView: (view: WorkspaceView) => void
   theme: Theme; setTheme: (theme: Theme) => void
   before: boolean; setBefore: (value: boolean) => void; canUndo: boolean; canRedo: boolean
-  undo: () => void; redo: () => void; onExport: () => void
+  undo: () => void; redo: () => void; onExport: () => void; exportBusy: boolean
 }) {
   return <header className="topbar">
     <div className="brand"><span className="brand-mark"><Aperture size={18} /></span><strong>Starroom</strong></div>
@@ -831,7 +859,7 @@ function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo,
       <IconButton label="Undo" disabled={!canUndo} onClick={undo}><Undo2 size={17} /></IconButton>
       <IconButton label="Redo" disabled={!canRedo} onClick={redo}><Redo2 size={17} /></IconButton>
       <select aria-label="Theme" value={theme} onChange={(event) => setTheme(event.target.value as Theme)}><option value="dark">Dark</option><option value="gray">Gray</option><option value="light">Light</option></select>
-      <button className="export-button" onClick={onExport}><Download size={15} /> Export JPEG</button>
+      <button className="export-button" disabled={exportBusy} onClick={onExport}><Download size={15} /> {exportBusy ? 'Exporting…' : 'Export'}</button>
     </div>
   </header>
 }
@@ -889,6 +917,10 @@ export function App() {
   const pendingNativeBefore = useRef<NativeEditSettings | null>(null)
   const nativeHistoryTimer = useRef<number | null>(null)
   const applyingNativeHistory = useRef(false)
+  const [exportSettings, setExportSettings] = useState<NativeProfessionalExportSettings>({ format: 'jpeg', bitDepth: 8, quality: 92, colorSpace: 'srgb', embedProfile: true,
+    resize: { mode: 'original' }, outputSharpen: 'off', sharpenAmount: 'standard', metadata: 'allMetadata', includeLocation: false,
+    copyright: null, filenameTemplate: '{original_name}-starroom', collision: 'autoRename' })
+  const [exportBusy, setExportBusy] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
@@ -1179,6 +1211,12 @@ export function App() {
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode,
     selected.whiteBalanceSample, selected.curveChannels, selected.opticsState,
     selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations,
+  )
+
+  const nativeSettingsForPhoto = (photo: PhotoItem) => toNativeSettings(
+    photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
+    photo.whiteBalanceSample, photo.curveChannels, photo.opticsState,
+    photo.layers, photo.mask, photo.skinRetouch, photo.healingOperations,
   )
 
   function applyWorkflowSettings(settings: ReturnType<typeof selectedNativeSettings>, label: string) {
@@ -1687,15 +1725,27 @@ export function App() {
     try {
       if (selected.renderBackend === 'native') {
         if (!selected.sourcePath) throw new Error('Native photo is missing its source path.')
-        const outputPath = await chooseNativeExportPath(selected.name)
-        if (!outputPath) {
+        const destination = await chooseNativeExportDirectory()
+        if (!destination) {
           setRenderStatus('Export cancelled')
           return
         }
-        const result = await exportNativeJpeg(selected.sourcePath, outputPath, selected.adjustments, selected.curvePoints, selected.mask,
-          selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations)
-        setNotice(`Native JPEG exported · ${result.width} × ${result.height} · ${result.inputProfile}`)
-        setRenderStatus(`Native CPU · ${result.workingSpace}`)
+        setExportBusy(true)
+        const requestedPhotos = view === 'library' && selectedLibraryIds.length
+          ? selectedLibraryIds.map((assetId) => photos.find((photo) => photo.libraryAsset?.id === assetId)).filter((photo): photo is PhotoItem => Boolean(photo))
+          : [selected]
+        if (requestedPhotos.some((photo) => photo.renderBackend !== 'native' || !photo.sourcePath)) throw new Error('Batch export requires Native source paths; Browser fallback is never silent.')
+        const result = await exportNativeBatch(destination, exportSettings, requestedPhotos.map((photo, index) => ({
+          assetId: photo.libraryAsset?.id ?? 0, sourcePath: photo.sourcePath!, originalName: photo.name,
+          captureDate: photo.libraryAsset?.metadata.captureTime ? new Date(photo.libraryAsset.metadata.captureTime * 1000).toISOString().slice(0, 10) : null,
+          rating: photo.rating, camera: photo.libraryAsset ? [photo.libraryAsset.metadata.cameraMake, photo.libraryAsset.metadata.cameraModel].filter(Boolean).join(' ') || null : null,
+          look: null, sequence: index + 1, sourceFingerprint: photo.libraryAsset?.contentFingerprint ?? photo.sourcePath!,
+          editStateIdentity: photo.id === selected.id ? nativeHistory?.stateVersion ?? 'workspace-transient' : `library-${photo.libraryAsset?.id ?? photo.id}`,
+          editSettings: nativeSettingsForPhoto(photo),
+        })))
+        setNotice(`Professional export · ${result.completed.length} completed · ${result.failed.length} failed`)
+        setRenderStatus(`Native full-resolution · ${exportSettings.colorSpace}`)
+        setExportBusy(false)
         return
       }
       const canvas = await renderImageSource(selected.src, selected.adjustments, Number.POSITIVE_INFINITY, selected.curvePoints, selected.mask)
@@ -1710,6 +1760,7 @@ export function App() {
       setNotice('Browser fallback JPEG exported without overwriting the original')
       setRenderStatus('Browser fallback preview')
     } catch (error) {
+      setExportBusy(false)
       setNotice(error instanceof Error ? error.message : 'Export failed')
       setRenderStatus('Export failed')
     }
@@ -1718,7 +1769,7 @@ export function App() {
   return <main className={`app theme-${theme}`} data-theme={theme}>
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
-      canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} />
+      canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} exportBusy={exportBusy} />
     <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
       <aside className="library-panel">
         <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
@@ -1819,6 +1870,9 @@ export function App() {
         </section>}
 
       <aside className="inspector-panel">
+        <ExportPanel settings={exportSettings} busy={exportBusy} selectedCount={view === 'library' ? Math.max(1, selectedLibraryIds.length) : 1}
+          nativeAvailable={(view === 'library' && selectedLibraryIds.length ? selectedLibraryIds.map((id) => photos.find((photo) => photo.libraryAsset?.id === id)).filter(Boolean) : [selected]).every((photo) => photo?.renderBackend === 'native')}
+          onChange={setExportSettings} onExport={() => void exportJpeg()} onCancel={() => void cancelNativeExport().then(() => setNotice('Export cancellation requested · completed files remain valid'))} />
         {view === 'library' && <LibraryMetadataPanel asset={libraryAssets.find((asset) => asset.id === selectedLibraryIds.at(-1)) ?? null}
           selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} />}
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>

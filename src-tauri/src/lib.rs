@@ -11,6 +11,11 @@ use starroom_ai_denoise::{
 };
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
+use starroom_export::{
+    BatchExportResult, ExportItemResult, ExportItemStatus,
+    ExportRequest as ProfessionalExportRequest, ExportSettings, NativeSharedGraphRenderer,
+    export_one, export_recipe_identity,
+};
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
 use starroom_heal::HealingOperation;
@@ -76,6 +81,7 @@ struct EngineCapabilities {
     portable_looks: bool,
     local_library: bool,
     persistent_history: bool,
+    professional_export: bool,
 }
 
 #[tauri::command]
@@ -103,6 +109,7 @@ fn engine_capabilities() -> EngineCapabilities {
         portable_looks: true,
         local_library: true,
         persistent_history: true,
+        professional_export: true,
     }
 }
 
@@ -2227,6 +2234,131 @@ fn native_export_jpeg(
     })
 }
 
+#[derive(Clone, Default)]
+struct NativeExportRuntime {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfessionalExportItemRequest {
+    asset_id: i64,
+    source_path: PathBuf,
+    original_name: String,
+    capture_date: Option<String>,
+    rating: u8,
+    camera: Option<String>,
+    look: Option<String>,
+    sequence: u32,
+    source_fingerprint: String,
+    edit_state_identity: String,
+    edit_settings: NativeEditSettings,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfessionalExportBatchRequest {
+    destination_directory: PathBuf,
+    settings: ExportSettings,
+    items: Vec<ProfessionalExportItemRequest>,
+}
+
+#[tauri::command]
+async fn native_export_batch(
+    portrait_runtime: State<'_, NativePortraitRuntime>,
+    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
+    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
+    export_runtime: State<'_, NativeExportRuntime>,
+    request: ProfessionalExportBatchRequest,
+) -> Result<BatchExportResult, String> {
+    export_runtime.cancelled.store(false, Ordering::Relaxed);
+    let mut prepared = Vec::with_capacity(request.items.len());
+    for item in request.items {
+        let requested_provider = item.edit_settings.ai_denoise_provider;
+        let mut settings = item.edit_settings.validated()?;
+        attach_portrait_masks(&mut settings, &portrait_runtime)?;
+        attach_generated_masks(&mut settings, &ai_mask_runtime)?;
+        let decoded = decode_source(&item.source_path)
+            .map_err(|error| format!("SourceMissing: {}: {error}", item.source_path.display()))?;
+        attach_ai_denoise(
+            &decoded,
+            &item.source_path,
+            &mut settings,
+            requested_provider,
+            &format!("export-{}-{}", item.asset_id, item.sequence),
+            &ai_denoise_runtime,
+        )?;
+        prepared.push((
+            ProfessionalExportRequest {
+                asset_id: item.asset_id,
+                source_path: item.source_path,
+                destination_directory: request.destination_directory.clone(),
+                original_name: item.original_name,
+                capture_date: item.capture_date,
+                rating: item.rating,
+                camera: item.camera,
+                look: item.look,
+                sequence: item.sequence,
+                source_fingerprint: item.source_fingerprint,
+                edit_state_identity: item.edit_state_identity,
+                settings: request.settings.clone(),
+            },
+            settings,
+        ));
+    }
+    let cancelled = Arc::clone(&export_runtime.cancelled);
+    tauri::async_runtime::spawn_blocking(move || {
+        let renderer = NativeSharedGraphRenderer;
+        let mut result = BatchExportResult::default();
+        for (request, settings) in prepared {
+            if cancelled.load(Ordering::Relaxed) {
+                result.cancelled.push(export_failure(
+                    &request,
+                    ExportItemStatus::Cancelled,
+                    "Cancelled",
+                ));
+                continue;
+            }
+            match export_one(&renderer, &request, &settings, &cancelled) {
+                Ok(item) => result.completed.push(item),
+                Err(starroom_export::ExportError::Cancelled) => result.cancelled.push(
+                    export_failure(&request, ExportItemStatus::Cancelled, "Cancelled"),
+                ),
+                Err(error) => result.failed.push(export_failure(
+                    &request,
+                    ExportItemStatus::Failed,
+                    &error.to_string(),
+                )),
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|error| format!("AtomicWriteFailed: export worker failed: {error}"))
+}
+
+fn export_failure(
+    request: &ProfessionalExportRequest,
+    status: ExportItemStatus,
+    error: &str,
+) -> ExportItemResult {
+    ExportItemResult {
+        asset_id: request.asset_id,
+        status,
+        destination: None,
+        width: None,
+        height: None,
+        recipe_identity: export_recipe_identity(request).unwrap_or_default(),
+        error: Some(error.into()),
+    }
+}
+
+#[tauri::command]
+fn native_export_cancel(runtime: State<'_, NativeExportRuntime>) -> bool {
+    runtime.cancelled.store(true, Ordering::Relaxed);
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2236,6 +2368,7 @@ pub fn run() {
         .manage(NativeAiDenoiseRuntime::default())
         .manage(NativeLibraryRuntime::default())
         .manage(NativeHistoryRuntime::default())
+        .manage(NativeExportRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
@@ -2269,7 +2402,9 @@ pub fn run() {
             history_undo,
             history_redo,
             history_snapshot_create,
-            history_snapshot_restore
+            history_snapshot_restore,
+            native_export_batch,
+            native_export_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");

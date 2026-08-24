@@ -292,6 +292,15 @@ pub struct LcmsTransform {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LittleCmsProvider;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BuiltinOutputProfile {
+    Srgb,
+    DisplayP3,
+    AdobeRgb,
+    Rec2020,
+}
+
 fn lcms_intent(intent: RenderingIntent) -> Intent {
     match intent {
         RenderingIntent::Perceptual => Intent::Perceptual,
@@ -359,6 +368,87 @@ impl LittleCmsProvider {
     pub fn srgb_profile_bytes(&self) -> Result<Vec<u8>, ColorManagementError> {
         Profile::new_srgb()
             .icc()
+            .map_err(|source| ColorManagementError::InvalidProfile {
+                role: ProfileRole::Output,
+                source,
+            })
+    }
+
+    pub fn builtin_output_profile_bytes(
+        &self,
+        profile: BuiltinOutputProfile,
+    ) -> Result<Vec<u8>, ColorManagementError> {
+        if profile == BuiltinOutputProfile::Srgb {
+            return self.srgb_profile_bytes();
+        }
+        let white = CIExyY {
+            x: 0.3127,
+            y: 0.3290,
+            Y: 1.0,
+        };
+        let primaries = match profile {
+            BuiltinOutputProfile::Srgb => unreachable!(),
+            BuiltinOutputProfile::DisplayP3 => CIExyYTRIPLE {
+                Red: CIExyY {
+                    x: 0.680,
+                    y: 0.320,
+                    Y: 1.0,
+                },
+                Green: CIExyY {
+                    x: 0.265,
+                    y: 0.690,
+                    Y: 1.0,
+                },
+                Blue: CIExyY {
+                    x: 0.150,
+                    y: 0.060,
+                    Y: 1.0,
+                },
+            },
+            BuiltinOutputProfile::AdobeRgb => CIExyYTRIPLE {
+                Red: CIExyY {
+                    x: 0.640,
+                    y: 0.330,
+                    Y: 1.0,
+                },
+                Green: CIExyY {
+                    x: 0.210,
+                    y: 0.710,
+                    Y: 1.0,
+                },
+                Blue: CIExyY {
+                    x: 0.150,
+                    y: 0.060,
+                    Y: 1.0,
+                },
+            },
+            BuiltinOutputProfile::Rec2020 => CIExyYTRIPLE {
+                Red: CIExyY {
+                    x: 0.708,
+                    y: 0.292,
+                    Y: 1.0,
+                },
+                Green: CIExyY {
+                    x: 0.170,
+                    y: 0.797,
+                    Y: 1.0,
+                },
+                Blue: CIExyY {
+                    x: 0.131,
+                    y: 0.046,
+                    Y: 1.0,
+                },
+            },
+        };
+        let gamma = match profile {
+            BuiltinOutputProfile::AdobeRgb => 2.199_218_8,
+            _ => 2.2,
+        };
+        let red = ToneCurve::new(gamma);
+        let green = ToneCurve::new(gamma);
+        let blue = ToneCurve::new(gamma);
+        Profile::new_rgb(&white, &primaries, &[&red, &green, &blue])
+            .and_then(|profile| profile.icc())
             .map_err(|source| ColorManagementError::InvalidProfile {
                 role: ProfileRole::Output,
                 source,
