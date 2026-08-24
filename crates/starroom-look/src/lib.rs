@@ -643,7 +643,7 @@ mod tests {
             17,
             13,
             (0..17 * 13)
-                .flat_map(|index| {
+                .flat_map(|index: usize| {
                     let value = if index.is_multiple_of(11) {
                         8.0
                     } else {
