@@ -1050,8 +1050,10 @@ mod tests {
             ExportPreset::deserialize(&preset.serialize().unwrap()).unwrap(),
             preset
         );
-        let mut settings = ExportSettings::default();
-        settings.bit_depth = 16;
+        let settings = ExportSettings {
+            bit_depth: 16,
+            ..ExportSettings::default()
+        };
         assert!(matches!(
             validate_settings(&settings),
             Err(ExportError::UnsupportedBitDepth(16))
