@@ -17,6 +17,9 @@ use starroom_heal::HealingOperation;
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
 };
+use starroom_library::{
+    AssetFlag, AssetRecord, ColorLabel, ImportResult, Library, LibraryQuery, ThumbnailSize,
+};
 use starroom_look::{
     GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
     mix_weighted,
@@ -70,6 +73,7 @@ struct EngineCapabilities {
     ai_denoise: bool,
     reference_match: bool,
     portable_looks: bool,
+    local_library: bool,
 }
 
 #[tauri::command]
@@ -95,7 +99,176 @@ fn engine_capabilities() -> EngineCapabilities {
         ai_denoise: true,
         reference_match: true,
         portable_looks: true,
+        local_library: true,
     }
+}
+
+#[derive(Clone, Default)]
+struct NativeLibraryRuntime {
+    library: Arc<Mutex<Option<Library>>>,
+    cancel_import: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryOpenResult {
+    path: PathBuf,
+    schema_version: i64,
+}
+
+fn default_library_path() -> Result<PathBuf, String> {
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "DatabaseOpenFailed: LOCALAPPDATA is unavailable".to_owned())?;
+    Ok(local.join("Starroom").join("starroom-library.sqlite"))
+}
+
+#[tauri::command]
+fn library_open_default(
+    runtime: State<'_, NativeLibraryRuntime>,
+) -> Result<LibraryOpenResult, String> {
+    let path = default_library_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("DatabaseOpenFailed: {error}"))?;
+    }
+    let library = Library::open(&path).map_err(|error| error.to_string())?;
+    let schema_version = library
+        .schema_version()
+        .map_err(|error| error.to_string())?;
+    *runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())? = Some(library);
+    Ok(LibraryOpenResult {
+        path,
+        schema_version,
+    })
+}
+
+#[tauri::command]
+async fn library_import_folder(
+    runtime: State<'_, NativeLibraryRuntime>,
+    root: PathBuf,
+) -> Result<ImportResult, String> {
+    let runtime = runtime.inner().clone();
+    runtime.cancel_import.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = Library::recursive_paths(&root).map_err(|error| error.to_string())?;
+        let mut guard = runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+        let library = guard
+            .as_mut()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
+        library
+            .import_paths(&paths, &runtime.cancel_import)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("ImportCancelled: worker failed: {error}"))?
+}
+
+#[tauri::command]
+fn library_cancel_import(runtime: State<'_, NativeLibraryRuntime>) -> bool {
+    runtime.cancel_import.store(true, Ordering::Relaxed);
+    true
+}
+
+#[tauri::command]
+fn library_query(
+    runtime: State<'_, NativeLibraryRuntime>,
+    query: LibraryQuery,
+) -> Result<Vec<AssetRecord>, String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .query(&query)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryWorkflowRequest {
+    asset_ids: Vec<i64>,
+    rating: Option<u8>,
+    flag: Option<AssetFlag>,
+    color_label: Option<ColorLabel>,
+}
+
+#[tauri::command]
+fn library_set_workflow(
+    runtime: State<'_, NativeLibraryRuntime>,
+    request: LibraryWorkflowRequest,
+) -> Result<(), String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .set_workflow(
+            &request.asset_ids,
+            request.rating,
+            request.flag,
+            request.color_label,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryKeywordRequest {
+    asset_ids: Vec<i64>,
+    names: Vec<String>,
+}
+
+#[tauri::command]
+fn library_add_keywords(
+    runtime: State<'_, NativeLibraryRuntime>,
+    request: LibraryKeywordRequest,
+) -> Result<(), String> {
+    let mut guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    guard
+        .as_mut()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .add_keywords(&request.asset_ids, &request.names)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn library_thumbnail(
+    runtime: State<'_, NativeLibraryRuntime>,
+    asset_id: i64,
+    size: ThumbnailSize,
+) -> Result<PathBuf, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = default_library_path()?
+            .parent()
+            .ok_or_else(|| "ThumbnailFailed: invalid cache root".to_owned())?
+            .join("cache")
+            .join("thumbnails");
+        let guard = runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+            .generate_thumbnail(asset_id, root, size)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("ThumbnailFailed: worker failed: {error}"))?
 }
 
 #[derive(Debug, Serialize)]
@@ -1885,6 +2058,7 @@ pub fn run() {
         .manage(NativePortraitRuntime::default())
         .manage(NativeAiMaskRuntime::default())
         .manage(NativeAiDenoiseRuntime::default())
+        .manage(NativeLibraryRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_status,
@@ -1905,7 +2079,14 @@ pub fn run() {
             native_reference_match,
             native_look_save,
             native_look_apply,
-            native_look_mix
+            native_look_mix,
+            library_open_default,
+            library_import_folder,
+            library_cancel_import,
+            library_query,
+            library_set_workflow,
+            library_add_keywords,
+            library_thumbnail
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");

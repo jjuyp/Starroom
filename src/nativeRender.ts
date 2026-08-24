@@ -4,6 +4,26 @@ import type { Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 
 export type RenderBackend = 'native' | 'browserFallback'
+export type NativeAssetFlag = 'unflagged' | 'pick' | 'reject'
+export type NativeColorLabel = 'none' | 'red' | 'yellow' | 'green' | 'blue' | 'purple'
+export interface NativeLibraryAsset {
+  id: number; sourcePath: string; sourceIdentity: string; contentFingerprint: string
+  fileSize: number; modifiedTime: number; rating: number; flag: NativeAssetFlag
+  colorLabel: NativeColorLabel; missing: boolean; projectReference: string | null
+  thumbnailCacheKey: string | null; keywords: string[]
+  metadata: { fileType: string; width: number | null; height: number | null; orientation: number | null
+    captureTime: number | null; cameraMake: string | null; cameraModel: string | null
+    lensMake: string | null; lensModel: string | null; focalLength: number | null
+    aperture: number | null; shutterSpeed: number | null; iso: number | null }
+}
+export interface NativeLibraryQuery {
+  text?: string | null; filename?: string | null; camera?: string | null; lens?: string | null
+  keyword?: string | null; minimumRating?: number | null; flag?: NativeAssetFlag | null
+  colorLabel?: NativeColorLabel | null; fileTypes?: string[]; minimumIso?: number | null
+  maximumIso?: number | null; captureFrom?: number | null; captureTo?: number | null
+  missing?: boolean | null; sort?: 'captureTime' | 'importTime' | 'filename' | 'rating'
+  direction?: 'ascending' | 'descending'; limit?: number; offset?: number
+}
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
@@ -412,6 +432,41 @@ export async function chooseNativeExportPath(sourceName: string) {
     defaultPath: `${base}-starroom.jpg`,
     filters: [{ name: 'JPEG image', extensions: ['jpg', 'jpeg'] }],
   })
+}
+
+export async function openNativeLibrary() {
+  return invoke<{ path: string; schemaVersion: number }>('library_open_default')
+}
+
+export async function chooseNativeLibraryFolder() {
+  const value = await open({ title: 'Import folder into Starroom Library', directory: true, multiple: false })
+  return typeof value === 'string' ? value : null
+}
+
+export async function importNativeLibraryFolder(root: string) {
+  return invoke<{ imported: number[]; alreadyPresent: string[]; duplicates: string[]; relinkCandidates: Array<[number, string]>; unsupported: string[]; failed: Array<[string, string]>; cancelled: boolean }>('library_import_folder', { root })
+}
+
+export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {
+  return invoke<NativeLibraryAsset[]>('library_query', { query: {
+    text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,
+    flag: null, colorLabel: null, fileTypes: [], minimumIso: null, maximumIso: null,
+    captureFrom: null, captureTo: null, missing: null, sort: 'importTime', direction: 'descending',
+    limit: 200, offset: 0, ...query,
+  } })
+}
+
+export async function updateNativeLibraryWorkflow(assetIds: number[], values: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) {
+  return invoke<void>('library_set_workflow', { request: { assetIds, rating: values.rating ?? null, flag: values.flag ?? null, colorLabel: values.colorLabel ?? null } })
+}
+
+export async function addNativeLibraryKeywords(assetIds: number[], names: string[]) {
+  return invoke<void>('library_add_keywords', { request: { assetIds, names } })
+}
+
+export async function nativeLibraryThumbnail(assetId: number, size: 'small256' | 'medium512' | 'large1024' = 'medium512') {
+  const path = await invoke<string>('library_thumbnail', { assetId, size })
+  return convertFileSrc(path)
 }
 
 export async function exportNativeJpeg(

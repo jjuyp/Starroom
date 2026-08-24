@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -19,6 +20,9 @@ import {
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
+  addNativeLibraryKeywords, chooseNativeLibraryFolder, importNativeLibraryFolder, nativeLibraryThumbnail,
+  openNativeLibrary, queryNativeLibrary, updateNativeLibraryWorkflow,
+  type NativeLibraryAsset, type NativeAssetFlag, type NativeColorLabel,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -31,6 +35,7 @@ interface PhotoItem {
   sourcePath?: string
   renderBackend: RenderBackend
   imported: boolean
+  libraryAsset?: NativeLibraryAsset
   rating: number
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
@@ -82,6 +87,28 @@ const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance
   if (type === 'luminance') return { type, minimum: .2, maximum: .8, feather: .05, invert: false }
   if (type === 'colorRange') return { type, reference: [.5, .5, .5], tolerance: .15, feather: .1, invert: false }
   return { type: 'none' }
+}
+
+function LibraryMetadataPanel({ asset, selectedCount, onWorkflow, onAddKeyword }: {
+  asset: NativeLibraryAsset | null; selectedCount: number
+  onWorkflow: (value: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) => void
+  onAddKeyword: (keyword: string) => void
+}) {
+  const [keyword, setKeyword] = useState('')
+  return <section className="library-metadata" aria-label="Library metadata">
+    <div className="inspector-head"><div><span className="eyebrow">Library selection</span><h2>{selectedCount || 0} selected</h2></div></div>
+    {!asset ? <div className="tool-note">Select a Library photo to inspect metadata and apply batch workflow fields.</div> : <>
+      <dl><dt>File</dt><dd>{asset.sourcePath.split(/[\\/]/).pop()}</dd><dt>Type</dt><dd>{asset.metadata.fileType.toUpperCase()}</dd>
+        <dt>Dimensions</dt><dd>{asset.metadata.width ?? '—'} × {asset.metadata.height ?? '—'}</dd>
+        <dt>Camera</dt><dd>{[asset.metadata.cameraMake, asset.metadata.cameraModel].filter(Boolean).join(' ') || '—'}</dd>
+        <dt>Lens</dt><dd>{[asset.metadata.lensMake, asset.metadata.lensModel].filter(Boolean).join(' ') || '—'}</dd>
+        <dt>ISO</dt><dd>{asset.metadata.iso ?? '—'}</dd><dt>Status</dt><dd>{asset.missing ? 'Missing source' : 'Online'}</dd></dl>
+      <label>Rating<select value={asset.rating} onChange={(event) => onWorkflow({ rating: Number(event.target.value) })}>{[0,1,2,3,4,5].map((value) => <option key={value} value={value}>{value ? `${value} star${value === 1 ? '' : 's'}` : 'Unrated'}</option>)}</select></label>
+      <label>Flag<select value={asset.flag} onChange={(event) => onWorkflow({ flag: event.target.value as NativeAssetFlag })}><option value="unflagged">Unflagged</option><option value="pick">Pick</option><option value="reject">Reject</option></select></label>
+      <label>Color label<select value={asset.colorLabel} onChange={(event) => onWorkflow({ colorLabel: event.target.value as NativeColorLabel })}>{['none','red','yellow','green','blue','purple'].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+      <div className="keyword-editor"><span>{asset.keywords.length ? asset.keywords.join(' · ') : 'No keywords'}</span><input value={keyword} placeholder="Add keyword" onChange={(event) => setKeyword(event.target.value)} /><button onClick={() => { if (keyword.trim()) { onAddKeyword(keyword); setKeyword('') } }}>Add</button></div>
+    </>}
+  </section>
 }
 
 /** UI edits only serializable native mask intent; all image math remains in Rust. */
@@ -397,6 +424,29 @@ function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit,
     </div>}
   </>
 }
+
+const libraryPhoto = (asset: NativeLibraryAsset, thumbnail: string): PhotoItem => ({
+  id: `library-${asset.id}`,
+  name: asset.sourcePath.split(/[\\/]/).pop() ?? asset.sourcePath,
+  src: thumbnail,
+  sourcePath: asset.sourcePath,
+  renderBackend: 'native',
+  imported: true,
+  libraryAsset: asset,
+  rating: asset.rating,
+  adjustments: { ...defaultAdjustments },
+  curvePoints: copyCurve(defaultCurvePoints),
+  curveChannels: defaultCurveChannels(),
+  whiteBalanceMode: 'sourceDefault',
+  whiteBalanceSample: null,
+  opticsState: { ...defaultNativeOpticsState },
+  mask: { ...defaultMask },
+  layers: [],
+  skinRetouch: defaultNativeSkinRetouch(),
+  healingOperations: [],
+  history: [],
+  future: [],
+})
 
 function CurveChannelTabs({ value, onChange }: { value: keyof NativeToneCurves; onChange: (value: keyof NativeToneCurves) => void }) {
   return <div className="curve-tabs" aria-label="Tone curve channel">{(['master', 'red', 'green', 'blue'] as const).map((channel) => <button key={channel}
@@ -818,10 +868,38 @@ export function App() {
   const [lookBPath, setLookBPath] = useState<string | null>(null)
   const [lookAWeight, setLookAWeight] = useState(70)
   const [lookBWeight, setLookBWeight] = useState(30)
+  const [libraryAssets, setLibraryAssets] = useState<NativeLibraryAsset[]>([])
+  const [selectedLibraryIds, setSelectedLibraryIds] = useState<number[]>([])
+  const [librarySearch, setLibrarySearch] = useState('')
+  const [libraryBusy, setLibraryBusy] = useState(false)
+  const libraryAnchor = useRef<number | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
   useEffect(() => () => objectUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    let active = true
+    void (async () => {
+      try {
+        await openNativeLibrary()
+        const assets = await queryNativeLibrary({ limit: 200 })
+        const thumbnails = await Promise.all(assets.map(async (asset) => {
+          try { return await nativeLibraryThumbnail(asset.id) } catch { return '' }
+        }))
+        if (!active) return
+        setLibraryAssets(assets)
+        const libraryPhotos = assets.map((asset, index) => libraryPhoto(asset, thumbnails[index]))
+        if (libraryPhotos.length) {
+          setPhotos((current) => [...libraryPhotos, ...current.filter((photo) => !photo.libraryAsset)])
+          setSelectedLibraryIds([assets[0].id])
+        }
+      } catch (error) {
+        if (active) setNotice(error instanceof Error ? error.message : 'Library initialization failed')
+      }
+    })()
+    return () => { active = false }
+  }, [])
   useEffect(() => {
     if (!notice) return
     const timeout = window.setTimeout(() => setNotice(''), 3500)
@@ -888,6 +966,59 @@ export function App() {
     setView('edit')
     setBefore(false)
     setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported`)
+  }
+
+  async function refreshLibrary(queryText = librarySearch) {
+    if (!nativeRuntimeAvailable()) return
+    setLibraryBusy(true)
+    try {
+      const assets = await queryNativeLibrary({ text: queryText.trim() || null, limit: 500, sort: 'importTime', direction: 'descending' })
+      const existing = new Map(photos.filter((photo) => photo.libraryAsset).map((photo) => [photo.libraryAsset!.id, photo]))
+      const rows = await Promise.all(assets.map(async (asset) => {
+        const current = existing.get(asset.id)
+        if (current) return { ...current, name: asset.sourcePath.split(/[\\/]/).pop() ?? asset.sourcePath, sourcePath: asset.sourcePath, rating: asset.rating, libraryAsset: asset }
+        const thumbnail = await nativeLibraryThumbnail(asset.id).catch(() => '')
+        return libraryPhoto(asset, thumbnail)
+      }))
+      setLibraryAssets(assets)
+      setPhotos((current) => [...rows, ...current.filter((photo) => !photo.libraryAsset)])
+      setSelectedLibraryIds((current) => current.filter((id) => assets.some((asset) => asset.id === id)))
+    } finally { setLibraryBusy(false) }
+  }
+
+  async function importLibraryFolder() {
+    const root = await chooseNativeLibraryFolder()
+    if (!root) return
+    setLibraryBusy(true)
+    try {
+      const result = await importNativeLibraryFolder(root)
+      await refreshLibrary()
+      setNotice(`Library import · ${result.imported.length} added · ${result.duplicates.length} duplicate · ${result.unsupported.length} unsupported`)
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Library import failed') }
+    finally { setLibraryBusy(false) }
+  }
+
+  function selectLibraryAsset(event: MouseEvent, index: number, asset: NativeLibraryAsset) {
+    if (event.shiftKey && libraryAnchor.current !== null) {
+      const start = Math.min(libraryAnchor.current, index); const end = Math.max(libraryAnchor.current, index)
+      setSelectedLibraryIds(libraryAssets.slice(start, end + 1).map((value) => value.id))
+    } else if (event.ctrlKey || event.metaKey) {
+      setSelectedLibraryIds((current) => current.includes(asset.id) ? current.filter((id) => id !== asset.id) : [...current, asset.id])
+      libraryAnchor.current = index
+    } else { setSelectedLibraryIds([asset.id]); libraryAnchor.current = index }
+    setSelectedId(`library-${asset.id}`)
+  }
+
+  async function updateLibraryWorkflow(values: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) {
+    if (!selectedLibraryIds.length) return
+    await updateNativeLibraryWorkflow(selectedLibraryIds, values)
+    await refreshLibrary()
+  }
+
+  async function addLibraryKeyword(keyword: string) {
+    if (!selectedLibraryIds.length) return
+    await addNativeLibraryKeywords(selectedLibraryIds, [keyword])
+    await refreshLibrary()
   }
 
   async function requestPhotoImport() {
@@ -1506,7 +1637,7 @@ export function App() {
     <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
       <aside className="library-panel">
         <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
-        <button className="import-button" onClick={requestPhotoImport}><ImagePlus size={16} /> Add photos</button>
+        <button className="import-button" onClick={() => view === 'library' ? void importLibraryFolder() : void requestPhotoImport()}><ImagePlus size={16} /> {view === 'library' ? 'Import folder' : 'Add photos'}</button>
         <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" multiple hidden onChange={(event) => { importPhotos(event.target.files); event.target.value = '' }} />
         <span className="format-note">Native: JPEG · PNG · TIFF · NEF · ARW · CR2/CR3 · DNG · RAF</span>
         <div className="library-group"><span className="eyebrow">Workspace</span>
@@ -1522,15 +1653,21 @@ export function App() {
       {!leftOpen && <button className="edge-toggle left" aria-label="Open library" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
 
       {view === 'library' ? <section className="library-browser" aria-label="Photo library">
-        <div className="library-browser-head"><div><span className="eyebrow">Photo workspace</span><h1>{filteredPhotos.length} photos</h1></div>
-          <button className="import-button compact" onClick={requestPhotoImport}><ImagePlus size={16} /> Add photos</button></div>
-        <div className="photo-grid">{filteredPhotos.map((photo) => <article key={photo.id} className={photo.id === selected.id ? 'photo-card selected' : 'photo-card'}>
-          <button className="photo-card-preview" onClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Edit ${photo.name}`}>
-            <img src={photo.src} alt={photo.name} />
-          </button>
-          <div><span title={photo.name}>{photo.name}</span><small>{photo.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {hasPhotoEdits(photo) ? 'Edited' : 'Original'}</small></div>
-          <button className="card-delete" aria-label={`Remove ${photo.name}`} title="Remove from Starroom (source stays on disk)" disabled={photos.length <= 1} onClick={() => removePhoto(photo.id)}><Trash2 size={15} /></button>
-        </article>)}</div>
+        <div className="library-browser-head"><div><span className="eyebrow">Local-first Library</span><h1>{libraryAssets.length} assets</h1></div>
+          <div className="library-actions"><input aria-label="Search Library" value={librarySearch} placeholder="Filename, camera, lens, keyword" onChange={(event) => setLibrarySearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refreshLibrary() }} />
+            <button disabled={libraryBusy} onClick={() => void refreshLibrary()}>{libraryBusy ? 'Working…' : 'Search'}</button>
+            <button className="import-button compact" disabled={libraryBusy} onClick={() => void importLibraryFolder()}><ImagePlus size={16} /> Import folder</button></div></div>
+        <div className="photo-grid virtual-grid" role="grid" aria-rowcount={libraryAssets.length}>{libraryAssets.map((asset, index) => {
+          const photo = photos.find((value) => value.libraryAsset?.id === asset.id)
+          if (!photo) return null
+          const selectedAsset = selectedLibraryIds.includes(asset.id)
+          return <article key={asset.id} role="gridcell" className={selectedAsset ? 'photo-card selected' : 'photo-card'}>
+            <button className="photo-card-preview" onClick={(event) => selectLibraryAsset(event, index, asset)} onDoubleClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Select ${photo.name}; double-click to edit`}>
+              {photo.src ? <img loading="lazy" src={photo.src} alt={photo.name} /> : <span className="missing-thumbnail">Thumbnail unavailable</span>}
+            </button>
+            <div><span title={photo.name}>{photo.name}</span><small>{asset.missing ? 'Missing' : `${asset.metadata.fileType.toUpperCase()} · ${asset.rating}★`} · {asset.keywords.join(', ') || 'No keywords'}</small></div>
+          </article>
+        })}</div>
       </section> : <section className="canvas-area">
           <div className="canvas-toolbar"><span>{selected.name}</span><div>
             <button className={selected.rating === 5 ? 'active rating-button' : 'rating-button'} onClick={toggleRating} title="Toggle five-star rating"><Star size={12} fill={selected.rating === 5 ? 'currentColor' : 'none'} /> {selected.rating === 5 ? '5★' : 'Rate'}</button>
@@ -1597,6 +1734,8 @@ export function App() {
         </section>}
 
       <aside className="inspector-panel">
+        {view === 'library' && <LibraryMetadataPanel asset={libraryAssets.find((asset) => asset.id === selectedLibraryIds.at(-1)) ?? null}
+          selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} />}
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
         <section className="portrait-panel" aria-label="Portrait masks">
           <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native'}>Detect faces</button></div>

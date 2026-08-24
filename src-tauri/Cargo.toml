@@ -35,3 +35,4 @@ starroom-heal = { path = "../crates/starroom-heal" }
 starroom-ai-denoise = { path = "../crates/starroom-ai-denoise" }
 starroom-reference = { path = "../crates/starroom-reference" }
 starroom-look = { path = "../crates/starroom-look" }
+starroom-library = { path = "../crates/starroom-library" }

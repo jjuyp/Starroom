@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const categories = ['web', 'color', 'raw', 'detail', 'optics', 'geometry', 'gpu', 'ai']
+const categories = ['web', 'library', 'color', 'raw', 'detail', 'optics', 'geometry', 'gpu', 'ai']
 const rustLabels = {
+  library: 'Library Check',
   color: 'Color Check', raw: 'RAW Check', detail: 'Detail Check', optics: 'Optics Check',
   geometry: 'Geometry Check', ai: 'AI Check',
   gpu: 'GPU Check',
@@ -11,6 +12,7 @@ const rustLabels = {
 
 const rules = {
   web: [/^src\//, /^src-tauri\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./],
+  library: [/^crates\/starroom-library\//],
   color: [/^crates\/starroom-(?:color|color-management|grading|reference|look)\//],
   raw: [/^crates\/starroom-(?:raw|imageio)\//, /^fixtures\/raw\//, /^fixtures\/colorchecker\//],
   detail: [/^crates\/starroom-(?:detail|heal|portrait|ai-denoise|look)\//],

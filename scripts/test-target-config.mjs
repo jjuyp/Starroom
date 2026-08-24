@@ -5,6 +5,11 @@ export const goldenTags = [
 ]
 
 export const targets = {
+  library: {
+    rust: [['test', '--locked', '-p', 'starroom-library']],
+    web: ['src/nativeRender.test.ts'],
+    golden: [],
+  },
   color: {
     rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
     web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],

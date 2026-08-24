@@ -19,6 +19,7 @@ members = [
   "crates/starroom-ai-denoise",
   "crates/starroom-reference",
   "crates/starroom-look",
+  "crates/starroom-library",
   "src-tauri",
 ]
 default-members = [
@@ -40,6 +41,7 @@ default-members = [
   "crates/starroom-ai-denoise",
   "crates/starroom-reference",
   "crates/starroom-look",
+  "crates/starroom-library",
 ]
 
 [workspace.package]
