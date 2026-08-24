@@ -1175,7 +1175,9 @@ fn advise_native_image(
         .map_err(|error| format!("advisor native graph failed: {error}"))?;
     let samples = rendered
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|rgb| {
             [
                 rgb[0] as f32 / 255.0,
@@ -1793,7 +1795,7 @@ fn source_rgba_for_portrait(path: &Path) -> Result<(u32, u32, Vec<u8>, String), 
             PortraitError::DetectionFailed(format!("source display transform: {error}"))
         })?;
     let mut rgba = Vec::with_capacity(rendered.width as usize * rendered.height as usize * 4);
-    for rgb in rendered.data.chunks_exact(3) {
+    for rgb in rendered.data.as_chunks::<3>().0 {
         rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
     }
     let identity = preview_source_identity(path).map_err(PortraitError::DetectionFailed)?;

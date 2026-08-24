@@ -352,7 +352,7 @@ fn decode_inner(
         dng: dng_color.clone(),
     });
     let mut rgb = Vec::with_capacity(source.len());
-    for camera in source.chunks_exact(3) {
+    for camera in source.as_chunks::<3>().0 {
         let xyz = camera_profile.camera_rgb_to_xyz_d65([
             f32::from(camera[0]) / 65_535.0,
             f32::from(camera[1]) / 65_535.0,

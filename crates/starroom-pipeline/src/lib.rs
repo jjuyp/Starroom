@@ -1105,7 +1105,9 @@ fn to_working_image(
 
     let mut pixels: Vec<[f32; 3]> = decoded
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|rgba| [rgba[0], rgba[1], rgba[2]])
         .collect();
     let input_source = LittleCmsProvider.input_to_working(
@@ -1139,7 +1141,9 @@ fn to_working_raw(
     }
     let mut pixels: Vec<[f32; 3]> = decoded
         .rgb
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
     apply_white_balance(
@@ -1292,7 +1296,9 @@ fn render_prepared_working_graph(
     let height = model_adjusted.height as u32;
     let pixels: Vec<[f32; 3]> = model_adjusted
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
     let creative = LinearImage::new(
@@ -1317,7 +1323,7 @@ fn render_prepared_working_graph(
         &settings.image_identity,
     )?;
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
-    for pixel in detailed.data.chunks_exact(3) {
+    for pixel in detailed.data.as_chunks::<3>().0 {
         let working_rgb = compress_to_unit_gamut(LinearRgb {
             r: pixel[0],
             g: pixel[1],

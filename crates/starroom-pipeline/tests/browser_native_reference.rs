@@ -49,7 +49,9 @@ fn native_cpu_stays_within_documented_browser_migration_tolerances() {
     for fixture in fixtures.cases {
         let rgba = fixture
             .source_rgb8
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|rgb| {
                 [
                     rgb[0] as f32 / 255.0,

@@ -213,7 +213,9 @@ fn expand(v: f32) -> f32 {
 pub fn encode_model_domain(image: &LinearImage) -> Result<(Vec<f32>, ModelDomain), AiDenoiseError> {
     let luma = image
         .data
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|p| (0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2]).max(0.0))
         .collect::<Vec<_>>();
     let black = quantile(luma.clone(), 0.01);
@@ -221,7 +223,7 @@ pub fn encode_model_domain(image: &LinearImage) -> Result<(Vec<f32>, ModelDomain
     let scale = (white - black).max(1.0e-4);
     let mut chw = vec![0.0; image.width * image.height * 3];
     let plane = image.width * image.height;
-    for (i, p) in image.data.chunks_exact(3).enumerate() {
+    for (i, p) in image.data.as_chunks::<3>().0.iter().enumerate() {
         let s = rec2020_to_linear_srgb([p[0], p[1], p[2]]);
         for c in 0..3 {
             chw[c * plane + i] = srgb_encode(compress((s[c] - black) / scale)).clamp(0.0, 1.0);
@@ -446,8 +448,10 @@ pub fn apply_residual(
     let mut data = Vec::with_capacity(image.data.len());
     for (i, (src, res)) in image
         .data
-        .chunks_exact(3)
-        .zip(residual.values.chunks_exact(3))
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(residual.values.as_chunks::<3>().0.iter())
         .enumerate()
     {
         let skin = skin_mask.map_or(0.0, |m| m[i].clamp(0.0, 1.0));

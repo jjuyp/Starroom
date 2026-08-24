@@ -89,7 +89,7 @@ pub fn analyze(image: &LinearImage) -> Result<ReferenceAnalysis, ReferenceError>
     let mut samples = Vec::with_capacity(image.width * image.height);
     let mut lumas = Vec::with_capacity(samples.capacity());
     let mut hash = Sha256::new();
-    for p in image.data.chunks_exact(3) {
+    for p in image.data.as_chunks::<3>().0 {
         for v in p {
             hash.update(v.to_le_bytes());
         }
