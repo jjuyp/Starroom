@@ -3764,11 +3764,14 @@ name = "starroom-export"
 version = "0.2.0"
 dependencies = [
  "image",
+ "kamadak-exif",
  "serde",
  "serde_json",
  "sha2",
  "starroom-color-management",
+ "starroom-history",
  "starroom-imageio",
+ "starroom-library",
  "starroom-pipeline",
  "thiserror 2.0.20",
 ]
@@ -3815,6 +3818,7 @@ dependencies = [
  "serde",
  "starroom-raw",
  "thiserror 2.0.20",
+ "tiff",
 ]
 
 [[package]]
