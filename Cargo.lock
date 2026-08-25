@@ -3773,6 +3773,7 @@ dependencies = [
  "starroom-imageio",
  "starroom-library",
  "starroom-pipeline",
+ "starroom-render",
  "thiserror 2.0.20",
 ]
 
