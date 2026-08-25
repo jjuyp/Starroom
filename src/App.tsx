@@ -25,7 +25,7 @@ import {
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
-  cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, type NativeProfessionalExportSettings,
+  cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
 } from './nativeRender'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
@@ -1804,14 +1804,25 @@ export function App() {
           ? selectedLibraryIds.map((assetId) => photos.find((photo) => photo.libraryAsset?.id === assetId)).filter((photo): photo is PhotoItem => Boolean(photo))
           : [selected]
         if (requestedPhotos.some((photo) => photo.renderBackend !== 'native' || !photo.sourcePath)) throw new Error('Batch export requires Native source paths; Browser fallback is never silent.')
-        const result = await exportNativeBatch(destination, exportSettings, requestedPhotos.map((photo, index) => ({
-          assetId: photo.libraryAsset?.id ?? 0, sourcePath: photo.sourcePath!, originalName: photo.name,
-          captureDate: photo.libraryAsset?.metadata.captureTime ? new Date(photo.libraryAsset.metadata.captureTime * 1000).toISOString().slice(0, 10) : null,
-          rating: photo.rating, keywords: photo.libraryAsset?.keywords ?? [], camera: photo.libraryAsset ? [photo.libraryAsset.metadata.cameraMake, photo.libraryAsset.metadata.cameraModel].filter(Boolean).join(' ') || null : null,
-          look: null, sequence: index + 1, sourceFingerprint: photo.libraryAsset?.contentFingerprint ?? photo.sourcePath!,
-          editStateIdentity: photo.id === selected.id ? nativeHistory?.stateVersion ?? 'workspace-transient' : `library-${photo.libraryAsset?.id ?? photo.id}`,
-          editSettings: nativeSettingsForPhoto(photo),
-        })))
+        const progressTimer = window.setInterval(() => {
+          void queryNativeExportProgress().then(({ progress }) => {
+            setRenderStatus(`Native export · ${progress.processed}/${progress.total} · ${progress.failed} failed`)
+          }).catch(() => undefined)
+        }, 250)
+        const result = await (async () => {
+          try {
+            return await exportNativeBatch(destination, exportSettings, requestedPhotos.map((photo, index) => ({
+              assetId: photo.libraryAsset?.id ?? 0, sourcePath: photo.sourcePath!, originalName: photo.name,
+              captureDate: photo.libraryAsset?.metadata.captureTime ? new Date(photo.libraryAsset.metadata.captureTime * 1000).toISOString().slice(0, 10) : null,
+              rating: photo.rating, keywords: photo.libraryAsset?.keywords ?? [], camera: photo.libraryAsset ? [photo.libraryAsset.metadata.cameraMake, photo.libraryAsset.metadata.cameraModel].filter(Boolean).join(' ') || null : null,
+              look: null, sequence: index + 1, sourceFingerprint: photo.libraryAsset?.contentFingerprint ?? photo.sourcePath!,
+              editStateIdentity: photo.id === selected.id ? nativeHistory?.stateVersion ?? 'workspace-transient' : `library-${photo.libraryAsset?.id ?? photo.id}`,
+              editSettings: nativeSettingsForPhoto(photo),
+            })))
+          } finally {
+            window.clearInterval(progressTimer)
+          }
+        })()
         setNotice(`Professional export · ${result.completed.length} completed · ${result.failed.length} failed`)
         setRenderStatus(`Native full-resolution · ${exportSettings.colorSpace}`)
         setExportBusy(false)

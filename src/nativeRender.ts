@@ -46,6 +46,10 @@ export interface NativeProfessionalExportItem {
   editStateIdentity: string; editSettings: NativeEditSettings
 }
 export interface NativeBatchExportResult { completed: unknown[]; failed: unknown[]; cancelled: unknown[]; skipped: unknown[] }
+export interface NativeExportProgress {
+  running: boolean
+  progress: { processed: number; total: number; completed: number; failed: number; cancelled: number }
+}
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
@@ -522,6 +526,7 @@ export async function exportNativeBatch(destinationDirectory: string, settings: 
 }
 
 export async function cancelNativeExport() { return invoke<boolean>('native_export_cancel') }
+export async function queryNativeExportProgress() { return invoke<NativeExportProgress>('native_export_progress') }
 
 export async function exportNativeJpeg(
   sourcePath: string,

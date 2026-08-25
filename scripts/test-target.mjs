@@ -83,6 +83,9 @@ if (level === 'full') {
     run('Rust format', 'cargo', ['fmt', '--all', '--', '--check'])
     run('Rust clippy', 'cargo', ['clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings'])
     run('Full Rust workspace', 'cargo', ['test', '--locked', '--workspace'])
+    if (process.env.STARROOM_PERFORMANCE_GATE === 'true') {
+      for (const rustArgs of targets.performance.rust) run('M28 performance corpus', 'cargo', rustArgs)
+    }
   }
   finish()
 }

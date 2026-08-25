@@ -12,7 +12,7 @@ use starroom_ai_denoise::{
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_export::{
-    BatchExportResult, ExportItemResult, ExportItemStatus,
+    BatchExportResult, BatchProgress, ExportItemResult, ExportItemStatus,
     ExportRequest as ProfessionalExportRequest, ExportSettings, NativeSharedGraphRenderer,
     export_one, export_recipe_identity,
 };
@@ -2407,9 +2407,26 @@ fn native_export_jpeg(
     })
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeExportProgress {
+    running: bool,
+    progress: BatchProgress,
+}
+
+#[derive(Clone)]
 struct NativeExportRuntime {
     cancelled: Arc<AtomicBool>,
+    progress: Arc<Mutex<NativeExportProgress>>,
+}
+
+impl Default for NativeExportRuntime {
+    fn default() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(Mutex::new(NativeExportProgress::default())),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2446,70 +2463,125 @@ async fn native_export_batch(
     request: ProfessionalExportBatchRequest,
 ) -> Result<BatchExportResult, String> {
     export_runtime.cancelled.store(false, Ordering::Relaxed);
-    let mut prepared = Vec::with_capacity(request.items.len());
+    let total = request.items.len();
+    set_export_progress(&export_runtime, true, total, &BatchExportResult::default())?;
+    let mut result = BatchExportResult::default();
     for item in request.items {
-        let requested_provider = item.edit_settings.ai_denoise_provider;
-        let mut settings = item.edit_settings.validated()?;
-        attach_portrait_masks(&mut settings, &portrait_runtime)?;
-        attach_generated_masks(&mut settings, &ai_mask_runtime)?;
-        let decoded = decode_source(&item.source_path)
-            .map_err(|error| format!("SourceMissing: {}: {error}", item.source_path.display()))?;
-        attach_ai_denoise(
-            &decoded,
-            &item.source_path,
-            &mut settings,
-            requested_provider,
-            &format!("export-{}-{}", item.asset_id, item.sequence),
-            &ai_denoise_runtime,
-        )?;
-        prepared.push((
-            ProfessionalExportRequest {
-                asset_id: item.asset_id,
-                source_path: item.source_path,
-                destination_directory: request.destination_directory.clone(),
-                original_name: item.original_name,
-                capture_date: item.capture_date,
-                rating: item.rating,
-                keywords: item.keywords,
-                camera: item.camera,
-                look: item.look,
-                sequence: item.sequence,
-                source_fingerprint: item.source_fingerprint,
-                edit_state_identity: item.edit_state_identity,
-                settings: request.settings.clone(),
-            },
-            settings,
-        ));
-    }
-    let cancelled = Arc::clone(&export_runtime.cancelled);
-    tauri::async_runtime::spawn_blocking(move || {
-        let renderer = NativeSharedGraphRenderer;
-        let mut result = BatchExportResult::default();
-        for (request, settings) in prepared {
-            if cancelled.load(Ordering::Relaxed) {
-                result.cancelled.push(export_failure(
-                    &request,
-                    ExportItemStatus::Cancelled,
-                    "Cancelled",
+        let professional = ProfessionalExportRequest {
+            asset_id: item.asset_id,
+            source_path: item.source_path.clone(),
+            destination_directory: request.destination_directory.clone(),
+            original_name: item.original_name,
+            capture_date: item.capture_date,
+            rating: item.rating,
+            keywords: item.keywords,
+            camera: item.camera,
+            look: item.look,
+            sequence: item.sequence,
+            source_fingerprint: item.source_fingerprint,
+            edit_state_identity: item.edit_state_identity,
+            settings: request.settings.clone(),
+        };
+        if export_runtime.cancelled.load(Ordering::Relaxed) {
+            result.cancelled.push(export_failure(
+                &professional,
+                ExportItemStatus::Cancelled,
+                "Cancelled",
+            ));
+            set_export_progress(&export_runtime, true, total, &result)?;
+            continue;
+        }
+        let prepared = (|| -> Result<RenderSettings, String> {
+            let requested_provider = item.edit_settings.ai_denoise_provider;
+            let mut settings = item.edit_settings.validated()?;
+            attach_portrait_masks(&mut settings, &portrait_runtime)?;
+            attach_generated_masks(&mut settings, &ai_mask_runtime)?;
+            let decoded = decode_source(&item.source_path).map_err(|error| {
+                format!("SourceMissing: {}: {error}", item.source_path.display())
+            })?;
+            attach_ai_denoise(
+                &decoded,
+                &item.source_path,
+                &mut settings,
+                requested_provider,
+                &format!("export-{}-{}", item.asset_id, item.sequence),
+                &ai_denoise_runtime,
+            )?;
+            Ok(settings)
+        })();
+        let settings = match prepared {
+            Ok(settings) => settings,
+            Err(error) => {
+                result.failed.push(export_failure(
+                    &professional,
+                    ExportItemStatus::Failed,
+                    &error,
                 ));
+                set_export_progress(&export_runtime, true, total, &result)?;
                 continue;
             }
-            match export_one(&renderer, &request, &settings, &cancelled) {
-                Ok(item) => result.completed.push(item),
-                Err(starroom_export::ExportError::Cancelled) => result.cancelled.push(
-                    export_failure(&request, ExportItemStatus::Cancelled, "Cancelled"),
-                ),
-                Err(error) => result.failed.push(export_failure(
-                    &request,
-                    ExportItemStatus::Failed,
-                    &error.to_string(),
-                )),
-            }
+        };
+        let cancelled = Arc::clone(&export_runtime.cancelled);
+        let item_result = tauri::async_runtime::spawn_blocking(move || {
+            export_one(
+                &NativeSharedGraphRenderer,
+                &professional,
+                &settings,
+                &cancelled,
+            )
+            .map_err(|error| (professional, error))
+        })
+        .await
+        .map_err(|error| format!("AtomicWriteFailed: export worker failed: {error}"))?;
+        match item_result {
+            Ok(item) => result.completed.push(item),
+            Err((request, starroom_export::ExportError::Cancelled)) => result.cancelled.push(
+                export_failure(&request, ExportItemStatus::Cancelled, "Cancelled"),
+            ),
+            Err((request, error)) => result.failed.push(export_failure(
+                &request,
+                ExportItemStatus::Failed,
+                &error.to_string(),
+            )),
         }
-        result
-    })
-    .await
-    .map_err(|error| format!("AtomicWriteFailed: export worker failed: {error}"))
+        set_export_progress(&export_runtime, true, total, &result)?;
+    }
+    set_export_progress(&export_runtime, false, total, &result)?;
+    Ok(result)
+}
+
+fn set_export_progress(
+    runtime: &NativeExportRuntime,
+    running: bool,
+    total: usize,
+    result: &BatchExportResult,
+) -> Result<(), String> {
+    let processed = result.completed.len() + result.failed.len() + result.cancelled.len();
+    *runtime
+        .progress
+        .lock()
+        .map_err(|_| "export progress lock was poisoned".to_owned())? = NativeExportProgress {
+        running,
+        progress: BatchProgress {
+            processed,
+            total,
+            completed: result.completed.len(),
+            failed: result.failed.len(),
+            cancelled: result.cancelled.len(),
+        },
+    };
+    Ok(())
+}
+
+#[tauri::command]
+fn native_export_progress(
+    runtime: State<'_, NativeExportRuntime>,
+) -> Result<NativeExportProgress, String> {
+    runtime
+        .progress
+        .lock()
+        .map(|progress| *progress)
+        .map_err(|_| "export progress lock was poisoned".to_owned())
 }
 
 fn export_failure(
@@ -2586,7 +2658,8 @@ pub fn run() {
             history_snapshot_rename,
             history_snapshot_delete,
             native_export_batch,
-            native_export_cancel
+            native_export_cancel,
+            native_export_progress
         ])
         .run(tauri::generate_context!())
         .expect("error while running Starroom");
