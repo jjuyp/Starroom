@@ -49,7 +49,10 @@ use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
-    scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
+    scheduler::{
+        Completion, DEFAULT_TILE_EDGE, RenderCacheIdentity, RenderScheduler, SchedulerStatus,
+        Viewport,
+    },
 };
 use std::path::{Path, PathBuf};
 use std::{
@@ -971,7 +974,25 @@ struct NativePreviewRequest {
     max_edge: u32,
     #[serde(default = "default_prefer_gpu")]
     prefer_gpu: bool,
+    #[serde(default)]
+    interaction_phase: PreviewInteractionPhase,
     settings: NativeEditSettings,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum PreviewInteractionPhase {
+    Interactive,
+    #[default]
+    Final,
+}
+
+fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 {
+    match phase {
+        PreviewInteractionPhase::Interactive => max_edge.min(1024),
+        PreviewInteractionPhase::Final => max_edge,
+    }
+    .clamp(256, 4096)
 }
 
 /// Process-wide M13 scheduler state. It holds only derived preview/cache bytes and request
@@ -2209,13 +2230,32 @@ fn native_preview(
     ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
-    let graph_identity = serde_json::to_string(&request.settings)
-        .map_err(|error| format!("native preview graph identity serialization failed: {error}"))?;
+    let source_identity = preview_source_identity(&request.source_path)?;
+    let graph_identity = RenderCacheIdentity {
+        source_identity: source_identity.clone(),
+        render_state: serde_json::to_string(&request.settings).map_err(|error| {
+            format!("native preview render identity serialization failed: {error}")
+        })?,
+        layer_state: serde_json::to_string(&request.settings.layers).map_err(|error| {
+            format!("native preview layer identity serialization failed: {error}")
+        })?,
+        mask_identity: serde_json::to_string(&(
+            &request.settings.layers,
+            &request.settings.skin_retouch,
+            &request.settings.healing_operations,
+        ))
+        .map_err(|error| format!("native preview mask identity serialization failed: {error}"))?,
+        geometry_state: serde_json::to_string(&request.settings.geometry).map_err(|error| {
+            format!("native preview geometry identity serialization failed: {error}")
+        })?,
+        color_transform: "display:srgb:relative-colorimetric:bpc".into(),
+    }
+    .fingerprint();
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, &portrait_runtime)?;
     attach_generated_masks(&mut settings, &ai_mask_runtime)?;
-    let requested_edge = request.max_edge.clamp(256, 4096);
+    let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
     let decoded = decode_source_preview(&request.source_path, level.max_edge())
         .map_err(|error| format!("native preview decode failed: {error}"))?;
@@ -2228,7 +2268,6 @@ fn native_preview(
         &ai_denoise_runtime,
     )?;
     let (source_width, source_height) = source_dimensions(&decoded);
-    let source_identity = preview_source_identity(&request.source_path)?;
     let job = scheduler
         .0
         .lock()
@@ -2629,6 +2668,26 @@ mod tests {
         let mut settings = settings();
         settings.exposure = f32::NAN;
         assert!(settings.validated().is_err());
+    }
+
+    #[test]
+    fn m28_interactive_preview_is_bounded_and_final_restores_requested_quality() {
+        assert_eq!(
+            preview_requested_edge(1800, PreviewInteractionPhase::Interactive),
+            1024
+        );
+        assert_eq!(
+            preview_requested_edge(1800, PreviewInteractionPhase::Final),
+            1800
+        );
+        assert_eq!(
+            preview_requested_edge(9000, PreviewInteractionPhase::Final),
+            4096
+        );
+        assert_eq!(
+            preview_requested_edge(1, PreviewInteractionPhase::Interactive),
+            256
+        );
     }
 
     #[test]

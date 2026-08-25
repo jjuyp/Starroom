@@ -96,6 +96,37 @@ pub struct TileIdentity {
     pub generation: u64,
 }
 
+/// Canonical cache identity. Callers must supply every state family explicitly so adding a local
+/// mask or changing output colour cannot accidentally reuse a stale frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderCacheIdentity {
+    pub source_identity: String,
+    pub render_state: String,
+    pub layer_state: String,
+    pub mask_identity: String,
+    pub geometry_state: String,
+    pub color_transform: String,
+}
+
+impl RenderCacheIdentity {
+    pub fn fingerprint(&self) -> String {
+        let mut hash = Sha256::new();
+        hash.update(b"starroom-render-cache-v2\0");
+        for value in [
+            &self.source_identity,
+            &self.render_state,
+            &self.layer_state,
+            &self.mask_identity,
+            &self.geometry_state,
+            &self.color_transform,
+        ] {
+            hash.update(value.as_bytes());
+            hash.update([0]);
+        }
+        format!("{:x}", hash.finalize())
+    }
+}
+
 impl TileIdentity {
     pub fn cache_key(&self) -> String {
         let mut hash = Sha256::new();
@@ -161,6 +192,45 @@ impl RenderJob {
             priority: TilePriority::VisibleViewport,
         }
     }
+
+    /// Returns only tiles whose output intersects a changed local region expanded by the graph
+    /// halo. Geometry changes must use `full_frame_tile` because their coordinate mapping is global.
+    pub fn dirty_tiles(&self, changed: PixelRect, halo: u32) -> Vec<ScheduledTile> {
+        let frame = PixelRect {
+            x: 0,
+            y: 0,
+            width: self.preview_size.0,
+            height: self.preview_size.1,
+        };
+        let right = changed
+            .x
+            .saturating_add(changed.width)
+            .saturating_add(halo)
+            .min(frame.width);
+        let bottom = changed
+            .y
+            .saturating_add(changed.height)
+            .saturating_add(halo)
+            .min(frame.height);
+        let expanded = PixelRect {
+            x: changed.x.saturating_sub(halo),
+            y: changed.y.saturating_sub(halo),
+            width: right.saturating_sub(changed.x.saturating_sub(halo)),
+            height: bottom.saturating_sub(changed.y.saturating_sub(halo)),
+        };
+        self.tiles
+            .iter()
+            .filter(|tile| intersects(tile.tile.output, expanded))
+            .cloned()
+            .collect()
+    }
+}
+
+fn intersects(left: PixelRect, right: PixelRect) -> bool {
+    left.x < right.x.saturating_add(right.width)
+        && right.x < left.x.saturating_add(left.width)
+        && left.y < right.y.saturating_add(right.height)
+        && right.y < left.y.saturating_add(left.height)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +255,8 @@ pub struct SchedulerStatus {
     pub cached_ram_bytes: usize,
     pub cached_vram_bytes: usize,
     pub dropped_stale_jobs: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +283,8 @@ pub struct RenderScheduler {
     cached_ram_bytes: usize,
     cached_vram_bytes: usize,
     dropped_stale_jobs: u64,
+    cache_hits: u64,
+    cache_misses: u64,
 }
 
 impl Default for RenderScheduler {
@@ -232,6 +306,8 @@ impl RenderScheduler {
             cached_ram_bytes: 0,
             cached_vram_bytes: 0,
             dropped_stale_jobs: 0,
+            cache_hits: 0,
+            cache_misses: 0,
         }
     }
 
@@ -307,7 +383,13 @@ impl RenderScheduler {
 
     pub fn cached_tile(&mut self, identity: &TileIdentity) -> Option<Vec<u8>> {
         let key = identity.cache_key();
-        let bytes = self.cache.get(&key)?.bytes.clone();
+        let Some(bytes) = self.cache.get(&key).map(|entry| entry.bytes.clone()) else {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            crate::profiling::record_cache(false);
+            return None;
+        };
+        self.cache_hits = self.cache_hits.saturating_add(1);
+        crate::profiling::record_cache(true);
         self.touch(&key);
         Some(bytes)
     }
@@ -319,6 +401,8 @@ impl RenderScheduler {
             cached_ram_bytes: self.cached_ram_bytes,
             cached_vram_bytes: self.cached_vram_bytes,
             dropped_stale_jobs: self.dropped_stale_jobs,
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
         }
     }
 
@@ -584,6 +668,86 @@ mod tests {
             second.tiles[0].identity.cache_key(),
             third.tiles[0].identity.cache_key()
         );
+    }
+
+    #[test]
+    fn cache_identity_covers_source_layers_masks_geometry_and_color() {
+        let base = RenderCacheIdentity {
+            source_identity: "source-a".into(),
+            render_state: "tone-a".into(),
+            layer_state: "layers-a".into(),
+            mask_identity: "mask-a".into(),
+            geometry_state: "geometry-a".into(),
+            color_transform: "display-p3".into(),
+        };
+        let stable = base.clone();
+        assert_eq!(base.fingerprint(), stable.fingerprint());
+        for changed in [
+            RenderCacheIdentity {
+                source_identity: "source-b".into(),
+                ..base.clone()
+            },
+            RenderCacheIdentity {
+                render_state: "tone-b".into(),
+                ..base.clone()
+            },
+            RenderCacheIdentity {
+                layer_state: "layers-b".into(),
+                ..base.clone()
+            },
+            RenderCacheIdentity {
+                mask_identity: "mask-b".into(),
+                ..base.clone()
+            },
+            RenderCacheIdentity {
+                geometry_state: "geometry-b".into(),
+                ..base.clone()
+            },
+            RenderCacheIdentity {
+                color_transform: "rec2020".into(),
+                ..base.clone()
+            },
+        ] {
+            assert_ne!(base.fingerprint(), changed.fingerprint());
+        }
+    }
+
+    #[test]
+    fn local_dirty_region_selects_subset_and_cache_counts_are_explicit() {
+        let mut scheduler = RenderScheduler::default();
+        let job = scheduler.schedule_preview(
+            "source",
+            "graph",
+            4096,
+            4096,
+            4096,
+            Viewport::full(4096, 4096),
+            512,
+            32,
+        );
+        let dirty = job.dirty_tiles(
+            PixelRect {
+                x: 1024,
+                y: 1024,
+                width: 64,
+                height: 64,
+            },
+            32,
+        );
+        assert!(!dirty.is_empty());
+        assert!(dirty.len() < job.tiles.len());
+        assert!(scheduler.cached_tile(&dirty[0].identity).is_none());
+        assert_eq!(
+            scheduler.complete_tile(&dirty[0], vec![1, 2, 3], 0),
+            Completion::Stored
+        );
+        assert_eq!(
+            scheduler.cached_tile(&dirty[0].identity),
+            Some(vec![1, 2, 3])
+        );
+        let status = scheduler.status();
+        assert_eq!(status.cache_misses, 1);
+        assert_eq!(status.cache_hits, 1);
     }
 
     #[test]

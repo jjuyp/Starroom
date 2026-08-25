@@ -4,6 +4,7 @@ import type { Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 
 export type RenderBackend = 'native' | 'browserFallback'
+export type NativePreviewInteractionPhase = 'interactive' | 'final'
 export type NativeAssetFlag = 'unflagged' | 'pick' | 'reject'
 export type NativeColorLabel = 'none' | 'red' | 'yellow' | 'green' | 'blue' | 'purple'
 export type NativeSmartPredicate = { rating: { minimum: number } } | { flag: { value: NativeAssetFlag } } | { colorLabel: { value: NativeColorLabel } } | { camera: { value: string } } | { lens: { value: string } } | { fileType: { value: string } } | { keyword: { value: string } }
@@ -412,6 +413,7 @@ export async function renderNativePreview(
   maxEdge = 1800,
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
   healingOperations: NativeHealingOperation[] = [],
+  interactionPhase: NativePreviewInteractionPhase = 'final',
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
@@ -420,7 +422,7 @@ export async function renderNativePreview(
   if (superseded) void cancelNativeAiDenoise(superseded)
   try {
     const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
     })
     return parseNativePreviewFrame(frame)
   } finally {

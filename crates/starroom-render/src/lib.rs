@@ -3,6 +3,7 @@
 //! same logical stage order and invalidation rules.
 
 pub mod gpu;
+pub mod profiling;
 pub mod scheduler;
 
 use serde::{Deserialize, Serialize};
@@ -15,16 +16,22 @@ pub enum StageId {
     Decode,
     InputTransform,
     WhiteBalance,
+    AiDenoise,
     Exposure,
     Tone,
     Curve,
     ColorMixer,
     ColorGrading,
+    Mask,
     Layers,
+    Skin,
+    Healing,
     Detail,
     Optics,
     Geometry,
+    Resize,
     DisplayTransform,
+    Encode,
     Export,
 }
 
@@ -50,16 +57,22 @@ impl Default for RenderGraph {
             Decode,
             InputTransform,
             WhiteBalance,
+            AiDenoise,
             Exposure,
             Tone,
             Curve,
             ColorMixer,
             ColorGrading,
+            Mask,
             Layers,
+            Skin,
+            Healing,
             Detail,
             Optics,
             Geometry,
+            Resize,
             DisplayTransform,
+            Encode,
             Export,
         ];
         let mut stages = Vec::with_capacity(linear.len());
@@ -70,7 +83,7 @@ impl Default for RenderGraph {
                 vec![linear[index - 1]]
             };
             let (halo_pixels, tile_safe) = match id {
-                Detail => (32, true),
+                AiDenoise | Detail | Skin | Healing => (32, true),
                 Optics | Geometry => (4, true),
                 _ => (0, true),
             };

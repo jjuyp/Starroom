@@ -12,6 +12,7 @@ use starroom_imageio::{
 use starroom_pipeline::{
     RenderSettings, render_source_export_to_icc_f32, render_source_export_to_srgb_f32,
 };
+use starroom_render::profiling::{self, ProfileStage, RenderProfile};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -270,6 +271,16 @@ pub struct BatchExportResult {
     pub skipped: Vec<ExportItemResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchProgress {
+    pub processed: usize,
+    pub total: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportLogEntry {
@@ -315,7 +326,7 @@ impl FullResolutionRenderer for NativeSharedGraphRenderer {
         if !source.is_file() {
             return Err(ExportError::SourceMissing(source.to_owned()));
         }
-        let decoded = decode_source(source)
+        let decoded = profiling::measure(ProfileStage::RawDecode, 0, || decode_source(source))
             .map_err(|error| ExportError::ProjectInvalid(error.to_string()))?;
         let source_exif = match &decoded {
             DecodedSourceImage::Rendered(image) => image.exif.clone(),
@@ -550,19 +561,32 @@ pub fn export_one<R: FullResolutionRenderer>(
             rendered.rgb,
         )
         .ok_or_else(|| ExportError::EncodeFailed("invalid render buffer".into()))?;
-        rendered.rgb =
-            imageops::resize(&image, width, height, imageops::FilterType::Lanczos3).into_raw();
+        rendered.rgb = profiling::measure(
+            ProfileStage::Resize,
+            u64::from(width)
+                .saturating_mul(u64::from(height))
+                .saturating_mul(3 * u64::from(f32::BITS / 8)),
+            || imageops::resize(&image, width, height, imageops::FilterType::Lanczos3).into_raw(),
+        );
         rendered.width = width;
         rendered.height = height;
     }
-    apply_output_sharpen(
-        &mut rendered.rgb,
-        width,
-        height,
-        source_width,
-        source_height,
-        request.settings.output_sharpen,
-        request.settings.sharpen_amount,
+    profiling::measure(
+        ProfileStage::Detail,
+        u64::from(width)
+            .saturating_mul(u64::from(height))
+            .saturating_mul(3 * u64::from(f32::BITS / 8)),
+        || {
+            apply_output_sharpen(
+                &mut rendered.rgb,
+                width,
+                height,
+                source_width,
+                source_height,
+                request.settings.output_sharpen,
+                request.settings.sharpen_amount,
+            )
+        },
     )?;
     if cancelled.load(Ordering::Relaxed) {
         return Err(ExportError::Cancelled);
@@ -592,31 +616,33 @@ pub fn export_one<R: FullResolutionRenderer>(
             .map(|sample| (sample.clamp(0.0, 1.0) * 65_535.0).round() as u16)
             .collect::<Vec<_>>()
     };
-    let bytes = match (request.settings.format, request.settings.bit_depth) {
-        (ExportFormat::Jpeg, 8) => encode_jpeg_rgb8_with_metadata(
-            &rgb8(),
-            width,
-            height,
-            request.settings.quality,
-            profile,
-            exif,
-            xmp,
-        ),
-        (ExportFormat::Png, 8) => {
-            encode_png_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
+    let bytes = profiling::measure(ProfileStage::Encode, 0, || {
+        match (request.settings.format, request.settings.bit_depth) {
+            (ExportFormat::Jpeg, 8) => encode_jpeg_rgb8_with_metadata(
+                &rgb8(),
+                width,
+                height,
+                request.settings.quality,
+                profile,
+                exif,
+                xmp,
+            ),
+            (ExportFormat::Png, 8) => {
+                encode_png_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
+            }
+            (ExportFormat::Png, 16) => {
+                encode_png_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
+            }
+            (ExportFormat::Tiff, 8) => {
+                encode_tiff_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
+            }
+            (ExportFormat::Tiff, 16) => {
+                encode_tiff_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
+            }
+            (_, depth) => return Err(ExportError::UnsupportedBitDepth(depth)),
         }
-        (ExportFormat::Png, 16) => {
-            encode_png_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
-        }
-        (ExportFormat::Tiff, 8) => {
-            encode_tiff_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
-        }
-        (ExportFormat::Tiff, 16) => {
-            encode_tiff_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
-        }
-        (_, depth) => return Err(ExportError::UnsupportedBitDepth(depth)),
-    }
-    .map_err(|error| ExportError::EncodeFailed(error.to_string()))?;
+        .map_err(|error| ExportError::EncodeFailed(error.to_string()))
+    })?;
     fs::create_dir_all(&request.destination_directory)
         .map_err(|error| ExportError::DestinationUnavailable(error.to_string()))?;
     let base = render_filename(request)?;
@@ -636,6 +662,17 @@ pub fn export_one<R: FullResolutionRenderer>(
         recipe_identity: export_recipe_identity(request)?,
         error: None,
     })
+}
+
+/// Runs the production export path while collecting stage timings and peak working-memory
+/// estimates. The output and error semantics are identical to [`export_one`].
+pub fn export_one_profiled<R: FullResolutionRenderer>(
+    renderer: &R,
+    request: &ExportRequest,
+    render_settings: &RenderSettings,
+    cancelled: &AtomicBool,
+) -> (Result<ExportItemResult, ExportError>, RenderProfile) {
+    profiling::capture(|| export_one(renderer, request, render_settings, cancelled))
 }
 
 fn apply_output_sharpen(
@@ -835,14 +872,42 @@ pub fn export_batch<R: FullResolutionRenderer>(
     cancelled: &AtomicBool,
     log_path: Option<&Path>,
 ) -> BatchExportResult {
+    export_batch_with_progress(
+        renderer,
+        requests,
+        render_settings,
+        cancelled,
+        log_path,
+        |_| {},
+    )
+}
+
+/// Memory-safe queue reference. Concurrency is intentionally bounded to one full-resolution item
+/// until M28 peak-memory telemetry proves that another complete float graph fits the process
+/// budget. This avoids multiplying 45-100 MP working buffers while still isolating item failures.
+pub fn export_batch_with_progress<R: FullResolutionRenderer>(
+    renderer: &R,
+    requests: &[ExportRequest],
+    render_settings: &RenderSettings,
+    cancelled: &AtomicBool,
+    log_path: Option<&Path>,
+    mut progress: impl FnMut(BatchProgress),
+) -> BatchExportResult {
     let mut batch = BatchExportResult::default();
-    for request in requests {
+    for (index, request) in requests.iter().enumerate() {
         if cancelled.load(Ordering::Relaxed) {
             batch.cancelled.push(failed_item(
                 request,
                 ExportItemStatus::Cancelled,
                 "Cancelled",
             ));
+            progress(BatchProgress {
+                processed: index + 1,
+                total: requests.len(),
+                completed: batch.completed.len(),
+                failed: batch.failed.len(),
+                cancelled: batch.cancelled.len(),
+            });
             continue;
         }
         match export_one(renderer, request, render_settings, cancelled) {
@@ -893,6 +958,13 @@ pub fn export_batch<R: FullResolutionRenderer>(
                     .push(failed_item(request, ExportItemStatus::Failed, &message));
             }
         }
+        progress(BatchProgress {
+            processed: index + 1,
+            total: requests.len(),
+            completed: batch.completed.len(),
+            failed: batch.failed.len(),
+            cancelled: batch.cancelled.len(),
+        });
     }
     batch
 }
@@ -1326,6 +1398,30 @@ mod tests {
             None,
         );
         assert_eq!(cancelled.cancelled.len(), 1);
+    }
+
+    #[test]
+    fn m28_five_hundred_item_queue_is_bounded_isolated_and_reports_progress() {
+        let root = root("batch-500");
+        let mut requests = (1..=500)
+            .map(|id| request(&root, id, ExportFormat::Png))
+            .collect::<Vec<_>>();
+        requests[249].source_path = root.join("fail.fake");
+        let mut progress = Vec::new();
+        let result = export_batch_with_progress(
+            &MockRenderer,
+            &requests,
+            &RenderSettings::default(),
+            &AtomicBool::new(false),
+            None,
+            |update| progress.push(update),
+        );
+        assert_eq!(result.completed.len(), 499);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(progress.len(), 500);
+        assert_eq!(progress.last().unwrap().processed, 500);
+        assert_eq!(progress.last().unwrap().completed, 499);
+        assert_eq!(progress.last().unwrap().failed, 1);
     }
     #[test]
     fn preset_roundtrip_depth_matrix_and_memory_guard() {

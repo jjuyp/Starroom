@@ -13,6 +13,7 @@ sha2.workspace = true
 starroom-color-management = { path = "../starroom-color-management" }
 starroom-imageio = { path = "../starroom-imageio" }
 starroom-pipeline = { path = "../starroom-pipeline" }
+starroom-render = { path = "../starroom-render" }
 thiserror.workspace = true
 
 [dev-dependencies]

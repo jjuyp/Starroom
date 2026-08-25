@@ -551,8 +551,9 @@ function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
+  interactionPhase?: 'interactive' | 'final'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
   healActive?: boolean; onHealingStroke?: (points: Array<{ x: number; y: number }>) => void
   brushActive?: boolean; onBrushStroke?: (points: Array<{ x: number; y: number }>) => void
@@ -597,7 +598,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = f
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations)
+            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -644,7 +645,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = f
           onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
           onDimensions(`${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
-            ? `${nativeAcceleration === 'gpu' ? 'Native GPU' : 'Native CPU fallback'} · ${nativeProfile}${before ? ' · original' : ''}`
+            ? `${nativeAcceleration === 'gpu' ? 'Native GPU' : 'Native CPU fallback'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · interactive 1024' : ' · final quality'}${before ? ' · original' : ''}`
             : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {
@@ -657,7 +658,7 @@ function PreviewCanvas({ photo, before, zoom, maskActive = false, healActive = f
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src, maskPreview])
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src, maskPreview, interactionPhase])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -925,10 +926,22 @@ export function App() {
     resize: { mode: 'original' }, outputSharpen: 'off', sharpenAmount: 'standard', metadata: 'allMetadata', includeLocation: false,
     copyright: null, filenameTemplate: '{original_name}-starroom', collision: 'autoRename' })
   const [exportBusy, setExportBusy] = useState(false)
+  const [previewInteraction, setPreviewInteraction] = useState<'interactive' | 'final'>('final')
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
   useEffect(() => () => objectUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
+  useEffect(() => {
+    const finish = () => setPreviewInteraction('final')
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+    window.addEventListener('focusout', finish)
+    return () => {
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('focusout', finish)
+    }
+  }, [])
   useEffect(() => {
     if (!nativeRuntimeAvailable()) return
     let active = true
@@ -1239,6 +1252,7 @@ export function App() {
   }
 
   function beginInteractiveEdit() {
+    setPreviewInteraction('interactive')
     updateSelected((photo) => ({ ...photo, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
   }
 
@@ -1892,7 +1906,7 @@ export function App() {
             }}
             onPointerUp={(event) => { panStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
-              <PreviewCanvas photo={selected} before={before} zoom={zoom} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
+              <PreviewCanvas photo={selected} before={before} zoom={zoom} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
                 brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}

@@ -1475,14 +1475,14 @@ mod tests {
     }
 
     #[test]
-    fn ten_thousand_metadata_assets_search_sort_and_page() {
-        let root = temp("ten-thousand");
+    fn one_hundred_thousand_metadata_assets_search_sort_and_page() {
+        let root = temp("one-hundred-thousand");
         let mut library = Library::open(root.join("db.sqlite")).unwrap();
         let started = Instant::now();
         let transaction = library.connection.transaction().unwrap();
         {
             let mut insert = transaction.prepare("INSERT INTO assets(source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").unwrap();
-            for index in 0..10_000_i64 {
+            for index in 0..100_000_i64 {
                 let path = format!("C:/synthetic/{index:05}.jpg");
                 insert
                     .execute(params![
@@ -1524,14 +1524,14 @@ mod tests {
                 sort: SortField::Filename,
                 direction: SortDirection::Descending,
                 limit: 200,
-                offset: 9_800,
+                offset: 99_800,
                 ..Default::default()
             })
             .unwrap();
         assert_eq!(page.len(), 200);
         assert!(page.windows(2).all(|pair| pair[0].id > pair[1].id));
         eprintln!(
-            "M24 10,000 metadata rows insert+query: {:.3} ms",
+            "M28 100,000 metadata rows insert+query: {:.3} ms",
             started.elapsed().as_secs_f64() * 1000.0
         );
     }

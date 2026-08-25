@@ -768,9 +768,10 @@ mod tests {
         ));
     }
     #[test]
-    fn five_thousand_entries_replay_from_checkpoint() {
+    fn ten_thousand_entries_checkpoint_restore_undo_redo_and_branch_scale() {
         let mut history = EditHistory::with_checkpoint_interval(state(), 100).unwrap();
-        for index in 0..5000 {
+        let started = std::time::Instant::now();
+        for index in 0..10_000 {
             history
                 .commit(
                     "Exposure",
@@ -779,9 +780,30 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(history.checkpoints().len(), 50);
+        assert_eq!(history.checkpoints().len(), 100);
         let final_state = history.state().clone();
-        let loaded = EditHistory::from_document(history.document).unwrap();
+        let mut loaded = EditHistory::from_document(history.document).unwrap();
         assert_eq!(loaded.state(), &final_state);
+        let snapshot = loaded.create_snapshot("10k final").unwrap();
+        for _ in 0..100 {
+            loaded.undo().unwrap();
+        }
+        for _ in 0..50 {
+            loaded.redo().unwrap();
+        }
+        loaded
+            .commit(
+                "Branch",
+                "tone",
+                set("/tone/exposure", json!(9_950), json!(42)),
+            )
+            .unwrap();
+        assert!(!loaded.can_redo());
+        loaded.restore_snapshot(&snapshot).unwrap();
+        assert_eq!(loaded.state(), &final_state);
+        eprintln!(
+            "M28 10,000 history commands full exercise: {:.3} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
     }
 }

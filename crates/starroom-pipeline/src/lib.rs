@@ -34,6 +34,8 @@ use starroom_project::{
 };
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::gpu::{GpuError, GpuRenderer};
+use starroom_render::profiling::{self, ProfileStage};
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1061,23 +1063,33 @@ fn apply_creative_graph(
     // the established CPU reference math until each earns its own parity gate; this avoids a
     // second color-science implementation.
     let pixel_count = pixels.len();
-    let mut prepared = Vec::with_capacity(pixel_count);
-    for pixel in pixels {
-        prepared.push(apply_relative_color(
-            LinearRgb {
-                r: pixel[0],
-                g: pixel[1],
-                b: pixel[2],
-            },
-            settings.relative_color,
-        ));
-    }
+    let working_bytes = (pixel_count as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
+        pixels
+            .into_iter()
+            .map(|pixel| {
+                apply_relative_color(
+                    LinearRgb {
+                        r: pixel[0],
+                        g: pixel[1],
+                        b: pixel[2],
+                    },
+                    settings.relative_color,
+                )
+            })
+            .collect::<Vec<_>>()
+    });
     let (prepared, tone_parameters) = if let Some(renderer) = gpu {
         let input: Vec<[f32; 4]> = prepared
             .iter()
             .map(|rgb| [rgb.r, rgb.g, rgb.b, 1.0])
             .collect();
-        let exposed = renderer.apply_exposure(&input, settings.tone.exposure_ev)?;
+        let started = Instant::now();
+        let exposed = profiling::measure(ProfileStage::Tone, working_bytes, || {
+            renderer.apply_exposure(&input, settings.tone.exposure_ev)
+        })?;
+        let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        profiling::record_gpu(ProfileStage::Tone, elapsed);
         let mut remainder = settings.tone;
         remainder.exposure_ev = 0.0;
         (
@@ -1094,29 +1106,55 @@ fn apply_creative_graph(
     } else {
         (prepared, settings.tone)
     };
+    let mut prepared = prepared;
+    profiling::measure(ProfileStage::Tone, working_bytes, || {
+        prepared
+            .iter_mut()
+            .for_each(|rgb| *rgb = apply_tone(*rgb, tone_parameters));
+    });
+    profiling::measure(ProfileStage::Curve, working_bytes, || {
+        prepared
+            .iter_mut()
+            .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
+    });
+    profiling::measure(ProfileStage::ColorMixer, working_bytes, || {
+        prepared
+            .iter_mut()
+            .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
+    });
+    profiling::measure(ProfileStage::ColorGrading, working_bytes, || {
+        prepared
+            .iter_mut()
+            .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
+    });
+    profiling::measure(ProfileStage::Mask, working_bytes, || {
+        for (index, rgb) in prepared.iter_mut().enumerate() {
+            let x = (index % width) as f32 / width.max(1) as f32;
+            let y = (index / width) as f32 / height.max(1) as f32;
+            *rgb = apply_layers(
+                *rgb,
+                &settings.layers,
+                x,
+                y,
+                &settings.portrait_masks,
+                &settings.generated_masks,
+            )?;
+        }
+        Ok::<_, PipelineError>(())
+    })?;
     let mut data = Vec::with_capacity(pixel_count * 3);
-    for (index, mut rgb) in prepared.into_iter().enumerate() {
-        rgb = apply_tone(rgb, tone_parameters);
-        rgb = apply_curve(rgb, &settings.curve, &settings.curves);
-        rgb = apply_color_mixer(rgb, settings.color_mixer);
-        rgb = apply_grading(rgb, settings.grading);
-        let x = (index % width) as f32 / width.max(1) as f32;
-        let y = (index / width) as f32 / height.max(1) as f32;
-        rgb = apply_layers(
-            rgb,
-            &settings.layers,
-            x,
-            y,
-            &settings.portrait_masks,
-            &settings.generated_masks,
-        )?;
+    for rgb in prepared {
         if !rgb.r.is_finite() || !rgb.g.is_finite() || !rgb.b.is_finite() {
             return Err(PipelineError::InvalidDecodedBuffer);
         }
         data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
     }
-    let data = apply_skin_retouch_stage(data, width, height, settings)?;
-    apply_healing_stage(data, width, height, settings)
+    let data = profiling::measure(ProfileStage::Skin, working_bytes, || {
+        apply_skin_retouch_stage(data, width, height, settings)
+    })?;
+    profiling::measure(ProfileStage::Healing, working_bytes, || {
+        apply_healing_stage(data, width, height, settings)
+    })
 }
 
 fn to_working_image(
@@ -1135,20 +1173,25 @@ fn to_working_image(
         .iter()
         .map(|rgba| [rgba[0], rgba[1], rgba[2]])
         .collect();
-    let input_source = LittleCmsProvider.input_to_working(
-        &mut pixels,
-        decoded.embedded_icc.as_deref(),
-        settings.color_management.intent,
-        settings.color_management.black_point_compensation,
-    )?;
+    let working_bytes = (pixels.len() as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    let input_source = profiling::measure(ProfileStage::CameraTransform, working_bytes, || {
+        LittleCmsProvider.input_to_working(
+            &mut pixels,
+            decoded.embedded_icc.as_deref(),
+            settings.color_management.intent,
+            settings.color_management.black_point_compensation,
+        )
+    })?;
 
-    apply_white_balance(
-        &mut pixels,
-        decoded.width,
-        decoded.height,
-        SourceKind::Encoded,
-        settings.white_balance,
-    )?;
+    profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
+        apply_white_balance(
+            &mut pixels,
+            decoded.width,
+            decoded.height,
+            SourceKind::Encoded,
+            settings.white_balance,
+        )
+    })?;
     let data = pixels.into_iter().flatten().collect();
 
     let image = LinearImage::new(decoded.width as usize, decoded.height as usize, data)
@@ -1171,13 +1214,16 @@ fn to_working_raw(
         .iter()
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
-    apply_white_balance(
-        &mut pixels,
-        decoded.width,
-        decoded.height,
-        SourceKind::Raw,
-        settings.white_balance,
-    )?;
+    let working_bytes = (pixels.len() as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
+        apply_white_balance(
+            &mut pixels,
+            decoded.width,
+            decoded.height,
+            SourceKind::Raw,
+            settings.white_balance,
+        )
+    })?;
     let data = pixels.into_iter().flatten().collect();
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
@@ -1242,6 +1288,7 @@ fn apply_precreative_geometry(
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
 ) -> Result<LinearImage, PipelineError> {
+    let working_bytes = (working.data.len() as u64).saturating_mul(u64::from(f32::BITS / 8));
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
             LensProfileStatus::MissingMetadata,
@@ -1249,13 +1296,15 @@ fn apply_precreative_geometry(
         let correction = resolution
             .correction
             .ok_or_else(|| PipelineError::OpticsProfile(resolution.status.clone()))?;
-        let corrected = apply_lens_correction(
-            working.width,
-            working.height,
-            &working.data,
-            correction,
-            settings.optics.parameters,
-        )
+        let corrected = profiling::measure(ProfileStage::Lens, working_bytes, || {
+            apply_lens_correction(
+                working.width,
+                working.height,
+                &working.data,
+                correction,
+                settings.optics.parameters,
+            )
+        })
         .map_err(|_| PipelineError::OpticsCorrection)?;
         LinearImage::new(working.width, working.height, corrected.data)
             .map_err(|_| PipelineError::DetailBuffer)?
@@ -1273,12 +1322,14 @@ fn apply_precreative_geometry(
     } else {
         settings.geometry
     };
-    let geometrically_corrected = apply_geometry(
-        optically_corrected.width,
-        optically_corrected.height,
-        &optically_corrected.data,
-        geometry_parameters,
-    )
+    let geometrically_corrected = profiling::measure(ProfileStage::Geometry, working_bytes, || {
+        apply_geometry(
+            optically_corrected.width,
+            optically_corrected.height,
+            &optically_corrected.data,
+            geometry_parameters,
+        )
+    })
     .map_err(|_| PipelineError::Geometry)?;
     LinearImage::new(
         geometrically_corrected.width,
@@ -1298,6 +1349,7 @@ fn render_prepared_working_graph(
 ) -> Result<RenderedRgbF32, PipelineError> {
     // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
     // caches are separate; an enabled request without its native residual is a typed failure.
+    let working_bytes = (geometry_image.data.len() as u64).saturating_mul(u64::from(f32::BITS / 8));
     let model_adjusted = if settings.ai_denoise.enabled {
         let residual = settings
             .ai_denoise_residual
@@ -1308,12 +1360,14 @@ fn render_prepared_working_graph(
                 && mask.width as usize == geometry_image.width
                 && mask.height as usize == geometry_image.height
         });
-        apply_residual(
-            &geometry_image,
-            residual,
-            settings.ai_denoise,
-            skin.map(|mask| mask.values.as_slice()),
-        )?
+        profiling::measure(ProfileStage::AiDenoise, working_bytes, || {
+            apply_residual(
+                &geometry_image,
+                residual,
+                settings.ai_denoise,
+                skin.map(|mask| mask.values.as_slice()),
+            )
+        })?
     } else {
         geometry_image
     };
@@ -1338,15 +1392,17 @@ fn render_prepared_working_graph(
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
-    let denoised = denoise(&creative, settings.denoise);
-    let locally_adjusted = local_detail(&denoised, settings.local_detail);
-    let detailed = sharpen(&locally_adjusted, settings.sharpen);
-    let detailed = apply_finishing_effects(
-        &detailed,
-        settings.grain,
-        settings.vignette,
-        &settings.image_identity,
-    )?;
+    let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
+        let denoised = denoise(&creative, settings.denoise);
+        let locally_adjusted = local_detail(&denoised, settings.local_detail);
+        let detailed = sharpen(&locally_adjusted, settings.sharpen);
+        apply_finishing_effects(
+            &detailed,
+            settings.grain,
+            settings.vignette,
+            &settings.image_identity,
+        )
+    })?;
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.as_chunks::<3>().0 {
         let working_rgb = compress_to_unit_gamut(LinearRgb {
@@ -1356,12 +1412,14 @@ fn render_prepared_working_graph(
         });
         pixels.push([working_rgb.r, working_rgb.g, working_rgb.b]);
     }
-    let output_source = LittleCmsProvider.working_to_output(
-        &mut pixels,
-        output_icc,
-        settings.color_management.intent,
-        settings.color_management.black_point_compensation,
-    )?;
+    let output_source = profiling::measure(ProfileStage::ColorTransform, working_bytes, || {
+        LittleCmsProvider.working_to_output(
+            &mut pixels,
+            output_icc,
+            settings.color_management.intent,
+            settings.color_management.black_point_compensation,
+        )
+    })?;
     let output = pixels.into_iter().flatten().collect();
     Ok(RenderedRgbF32 {
         width,
@@ -1585,6 +1643,28 @@ pub fn render_source_export_to_icc_f32(
     output_icc: &[u8],
 ) -> Result<RenderedRgbF32, PipelineError> {
     render_shared_source_graph(decoded, settings, Some(output_icc), None)
+}
+
+pub fn profile_source_export_to_srgb_f32(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> (
+    Result<RenderedRgbF32, PipelineError>,
+    starroom_render::profiling::RenderProfile,
+) {
+    profiling::capture(|| render_shared_source_graph(decoded, settings, None, None))
+}
+
+pub fn profile_source_preview_to_srgb8(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> (
+    Result<RenderedRgb8, PipelineError>,
+    starroom_render::profiling::RenderProfile,
+) {
+    profiling::capture(|| {
+        render_shared_source_graph(decoded, settings, None, None).map(RenderedRgbF32::into_rgb8)
+    })
 }
 
 /// M12 preview entry point. It shares all decode, colour-management, tone, geometry, detail and
@@ -2970,5 +3050,36 @@ mod tests {
         for (float, quantized) in high.data.iter().zip(eight.data.iter()) {
             assert_eq!((float.clamp(0.0, 1.0) * 255.0).round() as u8, *quantized);
         }
+    }
+
+    #[test]
+    fn m28_profiled_graph_measures_real_stages_without_changing_pixels() {
+        let source = DecodedSourceImage::Rendered(fixture(&[
+            [0.1, 0.2, 0.3, 1.0],
+            [0.4, 0.5, 0.6, 1.0],
+            [0.7, 0.8, 0.9, 1.0],
+        ]));
+        let settings = RenderSettings::default();
+        let reference = render_source_preview_to_srgb8(&source, &settings).expect("reference");
+        let (profiled, profile) = profile_source_preview_to_srgb8(&source, &settings);
+        assert_eq!(profiled.expect("profiled"), reference);
+        for stage in [
+            ProfileStage::CameraTransform,
+            ProfileStage::WhiteBalance,
+            ProfileStage::Tone,
+            ProfileStage::Curve,
+            ProfileStage::ColorMixer,
+            ProfileStage::ColorGrading,
+            ProfileStage::Mask,
+            ProfileStage::Skin,
+            ProfileStage::Healing,
+            ProfileStage::Detail,
+            ProfileStage::Geometry,
+            ProfileStage::ColorTransform,
+        ] {
+            assert!(profile.stages.contains_key(&stage), "missing {stage:?}");
+        }
+        assert!(profile.total_cpu_nanoseconds > 0);
+        assert!(profile.peak_working_bytes >= 3 * 3 * size_of::<f32>() as u64);
     }
 }
