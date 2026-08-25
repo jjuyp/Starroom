@@ -226,13 +226,6 @@ impl RenderJob {
     }
 }
 
-fn intersects(left: PixelRect, right: PixelRect) -> bool {
-    left.x < right.x.saturating_add(right.width)
-        && right.x < left.x.saturating_add(left.width)
-        && left.y < right.y.saturating_add(right.height)
-        && right.y < left.y.saturating_add(left.height)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryBudget {
     pub ram_bytes: usize,

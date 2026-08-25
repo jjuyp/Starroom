@@ -2813,6 +2813,165 @@ mod tests {
     }
 
     #[test]
+    fn m28_hybrid_gpu_path_matches_full_cpu_graph_with_local_and_geometry_stages() {
+        let source = DecodedSourceImage::Rendered(fixture(&[
+            [0.12, 0.08, 0.06, 1.0],
+            [0.68, 0.42, 0.30, 1.0],
+            [1.8, 1.2, 0.7, 1.0],
+        ]));
+        let healing = HealingOperation {
+            id: "parity-spot".into(),
+            enabled: true,
+            mode: starroom_heal::HealMode::Heal,
+            target: starroom_heal::HealPoint { x: 1.0, y: 0.0 },
+            source: Some(starroom_heal::HealPoint { x: 0.0, y: 0.0 }),
+            radius: 0.3,
+            feather: 0.4,
+            opacity: 0.65,
+            rotation_degrees: 0.0,
+            scale: 1.0,
+            tone_adaptation: true,
+            texture_adaptation: true,
+            source_mode: starroom_heal::SourceMode::Manual,
+            metadata: std::collections::BTreeMap::new(),
+        };
+        let mut settings = RenderSettings {
+            tone: ToneParameters {
+                exposure_ev: -0.65,
+                contrast: 0.25,
+                highlights: -0.3,
+                shadows: 0.2,
+                whites: 0.1,
+                blacks: -0.1,
+            },
+            relative_color: RelativeColorParameters {
+                temperature: 0.15,
+                tint: -0.1,
+                vibrance: 0.2,
+                saturation: 0.05,
+            },
+            curves: ToneCurveSet {
+                master: vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint { x: 0.5, y: 0.54 },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ],
+                red: vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint { x: 1.0, y: 0.95 },
+                ],
+                ..Default::default()
+            },
+            color_mixer: ColorMixer::default().with_band(
+                ColorBand::Orange,
+                BandAdjustment {
+                    hue_degrees: 4.0,
+                    chroma: 0.08,
+                    lightness: 0.03,
+                },
+            ),
+            grading: GradingParameters {
+                midtones: ColorWheel {
+                    hue_degrees: 32.0,
+                    chroma: 0.12,
+                    lightness: 0.02,
+                },
+                ..Default::default()
+            },
+            denoise: DenoiseParameters {
+                luminance: 0.2,
+                chroma: 0.15,
+                ..Default::default()
+            },
+            local_detail: LocalDetailParameters {
+                texture: 0.2,
+                clarity: 0.1,
+                dehaze: 0.05,
+            },
+            sharpen: SharpenParameters {
+                amount: 0.3,
+                ..Default::default()
+            },
+            geometry: GeometryParameters {
+                flip_horizontal: true,
+                ..Default::default()
+            },
+            layers: vec![NativeAdjustmentLayer {
+                id: "local-mask".into(),
+                name: "Local mask".into(),
+                enabled: true,
+                opacity: 0.55,
+                blend_mode: LayerBlendMode::Normal,
+                mask: MaskDefinition::Radial {
+                    x: 0.5,
+                    y: 0.5,
+                    width: 0.8,
+                    height: 1.0,
+                    rotation: 12.0,
+                    feather: 0.3,
+                    invert: false,
+                }
+                .into(),
+                adjustments: LayerAdjustments {
+                    tone: ToneParameters {
+                        exposure_ev: 0.25,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            }],
+            skin_retouch: SkinRetouchSettings {
+                parameters: SkinRetouchParameters {
+                    smooth: 0.25,
+                    texture: 0.7,
+                    tone_evenness: 0.15,
+                    hue_degrees: 1.0,
+                    chroma: -0.03,
+                    exposure_ev: 0.05,
+                },
+                faces: vec![SkinRetouchFaceReference {
+                    face_id: "face-a".into(),
+                    cache_key: "parity-face".into(),
+                }],
+            },
+            healing_operations: vec![healing],
+            ..Default::default()
+        };
+        for (region, values) in [
+            (PortraitMaskRegion::Skin, vec![0.0, 1.0, 0.0]),
+            (PortraitMaskRegion::Eyes, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Brows, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Lips, vec![0.0, 0.0, 0.0]),
+            (PortraitMaskRegion::Hair, vec![0.0, 0.0, 0.0]),
+        ] {
+            settings.portrait_masks.push(PortraitMaskRaster {
+                cache_key: "parity-face".into(),
+                face_id: "face-a".into(),
+                region,
+                width: 3,
+                height: 1,
+                values,
+            });
+        }
+        let cpu = render_source_preview_to_srgb8(&source, &settings).expect("CPU graph");
+        match GpuRenderer::try_new() {
+            Ok(gpu) => {
+                let hybrid = render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+                    .expect("hybrid GPU graph");
+                assert_eq!((hybrid.width, hybrid.height), (cpu.width, cpu.height));
+                assert!(
+                    hybrid
+                        .data
+                        .iter()
+                        .zip(cpu.data)
+                        .all(|(gpu, cpu)| { i16::from(*gpu).abs_diff(i16::from(cpu)) <= 1 })
+                );
+            }
+            Err(error) => assert!(!error.to_string().is_empty()),
+        }
+    }
+
+    #[test]
     fn m23_grain_vignette_are_shared_deterministic_and_not_baked_into_before() {
         let decoded = fixture(&[
             [0.3, 0.4, 0.5, 1.0],

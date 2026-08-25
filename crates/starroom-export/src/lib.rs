@@ -1423,6 +1423,46 @@ mod tests {
         assert_eq!(progress.last().unwrap().completed, 499);
         assert_eq!(progress.last().unwrap().failed, 1);
     }
+
+    #[test]
+    fn m28_profiled_production_export_reports_decode_graph_resize_and_encode() {
+        let root = root("profiled-production");
+        let source = root.join("source.png");
+        let pixels = (0..12_u8)
+            .flat_map(|index| [index.saturating_mul(17), 128, 255_u8.saturating_sub(index)])
+            .collect::<Vec<_>>();
+        image::save_buffer(&source, &pixels, 4, 3, image::ColorType::Rgb8).expect("source fixture");
+        let mut value = request(&root, 1, ExportFormat::Png);
+        value.source_path = source;
+        value.settings.resize = ResizeMode::Width { pixels: 2 };
+        value.settings.output_sharpen = OutputSharpenTarget::Screen;
+        let (result, profile) = export_one_profiled(
+            &NativeSharedGraphRenderer,
+            &value,
+            &RenderSettings::default(),
+            &AtomicBool::new(false),
+        );
+        result.expect("profiled export");
+        for stage in [
+            ProfileStage::RawDecode,
+            ProfileStage::CameraTransform,
+            ProfileStage::WhiteBalance,
+            ProfileStage::Tone,
+            ProfileStage::Curve,
+            ProfileStage::ColorMixer,
+            ProfileStage::ColorGrading,
+            ProfileStage::Mask,
+            ProfileStage::Skin,
+            ProfileStage::Healing,
+            ProfileStage::Resize,
+            ProfileStage::ColorTransform,
+            ProfileStage::Encode,
+        ] {
+            assert!(profile.stages.contains_key(&stage), "missing {stage:?}");
+        }
+        assert!(profile.total_cpu_nanoseconds > 0);
+        assert!(profile.peak_working_bytes >= 4 * 3 * 3 * 4);
+    }
     #[test]
     fn preset_roundtrip_depth_matrix_and_memory_guard() {
         let preset = ExportPreset::new("Web", ExportSettings::default()).unwrap();
