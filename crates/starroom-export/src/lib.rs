@@ -1010,6 +1010,7 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::ImageDecoder;
     use std::env;
     struct MockRenderer;
     impl FullResolutionRenderer for MockRenderer {
@@ -1197,6 +1198,52 @@ mod tests {
                 &AtomicBool::new(false),
             )
             .unwrap();
+        }
+    }
+
+    #[test]
+    fn selected_icc_profile_is_embedded_once_in_every_container() {
+        let root = root("profile-containers");
+        let expected = LittleCmsProvider
+            .builtin_output_profile_bytes(BuiltinOutputProfile::DisplayP3)
+            .expect("Display P3 profile");
+        for (id, format) in [
+            (1, ExportFormat::Jpeg),
+            (2, ExportFormat::Png),
+            (3, ExportFormat::Tiff),
+        ] {
+            let mut value = request(&root, id, format);
+            value.settings.color_space = OutputColorSpace::DisplayP3;
+            value.settings.filename_template = format!("icc-{id}");
+            let result = export_one(
+                &MockRenderer,
+                &value,
+                &RenderSettings::default(),
+                &AtomicBool::new(false),
+            )
+            .expect("profiled export");
+            let bytes = fs::read(result.destination.unwrap()).unwrap();
+            let embedded = match format {
+                ExportFormat::Jpeg => {
+                    image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes))
+                        .unwrap()
+                        .icc_profile()
+                        .unwrap()
+                }
+                ExportFormat::Png => {
+                    image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes))
+                        .unwrap()
+                        .icc_profile()
+                        .unwrap()
+                }
+                ExportFormat::Tiff => {
+                    image::codecs::tiff::TiffDecoder::new(std::io::Cursor::new(bytes))
+                        .unwrap()
+                        .icc_profile()
+                        .unwrap()
+                }
+            };
+            assert_eq!(embedded.as_deref(), Some(expected.as_slice()));
         }
     }
     #[test]

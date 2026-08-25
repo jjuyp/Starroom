@@ -231,6 +231,22 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - Edit history snapshots now include adjustments, freeform curve points and mask geometry. Source files remain untouched.
 - Playwright validated numeric input, 9,000 K, curve add/drag/right-click-delete, on-photo mask placement/resize/rotation, 33.5-degree rotation, 47%/212% wheel zoom and drag pan. The final browser console check reported zero errors and zero warnings.
 - Remaining production gaps are unchanged: no RAW decoding, ICC display/output management, wgpu path, multi-mask stack/brush masks, lens-profile correction, crop or perspective correction.
+# M27 Professional Export Completion (2026-08-25)
+
+- Added an `f32` encoded-output surface to the existing Native shared graph. LittleCMS still owns
+  the one working-to-output transform; RGB8/RGB16 quantization moved to the file encoder boundary.
+- Added real 16-bit PNG and TIFF encoders, ICC/EXIF/XMP container metadata, decoder round-trip depth
+  checks, 1,024-step precision regression and an explicit JPEG-16 typed rejection.
+- Added Print Low/Standard/High sharpening whose Gaussian radius and gain depend on final dimensions
+  and resize ratio. Screen and Print have distinct parameterization and finite regressions.
+- Expanded export transport/UI to select PNG/TIFF 16-bit and Print sharpening. React transports
+  intent only; it performs no color, precision, resize or sharpening math.
+- GPS remains off by default and explicit preservation requires real transferable source EXIF.
+  Rating/keywords/copyright/camera/capture fields use XMP plus safe EXIF according to policy.
+- `crc32fast 1.5.0` is now a direct image-I/O dependency solely for standards-compliant PNG XMP
+  chunk CRC generation; the resolved version was already in the codec dependency closure.
+- Durable architecture and validation details are in `docs/32_M27_PROFESSIONAL_EXPORT_COMPLETION.md`.
+
 # M24-M26 Library, history and professional export (2026-08-24)
 
 - Added `starroom-library`: SQLite WAL/foreign-key/busy configuration, ordered migration V1, reference import, deterministic sampled asset fingerprint with full-hash escalation, duplicate/relink state, existing RAW/rendered metadata adapters, three-size native thumbnail cache, typed queries/workflow/keywords/collections/missing/project relationships and Tauri Library UI.

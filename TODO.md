@@ -1,5 +1,20 @@
 # Complete Internal Build Plan
 
+## M27 Professional Export Completion (accepted 2026-08-25)
+
+- [x] Preserve the existing Native shared graph as float through the selected LittleCMS output
+  transform and quantize once at the codec boundary; no 8-bit intermediate or second color graph.
+- [x] Export real RGB16 PNG and TIFF at full resolution with ICC/EXIF/XMP, atomic write, batch,
+  cancellation, naming/collision and explicit JPEG-16 rejection without silent downgrade.
+- [x] Validate RGB16 decoder round trips, 1,024-step gradient precision, highlights/shadows finite
+  range, selected-profile identity, no duplicate transform and Preview/Export graph compatibility.
+- [x] Add distinct Screen and dimension/resize-aware Print Low/Standard/High output sharpening.
+- [x] Carry copyright/rating/keywords/camera/capture metadata through safe EXIF and XMP/IPTC
+  representation; GPS defaults off and explicit preserve requires real source EXIF.
+- [x] Retain 24/45/60/100 MP conservative memory preflight and atomic cancellation cleanup.
+- [x] Update provenance and durable implementation/architecture documentation. Keep Draft PR #2
+  open and unmerged; M28 begins only after the M27 acceptance commit is green.
+
 ## M24-M26 local workflow / history / export (accepted 2026-08-24)
 
 - [x] M24: local-first `rusqlite`/SQLite Library with versioned migration, WAL/foreign-key/busy policy, reference imports, fingerprint V1 duplicate/relink rules, existing RAW/image metadata providers and filesystem thumbnail cache.
