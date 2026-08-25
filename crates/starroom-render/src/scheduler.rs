@@ -766,7 +766,7 @@ mod tests {
             );
             let milliseconds = started.elapsed().as_millis();
             println!(
-                "M13_PLAN_BENCH case={name} tiles={} milliseconds={milliseconds}",
+                "M28_PLAN_BENCH case={name} tiles={} milliseconds={milliseconds}",
                 job.tiles.len()
             );
             assert!(!job.tiles.is_empty());

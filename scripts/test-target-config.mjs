@@ -117,6 +117,17 @@ export const targets = {
     web: ['src/nativeRender.test.ts'],
     golden: ['ai', 'portrait', 'skin', 'mask'],
   },
+  performance: {
+    rust: [
+      ['test', '--locked', '-p', 'starroom-render', 'deterministic_24_to_100mp', '--', '--nocapture'],
+      ['test', '--locked', '-p', 'starroom-library', 'm28_', '--', '--nocapture'],
+      ['test', '--locked', '-p', 'starroom-history', 'm28_', '--', '--nocapture'],
+      ['test', '--locked', '-p', 'starroom-export', 'm28_', '--', '--nocapture'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'm28_', '--', '--nocapture'],
+    ],
+    web: [],
+    golden: ['raw', 'tone', 'curve', 'color', 'grading', 'detail', 'geometry', 'mask', 'portrait', 'skin', 'hdr'],
+  },
   web: {
     rust: [],
     web: ['src'],

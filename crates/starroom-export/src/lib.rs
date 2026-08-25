@@ -1408,6 +1408,7 @@ mod tests {
             .collect::<Vec<_>>();
         requests[249].source_path = root.join("fail.fake");
         let mut progress = Vec::new();
+        let started = std::time::Instant::now();
         let result = export_batch_with_progress(
             &MockRenderer,
             &requests,
@@ -1422,6 +1423,12 @@ mod tests {
         assert_eq!(progress.last().unwrap().processed, 500);
         assert_eq!(progress.last().unwrap().completed, 499);
         assert_eq!(progress.last().unwrap().failed, 1);
+        println!(
+            "M28_BATCH_500 milliseconds={:.3} completed={} failed={}",
+            started.elapsed().as_secs_f64() * 1000.0,
+            result.completed.len(),
+            result.failed.len()
+        );
     }
 
     #[test]
@@ -1443,6 +1450,10 @@ mod tests {
             &AtomicBool::new(false),
         );
         result.expect("profiled export");
+        println!(
+            "M28_EXPORT_PROFILE {}",
+            serde_json::to_string(&profile).expect("profile JSON")
+        );
         for stage in [
             ProfileStage::RawDecode,
             ProfileStage::CameraTransform,

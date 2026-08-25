@@ -25,6 +25,7 @@
     "test:library": "node scripts/test-target.mjs library",
     "test:history": "node scripts/test-target.mjs history",
     "test:export": "node scripts/test-target.mjs export",
+    "test:performance": "node scripts/test-target.mjs performance",
     "test:web": "node scripts/test-target.mjs web",
     "test:milestone": "node scripts/test-target.mjs --level milestone",
     "test:full": "node scripts/test-target.mjs --level full",
