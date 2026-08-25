@@ -36,6 +36,7 @@ fn request(root: &Path, source: &Path, asset_id: i64, state: &str) -> ExportRequ
         original_name: "kyoto.png".into(),
         capture_date: Some("2026-08-24".into()),
         rating: 5,
+        keywords: vec!["workflow".into()],
         camera: None,
         look: Some("Warm".into()),
         sequence: 1,

@@ -6,10 +6,11 @@ use sha2::{Digest, Sha256};
 use starroom_color_management::{BuiltinOutputProfile, LittleCmsProvider};
 use starroom_imageio::{
     DecodedSourceImage, decode_source, encode_jpeg_rgb8_with_metadata,
-    encode_png_rgb8_with_metadata, encode_tiff_rgb8_with_metadata,
+    encode_png_rgb8_with_metadata, encode_png_rgb16_with_metadata, encode_tiff_rgb8_with_metadata,
+    encode_tiff_rgb16_with_metadata,
 };
 use starroom_pipeline::{
-    RenderSettings, render_source_export_to_icc8, render_source_export_to_srgb8,
+    RenderSettings, render_source_export_to_icc_f32, render_source_export_to_srgb_f32,
 };
 use std::{
     fs::{self, File, OpenOptions},
@@ -113,6 +114,7 @@ pub enum ResizeMode {
 pub enum OutputSharpenTarget {
     Off,
     Screen,
+    Print,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +229,7 @@ pub struct ExportRequest {
     pub original_name: String,
     pub capture_date: Option<String>,
     pub rating: u8,
+    pub keywords: Vec<String>,
     pub camera: Option<String>,
     pub look: Option<String>,
     pub sequence: u32,
@@ -285,7 +288,8 @@ pub struct ExportLogEntry {
 pub struct RenderedBuffer {
     pub width: u32,
     pub height: u32,
-    pub rgb8: Vec<u8>,
+    /// Encoded output-space float samples. Quantization is owned by the selected codec boundary.
+    pub rgb: Vec<f32>,
     pub source_exif: Option<Vec<u8>>,
 }
 
@@ -318,26 +322,27 @@ impl FullResolutionRenderer for NativeSharedGraphRenderer {
             DecodedSourceImage::Raw(_) => None,
         };
         let rendered = if color == OutputColorSpace::Srgb {
-            render_source_export_to_srgb8(&decoded, settings)
+            render_source_export_to_srgb_f32(&decoded, settings)
         } else {
             let profile = LittleCmsProvider
                 .builtin_output_profile_bytes(color.into())
                 .map_err(|error| ExportError::UnsupportedColorProfile(error.to_string()))?;
-            render_source_export_to_icc8(&decoded, settings, &profile)
+            render_source_export_to_icc_f32(&decoded, settings, &profile)
         }
         .map_err(|error| ExportError::ColorTransformFailed(error.to_string()))?;
         Ok(RenderedBuffer {
             width: rendered.width,
             height: rendered.height,
-            rgb8: rendered.data,
+            rgb: rendered.data,
             source_exif,
         })
     }
 }
 
 pub fn validate_settings(settings: &ExportSettings) -> Result<(), ExportError> {
-    if settings.bit_depth != 8 {
-        return Err(ExportError::UnsupportedBitDepth(settings.bit_depth));
+    match (settings.format, settings.bit_depth) {
+        (ExportFormat::Jpeg, 8) | (ExportFormat::Png | ExportFormat::Tiff, 8 | 16) => {}
+        _ => return Err(ExportError::UnsupportedBitDepth(settings.bit_depth)),
     }
     if settings.format == ExportFormat::Jpeg && !(1..=100).contains(&settings.quality) {
         return Err(ExportError::EncodeFailed(
@@ -526,36 +531,39 @@ pub fn export_one<R: FullResolutionRenderer>(
         request.settings.color_space,
         render_settings,
     )?;
-    if rendered.rgb8.iter().len() != rendered.width as usize * rendered.height as usize * 3 {
+    if rendered.rgb.len() != rendered.width as usize * rendered.height as usize * 3
+        || rendered.rgb.iter().any(|sample| !sample.is_finite())
+    {
         return Err(ExportError::EncodeFailed(
-            "render buffer length mismatch".into(),
+            "render buffer length mismatch or non-finite sample".into(),
         ));
     }
+    let source_width = rendered.width;
+    let source_height = rendered.height;
     let (width, height) =
         resize_dimensions(rendered.width, rendered.height, request.settings.resize)?;
     memory_preflight(width, height)?;
     if (width, height) != (rendered.width, rendered.height) {
-        let image = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(
+        let image = ImageBuffer::<Rgb<f32>, Vec<f32>>::from_raw(
             rendered.width,
             rendered.height,
-            rendered.rgb8,
+            rendered.rgb,
         )
         .ok_or_else(|| ExportError::EncodeFailed("invalid render buffer".into()))?;
-        rendered.rgb8 =
+        rendered.rgb =
             imageops::resize(&image, width, height, imageops::FilterType::Lanczos3).into_raw();
         rendered.width = width;
         rendered.height = height;
     }
-    if request.settings.output_sharpen == OutputSharpenTarget::Screen {
-        let (sigma, threshold) = match request.settings.sharpen_amount {
-            OutputSharpenAmount::Low => (0.55, 2),
-            OutputSharpenAmount::Standard => (0.8, 2),
-            OutputSharpenAmount::High => (1.1, 1),
-        };
-        let image = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(width, height, rendered.rgb8)
-            .ok_or_else(|| ExportError::EncodeFailed("invalid resize buffer".into()))?;
-        rendered.rgb8 = imageops::unsharpen(&image, sigma, threshold).into_raw();
-    }
+    apply_output_sharpen(
+        &mut rendered.rgb,
+        width,
+        height,
+        source_width,
+        source_height,
+        request.settings.output_sharpen,
+        request.settings.sharpen_amount,
+    )?;
     if cancelled.load(Ordering::Relaxed) {
         return Err(ExportError::Cancelled);
     }
@@ -569,21 +577,44 @@ pub fn export_one<R: FullResolutionRenderer>(
         None
     };
     let exif = export_exif(request, rendered.source_exif.as_deref())?;
-    let bytes = match request.settings.format {
-        ExportFormat::Jpeg => encode_jpeg_rgb8_with_metadata(
-            &rendered.rgb8,
+    let xmp = export_xmp(request)?;
+    let rgb8 = || {
+        rendered
+            .rgb
+            .iter()
+            .map(|sample| (sample.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect::<Vec<_>>()
+    };
+    let rgb16 = || {
+        rendered
+            .rgb
+            .iter()
+            .map(|sample| (sample.clamp(0.0, 1.0) * 65_535.0).round() as u16)
+            .collect::<Vec<_>>()
+    };
+    let bytes = match (request.settings.format, request.settings.bit_depth) {
+        (ExportFormat::Jpeg, 8) => encode_jpeg_rgb8_with_metadata(
+            &rgb8(),
             width,
             height,
             request.settings.quality,
             profile,
             exif,
+            xmp,
         ),
-        ExportFormat::Png => {
-            encode_png_rgb8_with_metadata(&rendered.rgb8, width, height, profile, exif)
+        (ExportFormat::Png, 8) => {
+            encode_png_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
         }
-        ExportFormat::Tiff => {
-            encode_tiff_rgb8_with_metadata(&rendered.rgb8, width, height, profile, exif)
+        (ExportFormat::Png, 16) => {
+            encode_png_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
         }
+        (ExportFormat::Tiff, 8) => {
+            encode_tiff_rgb8_with_metadata(&rgb8(), width, height, profile, exif, xmp)
+        }
+        (ExportFormat::Tiff, 16) => {
+            encode_tiff_rgb16_with_metadata(&rgb16(), width, height, profile, exif, xmp)
+        }
+        (_, depth) => return Err(ExportError::UnsupportedBitDepth(depth)),
     }
     .map_err(|error| ExportError::EncodeFailed(error.to_string()))?;
     fs::create_dir_all(&request.destination_directory)
@@ -605,6 +636,64 @@ pub fn export_one<R: FullResolutionRenderer>(
         recipe_identity: export_recipe_identity(request)?,
         error: None,
     })
+}
+
+fn apply_output_sharpen(
+    rgb: &mut Vec<f32>,
+    width: u32,
+    height: u32,
+    source_width: u32,
+    source_height: u32,
+    target: OutputSharpenTarget,
+    amount: OutputSharpenAmount,
+) -> Result<(), ExportError> {
+    if target == OutputSharpenTarget::Off || width < 2 || height < 2 {
+        return Ok(());
+    }
+    let resize_ratio = ((f64::from(width) * f64::from(height))
+        / (f64::from(source_width) * f64::from(source_height)))
+    .sqrt()
+    .clamp(0.05, 4.0) as f32;
+    let megapixels = (width as f32 * height as f32 / 1_000_000.0).max(0.1);
+    let amount_scale = match amount {
+        OutputSharpenAmount::Low => 0.65,
+        OutputSharpenAmount::Standard => 1.0,
+        OutputSharpenAmount::High => 1.4,
+    };
+    let (sigma, gain, threshold) = match target {
+        OutputSharpenTarget::Off => unreachable!(),
+        OutputSharpenTarget::Screen => (
+            (0.55 / resize_ratio.sqrt()).clamp(0.45, 1.1),
+            0.55 * amount_scale,
+            1.0 / 1024.0,
+        ),
+        // Print sharpening compensates for output resampling and print-dot spread. Its radius is
+        // therefore tied to final dimensions and resize ratio, rather than reusing Screen values.
+        OutputSharpenTarget::Print => (
+            (0.9 + megapixels.sqrt() * 0.045 + (1.0 / resize_ratio).min(3.0) * 0.12)
+                .clamp(0.9, 2.1),
+            0.8 * amount_scale,
+            0.5 / 1024.0,
+        ),
+    };
+    let image = ImageBuffer::<Rgb<f32>, Vec<f32>>::from_raw(width, height, std::mem::take(rgb))
+        .ok_or_else(|| ExportError::EncodeFailed("invalid sharpen buffer".into()))?;
+    let blurred = imageops::blur(&image, sigma);
+    let original = image.into_raw();
+    let blur = blurred.into_raw();
+    *rgb = original
+        .into_iter()
+        .zip(blur)
+        .map(|(source, low_pass)| {
+            let detail = source - low_pass;
+            if detail.abs() < threshold {
+                source
+            } else {
+                source + detail * gain
+            }
+        })
+        .collect();
+    Ok(())
 }
 
 fn export_exif(
@@ -637,6 +726,52 @@ fn export_exif(
             request.settings.copyright.as_deref(),
         )),
     }
+}
+
+fn export_xmp(request: &ExportRequest) -> Result<Option<Vec<u8>>, ExportError> {
+    if request.settings.metadata == MetadataPolicy::None {
+        return Ok(None);
+    }
+    let copyright = request
+        .settings
+        .copyright
+        .as_deref()
+        .map(xml_escape)
+        .unwrap_or_default();
+    let subjects = request
+        .keywords
+        .iter()
+        .filter(|keyword| !keyword.trim().is_empty())
+        .map(|keyword| format!("<rdf:li>{}</rdf:li>", xml_escape(keyword.trim())))
+        .collect::<String>();
+    let camera = request
+        .camera
+        .as_deref()
+        .map(xml_escape)
+        .unwrap_or_default();
+    let capture = request
+        .capture_date
+        .as_deref()
+        .map(xml_escape)
+        .unwrap_or_default();
+    let packet = format!(
+        r#"<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/" xmlns:tiff="http://ns.adobe.com/tiff/1.0/" xmp:Rating="{}" photoshop:DateCreated="{}" tiff:Model="{}"><dc:rights><rdf:Alt><rdf:li xml:lang="x-default">{}</rdf:li></rdf:Alt></dc:rights><dc:subject><rdf:Bag>{}</rdf:Bag></dc:subject></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>"#,
+        request.rating.min(5),
+        capture,
+        camera,
+        copyright,
+        subjects
+    );
+    Ok(Some(packet.into_bytes()))
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// Creates a small IFD0 EXIF payload containing only explicitly allowed ASCII fields. It has no
@@ -890,7 +1025,29 @@ mod tests {
             Ok(RenderedBuffer {
                 width: 4,
                 height: 3,
-                rgb8: vec![128; 4 * 3 * 3],
+                rgb: vec![0.5; 4 * 3 * 3],
+                source_exif: None,
+            })
+        }
+    }
+    struct GradientRenderer;
+    impl FullResolutionRenderer for GradientRenderer {
+        fn render(
+            &self,
+            _: &Path,
+            _: OutputColorSpace,
+            _: &RenderSettings,
+        ) -> Result<RenderedBuffer, ExportError> {
+            let rgb = (0..1024)
+                .flat_map(|index| {
+                    let value = index as f32 / 1023.0;
+                    [value, value, value]
+                })
+                .collect();
+            Ok(RenderedBuffer {
+                width: 1024,
+                height: 1,
+                rgb,
                 source_exif: None,
             })
         }
@@ -909,6 +1066,7 @@ mod tests {
             original_name: "portrait.raw".into(),
             capture_date: Some("2026-08-24".into()),
             rating: 5,
+            keywords: vec!["portrait".into(), "M27".into()],
             camera: Some("Nikon D750".into()),
             look: Some("Warm".into()),
             sequence: id as u32,
@@ -940,6 +1098,85 @@ mod tests {
             assert_eq!(path.extension().unwrap(), extension);
             assert!(fs::metadata(path).unwrap().len() > 20);
         }
+    }
+
+    #[test]
+    fn png16_and_tiff16_export_are_real_high_precision_round_trips() {
+        let root = root("formats16");
+        for (id, format, image_format) in [
+            (1, ExportFormat::Png, image::ImageFormat::Png),
+            (2, ExportFormat::Tiff, image::ImageFormat::Tiff),
+        ] {
+            let mut value = request(&root, id, format);
+            value.settings.bit_depth = 16;
+            value.settings.filename_template = format!("precision-{id}");
+            let result = export_one(
+                &GradientRenderer,
+                &value,
+                &RenderSettings::default(),
+                &AtomicBool::new(false),
+            )
+            .expect("16-bit export");
+            let bytes = fs::read(result.destination.unwrap()).expect("read output");
+            let decoded =
+                image::load_from_memory_with_format(&bytes, image_format).expect("decode output");
+            assert_eq!(decoded.color(), image::ColorType::Rgb16);
+            let samples = decoded.into_rgb16().into_raw();
+            let unique = samples
+                .chunks_exact(3)
+                .map(|pixel| pixel[0])
+                .collect::<std::collections::BTreeSet<_>>();
+            assert!(unique.len() > 256, "must not be an 8-bit up-conversion");
+        }
+    }
+
+    #[test]
+    fn print_sharpen_is_dimension_aware_and_distinct_from_screen() {
+        let mut source = vec![0.25_f32; 9 * 9 * 3];
+        for channel in 0..3 {
+            source[(4 * 9 + 4) * 3 + channel] = 0.75;
+        }
+        let mut screen = source.clone();
+        apply_output_sharpen(
+            &mut screen,
+            9,
+            9,
+            18,
+            18,
+            OutputSharpenTarget::Screen,
+            OutputSharpenAmount::Standard,
+        )
+        .unwrap();
+        let mut print = source.clone();
+        apply_output_sharpen(
+            &mut print,
+            9,
+            9,
+            18,
+            18,
+            OutputSharpenTarget::Print,
+            OutputSharpenAmount::Standard,
+        )
+        .unwrap();
+        let mut print_larger = source;
+        apply_output_sharpen(
+            &mut print_larger,
+            9,
+            9,
+            36,
+            36,
+            OutputSharpenTarget::Print,
+            OutputSharpenAmount::Standard,
+        )
+        .unwrap();
+        assert_ne!(screen, print);
+        assert_ne!(print, print_larger);
+        assert!(
+            print
+                .iter()
+                .chain(print_larger.iter())
+                .all(|value| value.is_finite())
+        );
     }
     #[test]
     fn all_color_profiles_export() {
@@ -1044,14 +1281,21 @@ mod tests {
         assert_eq!(cancelled.cancelled.len(), 1);
     }
     #[test]
-    fn preset_roundtrip_illegal_depth_and_memory_guard() {
+    fn preset_roundtrip_depth_matrix_and_memory_guard() {
         let preset = ExportPreset::new("Web", ExportSettings::default()).unwrap();
         assert_eq!(
             ExportPreset::deserialize(&preset.serialize().unwrap()).unwrap(),
             preset
         );
+        let png16 = ExportSettings {
+            bit_depth: 16,
+            format: ExportFormat::Png,
+            ..ExportSettings::default()
+        };
+        validate_settings(&png16).expect("PNG16 is production supported");
         let settings = ExportSettings {
             bit_depth: 16,
+            format: ExportFormat::Jpeg,
             ..ExportSettings::default()
         };
         assert!(matches!(

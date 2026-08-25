@@ -23,6 +23,8 @@ pub enum ImageIoError {
     InvalidBufferLength,
     #[error("TIFF metadata encoder failed: {0}")]
     TiffMetadata(String),
+    #[error("container metadata encoder failed: {0}")]
+    ContainerMetadata(String),
     #[error(transparent)]
     Raw(#[from] RawDecodeError),
 }
@@ -245,7 +247,7 @@ pub fn encode_jpeg_rgb8(
     quality: u8,
     icc_profile: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
-    encode_jpeg_rgb8_with_metadata(rgb, width, height, quality, icc_profile, None)
+    encode_jpeg_rgb8_with_metadata(rgb, width, height, quality, icc_profile, None, None)
 }
 
 pub fn encode_jpeg_rgb8_with_metadata(
@@ -255,6 +257,7 @@ pub fn encode_jpeg_rgb8_with_metadata(
     quality: u8,
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
     let expected = width as usize * height as usize * 3;
     if rgb.len() != expected {
@@ -274,7 +277,11 @@ pub fn encode_jpeg_rgb8_with_metadata(
             .map_err(image::ImageError::Unsupported)?;
     }
     encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
-    Ok(cursor.into_inner())
+    let mut encoded = cursor.into_inner();
+    if let Some(xmp) = xmp {
+        insert_jpeg_xmp(&mut encoded, &xmp)?;
+    }
+    Ok(encoded)
 }
 
 pub fn encode_png_rgb8(
@@ -283,7 +290,7 @@ pub fn encode_png_rgb8(
     height: u32,
     icc_profile: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
-    encode_png_rgb8_with_metadata(rgb, width, height, icc_profile, None)
+    encode_png_rgb8_with_metadata(rgb, width, height, icc_profile, None, None)
 }
 
 pub fn encode_png_rgb8_with_metadata(
@@ -292,6 +299,7 @@ pub fn encode_png_rgb8_with_metadata(
     height: u32,
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
     validate_rgb8(rgb, width, height)?;
     let mut cursor = Cursor::new(Vec::new());
@@ -307,7 +315,41 @@ pub fn encode_png_rgb8_with_metadata(
             .map_err(image::ImageError::Unsupported)?;
     }
     encoder.write_image(rgb, width, height, ExtendedColorType::Rgb8)?;
-    Ok(cursor.into_inner())
+    let mut encoded = cursor.into_inner();
+    if let Some(xmp) = xmp {
+        insert_png_xmp(&mut encoded, &xmp)?;
+    }
+    Ok(encoded)
+}
+
+pub fn encode_png_rgb16_with_metadata(
+    rgb: &[u16],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    validate_rgb16(rgb, width, height)?;
+    let native_bytes: Vec<u8> = rgb.iter().flat_map(|sample| sample.to_ne_bytes()).collect();
+    let mut cursor = Cursor::new(Vec::new());
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut cursor);
+    if let Some(profile) = icc_profile {
+        encoder
+            .set_icc_profile(profile)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    if let Some(exif) = exif {
+        encoder
+            .set_exif_metadata(exif)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    encoder.write_image(&native_bytes, width, height, ExtendedColorType::Rgb16)?;
+    let mut encoded = cursor.into_inner();
+    if let Some(xmp) = xmp {
+        insert_png_xmp(&mut encoded, &xmp)?;
+    }
+    Ok(encoded)
 }
 
 pub fn encode_tiff_rgb8(
@@ -316,7 +358,7 @@ pub fn encode_tiff_rgb8(
     height: u32,
     icc_profile: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
-    encode_tiff_rgb8_with_metadata(rgb, width, height, icc_profile, None)
+    encode_tiff_rgb8_with_metadata(rgb, width, height, icc_profile, None, None)
 }
 
 pub fn encode_tiff_rgb8_with_metadata(
@@ -325,6 +367,7 @@ pub fn encode_tiff_rgb8_with_metadata(
     height: u32,
     icc_profile: Option<Vec<u8>>,
     exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ImageIoError> {
     validate_rgb8(rgb, width, height)?;
     let mut cursor = Cursor::new(Vec::new());
@@ -338,6 +381,64 @@ pub fn encode_tiff_rgb8_with_metadata(
             image
                 .encoder()
                 .write_tag(tiff::tags::Tag::IccProfile, profile.as_slice())
+                .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        }
+        if let Some(xmp) = xmp {
+            image
+                .encoder()
+                .write_tag(tiff::tags::Tag::Unknown(700), xmp.as_slice())
+                .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        }
+        if let Some(exif) = exif
+            && let Ok(parsed) = exif::Reader::new().read_raw(exif)
+        {
+            for (source, destination) in [
+                (exif::Tag::Model, tiff::tags::Tag::Model),
+                (exif::Tag::DateTime, tiff::tags::Tag::DateTime),
+                (exif::Tag::Copyright, tiff::tags::Tag::Copyright),
+            ] {
+                let value = exif_text(&parsed, source);
+                if !value.is_empty() {
+                    image
+                        .encoder()
+                        .write_tag(destination, value.as_str())
+                        .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+                }
+            }
+        }
+        image
+            .write_data(rgb)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+    }
+    Ok(cursor.into_inner())
+}
+
+pub fn encode_tiff_rgb16_with_metadata(
+    rgb: &[u16],
+    width: u32,
+    height: u32,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
+) -> Result<Vec<u8>, ImageIoError> {
+    validate_rgb16(rgb, width, height)?;
+    let mut cursor = Cursor::new(Vec::new());
+    {
+        let mut encoder = tiff::encoder::TiffEncoder::new(&mut cursor)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        let mut image = encoder
+            .new_image::<tiff::encoder::colortype::RGB16>(width, height)
+            .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        if let Some(profile) = icc_profile {
+            image
+                .encoder()
+                .write_tag(tiff::tags::Tag::IccProfile, profile.as_slice())
+                .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
+        }
+        if let Some(xmp) = xmp {
+            image
+                .encoder()
+                .write_tag(tiff::tags::Tag::Unknown(700), xmp.as_slice())
                 .map_err(|error| ImageIoError::TiffMetadata(error.to_string()))?;
         }
         if let Some(exif) = exif
@@ -373,6 +474,58 @@ fn validate_rgb8(rgb: &[u8], width: u32, height: u32) -> Result<(), ImageIoError
     }
 }
 
+fn validate_rgb16(rgb: &[u16], width: u32, height: u32) -> Result<(), ImageIoError> {
+    let expected = width as usize * height as usize * 3;
+    if rgb.len() == expected {
+        Ok(())
+    } else {
+        Err(ImageIoError::InvalidBufferLength)
+    }
+}
+
+fn insert_jpeg_xmp(jpeg: &mut Vec<u8>, xmp: &[u8]) -> Result<(), ImageIoError> {
+    const HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+    if !jpeg.starts_with(&[0xff, 0xd8]) {
+        return Err(ImageIoError::ContainerMetadata(
+            "JPEG SOI marker is missing".into(),
+        ));
+    }
+    let length = u16::try_from(HEADER.len() + xmp.len() + 2).map_err(|_| {
+        ImageIoError::ContainerMetadata("JPEG XMP packet exceeds one APP1 segment".into())
+    })?;
+    let mut segment = Vec::with_capacity(length as usize + 2);
+    segment.extend_from_slice(&[0xff, 0xe1]);
+    segment.extend_from_slice(&length.to_be_bytes());
+    segment.extend_from_slice(HEADER);
+    segment.extend_from_slice(xmp);
+    jpeg.splice(2..2, segment);
+    Ok(())
+}
+
+fn insert_png_xmp(png: &mut Vec<u8>, xmp: &[u8]) -> Result<(), ImageIoError> {
+    const IEND: &[u8] = &[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82];
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") || !png.ends_with(IEND) {
+        return Err(ImageIoError::ContainerMetadata(
+            "PNG signature or IEND chunk is invalid".into(),
+        ));
+    }
+    let mut data = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
+    data.extend_from_slice(xmp);
+    let length = u32::try_from(data.len())
+        .map_err(|_| ImageIoError::ContainerMetadata("PNG XMP packet is too large".into()))?;
+    let mut chunk = Vec::with_capacity(data.len() + 12);
+    chunk.extend_from_slice(&length.to_be_bytes());
+    chunk.extend_from_slice(b"iTXt");
+    chunk.extend_from_slice(&data);
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(b"iTXt");
+    crc.update(&data);
+    chunk.extend_from_slice(&crc.finalize().to_be_bytes());
+    let insertion = png.len() - IEND.len();
+    png.splice(insertion..insertion, chunk);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,5 +546,65 @@ mod tests {
         let decoded = reader.decode().expect("decode");
         assert_eq!(decoded.width(), 2);
         assert_eq!(decoded.height(), 2);
+    }
+
+    #[test]
+    fn png16_round_trip_preserves_real_sixteen_bit_samples() {
+        let rgb: Vec<u16> = (0..512_u16)
+            .flat_map(|value| [value * 127, value * 127, value * 127])
+            .collect();
+        let bytes = encode_png_rgb16_with_metadata(
+            &rgb,
+            512,
+            1,
+            None,
+            None,
+            Some(b"<x:xmpmeta>M27</x:xmpmeta>".to_vec()),
+        )
+        .expect("PNG16 encode");
+        assert!(bytes.windows(3).any(|window| window == b"M27"));
+        let decoded =
+            image::load_from_memory_with_format(&bytes, ImageFormat::Png).expect("PNG16 decode");
+        assert_eq!(decoded.color(), image::ColorType::Rgb16);
+        let values = decoded.into_rgb16().into_raw();
+        assert!(values.windows(2).filter(|pair| pair[0] != pair[1]).count() > 256);
+        assert_eq!(values, rgb);
+    }
+
+    #[test]
+    fn tiff16_round_trip_preserves_real_sixteen_bit_samples_and_xmp() {
+        let rgb: Vec<u16> = (0..512_u16)
+            .flat_map(|value| [value * 127, value * 127, value * 127])
+            .collect();
+        let bytes = encode_tiff_rgb16_with_metadata(
+            &rgb,
+            512,
+            1,
+            None,
+            None,
+            Some(b"<x:xmpmeta>M27</x:xmpmeta>".to_vec()),
+        )
+        .expect("TIFF16 encode");
+        assert!(bytes.windows(3).any(|window| window == b"M27"));
+        let decoded =
+            image::load_from_memory_with_format(&bytes, ImageFormat::Tiff).expect("TIFF16 decode");
+        assert_eq!(decoded.color(), image::ColorType::Rgb16);
+        assert_eq!(decoded.into_rgb16().into_raw(), rgb);
+    }
+
+    #[test]
+    fn jpeg_xmp_is_an_explicit_app1_packet() {
+        let bytes = encode_jpeg_rgb8_with_metadata(
+            &[128, 128, 128],
+            1,
+            1,
+            90,
+            None,
+            None,
+            Some(b"<x:xmpmeta>M27</x:xmpmeta>".to_vec()),
+        )
+        .expect("JPEG XMP encode");
+        assert_eq!(&bytes[..4], &[0xff, 0xd8, 0xff, 0xe1]);
+        assert!(bytes.windows(3).any(|window| window == b"M27"));
     }
 }

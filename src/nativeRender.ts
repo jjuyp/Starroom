@@ -34,12 +34,13 @@ export interface NativeProfessionalExportSettings {
   colorSpace: 'srgb' | 'displayP3' | 'adobeRgb' | 'rec2020'; embedProfile: boolean
   resize: { mode: 'original' } | { mode: 'width' | 'height' | 'longEdge' | 'shortEdge'; pixels: number }
     | { mode: 'percentage'; percent: number } | { mode: 'fitWithin'; width: number; height: number }
-  outputSharpen: 'off' | 'screen'; sharpenAmount: 'low' | 'standard' | 'high'
+  outputSharpen: 'off' | 'screen' | 'print'; sharpenAmount: 'low' | 'standard' | 'high'
   metadata: 'allMetadata' | 'copyrightOnly' | 'cameraMetadata' | 'none'; includeLocation: boolean
   copyright: string | null; filenameTemplate: string; collision: 'fail' | 'autoRename' | 'overwrite'
 }
 export interface NativeProfessionalExportItem {
   assetId: number; sourcePath: string; originalName: string; captureDate: string | null; rating: number
+  keywords: string[]
   camera: string | null; look: string | null; sequence: number; sourceFingerprint: string
   editStateIdentity: string; editSettings: NativeEditSettings
 }

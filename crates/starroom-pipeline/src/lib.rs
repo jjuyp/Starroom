@@ -514,6 +514,31 @@ pub struct RenderedRgb8 {
     pub color: ColorTransformReport,
 }
 
+/// High-precision encoded output of the shared Native graph. Values have already passed through
+/// the selected LittleCMS output transform, but have not been quantized for a file codec.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedRgbF32 {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<f32>,
+    pub color: ColorTransformReport,
+}
+
+impl RenderedRgbF32 {
+    fn into_rgb8(self) -> RenderedRgb8 {
+        RenderedRgb8 {
+            width: self.width,
+            height: self.height,
+            data: self
+                .data
+                .into_iter()
+                .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8)
+                .collect(),
+            color: self.color,
+        }
+    }
+}
+
 fn apply_relative_color(rgb: LinearRgb, parameters: RelativeColorParameters) -> LinearRgb {
     let temperature = parameters.temperature.clamp(-1.0, 1.0);
     let tint = parameters.tint.clamp(-1.0, 1.0);
@@ -1200,7 +1225,7 @@ fn render_working_graph(
     optics_resolution: Option<&LensProfileResolution>,
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
-) -> Result<RenderedRgb8, PipelineError> {
+) -> Result<RenderedRgbF32, PipelineError> {
     let geometry_image = apply_precreative_geometry(working, settings, optics_resolution)?;
     render_prepared_working_graph(
         geometry_image,
@@ -1270,7 +1295,7 @@ fn render_prepared_working_graph(
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
-) -> Result<RenderedRgb8, PipelineError> {
+) -> Result<RenderedRgbF32, PipelineError> {
     // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
     // caches are separate; an enabled request without its native residual is a typed failure.
     let model_adjusted = if settings.ai_denoise.enabled {
@@ -1337,13 +1362,8 @@ fn render_prepared_working_graph(
         settings.color_management.intent,
         settings.color_management.black_point_compensation,
     )?;
-    let mut output = Vec::with_capacity(pixels.len() * 3);
-    for encoded in pixels {
-        for channel in encoded {
-            output.push((channel.clamp(0.0, 1.0) * 255.0).round() as u8);
-        }
-    }
-    Ok(RenderedRgb8 {
+    let output = pixels.into_iter().flatten().collect();
+    Ok(RenderedRgbF32 {
         width,
         height,
         data: output,
@@ -1380,7 +1400,7 @@ fn render_shared_graph(
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
-) -> Result<RenderedRgb8, PipelineError> {
+) -> Result<RenderedRgbF32, PipelineError> {
     let (working, input_source) = to_working_image(decoded, settings)?;
     let resolution = if settings.optics.parameters.enabled {
         Some(resolve_rendered_optics(decoded, &settings.optics)?)
@@ -1403,7 +1423,7 @@ fn render_shared_source_graph(
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
-) -> Result<RenderedRgb8, PipelineError> {
+) -> Result<RenderedRgbF32, PipelineError> {
     let optics_resolution = if settings.optics.parameters.enabled {
         Some(resolve_source_lens_profile(decoded, &settings.optics)?)
     } else {
@@ -1501,7 +1521,7 @@ pub fn render_preview_to_srgb8(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, None, None)
+    render_shared_graph(decoded, settings, None, None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_preview_to_display_icc8(
@@ -1509,14 +1529,14 @@ pub fn render_preview_to_display_icc8(
     settings: &RenderSettings,
     display_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, Some(display_icc), None)
+    render_shared_graph(decoded, settings, Some(display_icc), None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_export_to_srgb8(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, None, None)
+    render_shared_graph(decoded, settings, None, None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_export_to_icc8(
@@ -1524,21 +1544,21 @@ pub fn render_export_to_icc8(
     settings: &RenderSettings,
     output_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_graph(decoded, settings, Some(output_icc), None)
+    render_shared_graph(decoded, settings, Some(output_icc), None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_source_preview_to_srgb8(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_source_graph(decoded, settings, None, None)
+    render_shared_source_graph(decoded, settings, None, None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_source_export_to_srgb8(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_source_graph(decoded, settings, None, None)
+    render_shared_source_graph(decoded, settings, None, None).map(RenderedRgbF32::into_rgb8)
 }
 
 pub fn render_source_export_to_icc8(
@@ -1546,6 +1566,24 @@ pub fn render_source_export_to_icc8(
     settings: &RenderSettings,
     output_icc: &[u8],
 ) -> Result<RenderedRgb8, PipelineError> {
+    render_shared_source_graph(decoded, settings, Some(output_icc), None)
+        .map(RenderedRgbF32::into_rgb8)
+}
+
+/// Full-resolution export surface that preserves the float output of the shared graph until the
+/// selected file encoder performs its one and only quantization step.
+pub fn render_source_export_to_srgb_f32(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> Result<RenderedRgbF32, PipelineError> {
+    render_shared_source_graph(decoded, settings, None, None)
+}
+
+pub fn render_source_export_to_icc_f32(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    output_icc: &[u8],
+) -> Result<RenderedRgbF32, PipelineError> {
     render_shared_source_graph(decoded, settings, Some(output_icc), None)
 }
 
@@ -1557,7 +1595,7 @@ pub fn render_source_preview_with_gpu_to_srgb8(
     settings: &RenderSettings,
     gpu: &GpuRenderer,
 ) -> Result<RenderedRgb8, PipelineError> {
-    render_shared_source_graph(decoded, settings, None, Some(gpu))
+    render_shared_source_graph(decoded, settings, None, Some(gpu)).map(RenderedRgbF32::into_rgb8)
 }
 
 /// Compatibility entry point. New callers should name preview or export explicitly.
@@ -2902,5 +2940,35 @@ mod tests {
                 ColorManagementError::InvalidProfile { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn m27_high_precision_export_quantizes_only_after_the_shared_graph() {
+        let values: Vec<[f32; 4]> = (0..1024)
+            .map(|index| {
+                let value = index as f32 / 1023.0;
+                [value, value, value, 1.0]
+            })
+            .collect();
+        let source = DecodedSourceImage::Rendered(fixture(&values));
+        let high = render_source_export_to_srgb_f32(&source, &RenderSettings::default())
+            .expect("float shared graph");
+        let eight = render_source_export_to_srgb8(&source, &RenderSettings::default())
+            .expect("8-bit compatibility surface");
+        assert!(high.data.iter().all(|value| value.is_finite()));
+        let unique_high = high
+            .data
+            .chunks_exact(3)
+            .map(|pixel| (pixel[0] * 65_535.0).round() as u16)
+            .collect::<std::collections::BTreeSet<_>>();
+        let unique_eight = eight
+            .data
+            .chunks_exact(3)
+            .map(|pixel| pixel[0])
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(unique_high.len() > unique_eight.len());
+        for (float, quantized) in high.data.iter().zip(eight.data.iter()) {
+            assert_eq!((float.clamp(0.0, 1.0) * 255.0).round() as u8, *quantized);
+        }
     }
 }
