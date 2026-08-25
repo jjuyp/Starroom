@@ -13,3 +13,6 @@ thiserror.workspace = true
 wgpu = { version = "30.0.0", default-features = false, features = ["dx12", "vulkan", "metal", "gles", "wgsl"] }
 pollster = "0.4.0"
 bytemuck = { version = "1.23.0", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }

@@ -43,6 +43,11 @@ pub struct RenderProfile {
     pub peak_working_bytes: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
+    pub working_set_before_bytes: Option<u64>,
+    pub working_set_after_bytes: Option<u64>,
+    /// Operating-system process peak. Windows reports this for the process lifetime, so consumers
+    /// must compare it with the before/after working sets rather than treating it as stage-local.
+    pub process_peak_working_set_bytes: Option<u64>,
 }
 
 thread_local! {
@@ -51,7 +56,14 @@ thread_local! {
 
 struct ActiveProfile {
     started: Instant,
+    memory_before: Option<ProcessMemory>,
     report: RenderProfile,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProcessMemory {
+    working_set_bytes: u64,
+    peak_working_set_bytes: u64,
 }
 
 /// Measures the actual graph executed by `work`. Nested profiling is intentionally rejected so a
@@ -64,6 +76,7 @@ pub fn capture<T>(work: impl FnOnce() -> T) -> (T, RenderProfile) {
         );
         *active.borrow_mut() = Some(ActiveProfile {
             started: Instant::now(),
+            memory_before: process_memory(),
             report: RenderProfile::default(),
         });
     });
@@ -72,6 +85,11 @@ pub fn capture<T>(work: impl FnOnce() -> T) -> (T, RenderProfile) {
         let active = active.borrow_mut().take().expect("active render profile");
         let mut report = active.report;
         report.total_cpu_nanoseconds = nanos(active.started.elapsed().as_nanos());
+        let memory_after = process_memory();
+        report.working_set_before_bytes = active.memory_before.map(|value| value.working_set_bytes);
+        report.working_set_after_bytes = memory_after.map(|value| value.working_set_bytes);
+        report.process_peak_working_set_bytes =
+            memory_after.map(|value| value.peak_working_set_bytes);
         report
     });
     profile.peak_working_bytes = profile
@@ -81,6 +99,32 @@ pub fn capture<T>(work: impl FnOnce() -> T) -> (T, RenderProfile) {
         .max()
         .unwrap_or(0);
     (value, profile)
+}
+
+#[cfg(windows)]
+fn process_memory() -> Option<ProcessMemory> {
+    use windows_sys::Win32::System::{
+        ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
+        Threading::GetCurrentProcess,
+    };
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()).ok()?,
+        ..Default::default()
+    };
+    let structure_size = counters.cb;
+    // SAFETY: `GetCurrentProcess` returns the current pseudo-handle and `counters` is a valid,
+    // correctly sized writable structure for the duration of the synchronous OS call.
+    let success =
+        unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, structure_size) };
+    (success != 0).then_some(ProcessMemory {
+        working_set_bytes: u64::try_from(counters.WorkingSetSize).unwrap_or(u64::MAX),
+        peak_working_set_bytes: u64::try_from(counters.PeakWorkingSetSize).unwrap_or(u64::MAX),
+    })
+}
+
+#[cfg(not(windows))]
+const fn process_memory() -> Option<ProcessMemory> {
+    None
 }
 
 pub fn measure<T>(stage: ProfileStage, working_bytes: u64, work: impl FnOnce() -> T) -> T {
