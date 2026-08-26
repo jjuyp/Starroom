@@ -20,3 +20,4 @@ thiserror.workspace = true
 kamadak-exif = "=0.6.1"
 starroom-history = { path = "../starroom-history" }
 starroom-library = { path = "../starroom-library" }
+starroom-session = { path = "../starroom-session" }

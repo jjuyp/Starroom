@@ -6,6 +6,7 @@ use starroom_export::{
 use starroom_history::{EditCommand, EditHistory};
 use starroom_library::{CollectionKind, Library, SmartCollectionRuleV1, SmartPredicate};
 use starroom_pipeline::RenderSettings;
+use starroom_session::{SessionState, autosave, mark_clean, open};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -107,7 +108,8 @@ fn scenario_a_library_history_snapshot_export_return() {
         &AtomicBool::new(false),
     )
     .expect("full native export");
-    assert!(result.destination.unwrap().is_file());
+    let first_export = result.destination.unwrap();
+    assert!(first_export.is_file());
     assert_eq!(history.snapshot_state(&snapshot).unwrap()["look"], "Warm");
     assert_eq!(
         library
@@ -118,6 +120,35 @@ fn scenario_a_library_history_snapshot_export_return() {
             .as_deref(),
         Some("projects/kyoto.starroom.json")
     );
+
+    let session_path = root.join("session.json");
+    let session = SessionState {
+        version: 1,
+        workspace: "edit".into(),
+        selected_asset_id: Some(asset_id),
+        selected_source_path: Some(source_path.clone()),
+        active_tool: "masks".into(),
+        library_panel_open: true,
+        filmstrip_open: true,
+        zoom_mode: "fit".into(),
+        zoom_scale: 1.0,
+        library_context: "collection:Kyoto Five".into(),
+    };
+    autosave(&session_path, &session).unwrap();
+    assert!(open(&session_path).unwrap().recovery_available);
+    mark_clean(&session_path, &session).unwrap();
+    assert_eq!(open(&session_path).unwrap().state, Some(session));
+
+    let second = export_one(
+        &NativeSharedGraphRenderer,
+        &request(&root, &source_path, asset_id, &history.state_version().0),
+        &render_settings,
+        &AtomicBool::new(false),
+    )
+    .expect("deterministic export after normal session reopen")
+    .destination
+    .unwrap();
+    assert_eq!(fs::read(first_export).unwrap(), fs::read(second).unwrap());
 }
 
 #[test]
