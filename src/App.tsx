@@ -917,6 +917,7 @@ export function App() {
   const [sessionReady, setSessionReady] = useState(() => !nativeRuntimeAvailable())
   const pendingSession = useRef<NativeSessionState | null>(null)
   const currentSession = useRef<NativeSessionState | null>(null)
+  const transientEditsPending = useRef(false)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const [mixerBand, setMixerBand] = useState('Red')
@@ -1044,6 +1045,7 @@ export function App() {
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
+  useEffect(() => { transientEditsPending.current = !selected.libraryAsset && hasPhotoEdits(selected) }, [selected])
   useEffect(() => {
     const pending = pendingSession.current
     if (!pending) return
@@ -1072,6 +1074,7 @@ export function App() {
       const windowHandle = getCurrentWindow()
       unlisten = await windowHandle.onCloseRequested(async (event) => {
         event.preventDefault()
+        if (transientEditsPending.current && !window.confirm('This Browser fallback photo has edits that are not stored in Native History. Close Starroom and discard those transient edits?')) return
         if (currentSession.current) await markNativeSessionClean(currentSession.current)
         await windowHandle.destroy()
       })
