@@ -29,6 +29,7 @@ import {
   autosaveNativeSession, discardNativeRecovery, markNativeSessionClean, openNativeSession, type NativeSessionState,
 } from './nativeRender'
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
+import { formatUserError } from './errorPresentation'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -651,7 +652,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
             : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {
-        if (!cancelled) onStatus(error instanceof Error ? error.message : 'Preview failed')
+        if (!cancelled) onStatus(formatUserError(error, 'Preview failed'))
       }
     }, 30)
 
@@ -980,7 +981,7 @@ export function App() {
     void openNativeSession().then((result) => {
       if (result.recoveryAvailable && result.state) setRecoveryState(result.state)
       else { if (result.state) restoreSession(result.state); setSessionReady(true) }
-    }).catch((error) => { setNotice(error instanceof Error ? error.message : 'Session restore failed'); setSessionReady(true) })
+    }).catch((error) => { setNotice(formatUserError(error, 'Session restore failed')); setSessionReady(true) })
   }, [restoreSession])
   useEffect(() => {
     const finish = () => setPreviewInteraction('final')
@@ -1013,7 +1014,7 @@ export function App() {
           setSelectedLibraryIds([assets[0].id])
         }
       } catch (error) {
-        if (active) setNotice(error instanceof Error ? error.message : 'Library initialization failed')
+        if (active) setNotice(formatUserError(error, 'Library initialization failed'))
       }
     })()
     return () => { active = false }
@@ -1060,7 +1061,7 @@ export function App() {
   useEffect(() => {
     if (!sessionReady || !nativeRuntimeAvailable()) return
     const timer = window.setTimeout(() => {
-      void autosaveNativeSession(sessionState).catch((error) => setNotice(error instanceof Error ? error.message : 'Autosave failed'))
+      void autosaveNativeSession(sessionState).catch((error) => setNotice(formatUserError(error, 'Autosave failed')))
     }, 500)
     return () => window.clearTimeout(timer)
   }, [sessionReady, sessionState])
@@ -1094,7 +1095,7 @@ export function App() {
       setNativeHistory(result)
       setPhotos((current) => current.map((photo) => photo.libraryAsset?.id === assetId ? applyNativeHistoryState(photo, result.state) : photo))
       window.setTimeout(() => { applyingNativeHistory.current = false }, 0)
-    }).catch((error) => setNotice(error instanceof Error ? error.message : 'History open failed'))
+    }).catch((error) => setNotice(formatUserError(error, 'History open failed')))
   }, [selected, nativeHistoryState])
 
   useEffect(() => {
@@ -1106,7 +1107,7 @@ export function App() {
       pendingNativeBefore.current = null
       if (JSON.stringify(before) === JSON.stringify(nativeHistoryState)) return
       void commitNativeHistory(assetId, 'Edit interaction', 'sharedGraph', before, nativeHistoryState)
-        .then(setNativeHistory).catch((error) => setNotice(error instanceof Error ? error.message : 'History commit failed'))
+        .then(setNativeHistory).catch((error) => setNotice(formatUserError(error, 'History commit failed')))
     }, 220)
     return () => { if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current) }
   }, [nativeHistoryState, selected.libraryAsset?.id])
@@ -1181,7 +1182,7 @@ export function App() {
       const result = await importNativeLibraryFolder(root)
       await refreshLibrary()
       setNotice(`Library import · ${result.imported.length} added · ${result.duplicates.length} duplicate · ${result.unsupported.length} unsupported`)
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Library import failed') }
+    } catch (error) { setNotice(formatUserError(error, 'Library import failed')) }
     finally { setLibraryBusy(false) }
   }
 
@@ -1275,7 +1276,7 @@ export function App() {
       setBefore(false)
       setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported into Native preview`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Native photo picker failed')
+      setNotice(formatUserError(error, 'Native photo picker failed'))
     }
   }
 
@@ -1388,7 +1389,7 @@ export function App() {
       setReferenceResult(result)
       setNotice(`Reference analyzed · ${Math.round(result.recipe.confidence * 100)}% confidence`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Reference match failed')
+      setNotice(formatUserError(error, 'Reference match failed'))
     }
   }
 
@@ -1416,7 +1417,7 @@ export function App() {
       await saveNativeLook(path, 'Reference Match', referenceResult.settings)
       setNotice('Reference recipe saved as portable .srlook')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Reference look save failed')
+      setNotice(formatUserError(error, 'Reference look save failed'))
     }
   }
 
@@ -1428,7 +1429,7 @@ export function App() {
       await saveNativeLook(path, selected.name.replace(/\.[^.]+$/, ''), selectedNativeSettings())
       setNotice('Portable .srlook saved')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Look save failed')
+      setNotice(formatUserError(error, 'Look save failed'))
     }
   }
 
@@ -1440,7 +1441,7 @@ export function App() {
       const settings = await applyNativeLook(path, lookAmount / 100, selectedNativeSettings())
       applyWorkflowSettings(settings, `Look applied at ${lookAmount}%`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Look load failed')
+      setNotice(formatUserError(error, 'Look load failed'))
     }
   }
 
@@ -1464,7 +1465,7 @@ export function App() {
       )
       applyWorkflowSettings(settings, `Style mix applied · A ${lookAWeight} / B ${lookBWeight}`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Style mix failed')
+      setNotice(formatUserError(error, 'Style mix failed'))
     }
   }
 
@@ -1555,7 +1556,7 @@ export function App() {
       setMixerPicking(false)
       setNotice(`${band} band selected from Native working color`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Native Color Mixer sampling failed')
+      setNotice(formatUserError(error, 'Native Color Mixer sampling failed'))
     }
   }
 
@@ -1580,7 +1581,7 @@ export function App() {
         selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
       setOpticsStatus(status)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Lensfun resolution failed')
+      setNotice(formatUserError(error, 'Lensfun resolution failed'))
     }
   }
 
@@ -1598,7 +1599,7 @@ export function App() {
       setNotice(message)
       setRenderStatus(detection.status === 'ready' ? 'Portrait masks ready in Native cache' : `Portrait ${detection.status}`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Portrait detection failed')
+      setNotice(formatUserError(error, 'Portrait detection failed'))
       setRenderStatus('Portrait detection failed')
     }
   }
@@ -1668,7 +1669,7 @@ export function App() {
       setNotice(`${semantic} mask ${result.status} · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
       setRenderStatus(`AI Mask · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : `${semantic} mask generation failed`)
+      setNotice(formatUserError(error, `${semantic} mask generation failed`))
       setRenderStatus('AI Mask unavailable')
     } finally {
       setAiMaskRequestId(null)
@@ -1713,7 +1714,7 @@ export function App() {
         selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations)
       setAdvisorResult(result)
       setNotice(`${result.suggestions.length} local, explainable suggestion${result.suggestions.length === 1 ? '' : 's'} ready`)
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Native advisor failed') }
+    } catch (error) { setNotice(formatUserError(error, 'Native advisor failed')) }
   }
 
   function applyAdvisorSuggestions(suggestions: NativeAdvisorSuggestion[]) {
@@ -1804,7 +1805,7 @@ export function App() {
 
   function undo() {
     if (selected.libraryAsset) {
-      void undoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(error instanceof Error ? error.message : 'Undo failed'))
+      void undoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(formatUserError(error, 'Undo failed')))
       return
     }
     updateSelected((photo) => {
@@ -1816,7 +1817,7 @@ export function App() {
 
   function redo() {
     if (selected.libraryAsset) {
-      void redoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(error instanceof Error ? error.message : 'Redo failed'))
+      void redoNativeHistory(selected.libraryAsset.id).then(applyHistoryResult).catch((error) => setNotice(formatUserError(error, 'Redo failed')))
       return
     }
     updateSelected((photo) => {
@@ -1829,13 +1830,13 @@ export function App() {
   function createSnapshot() {
     if (!selected.libraryAsset) return
     void createNativeSnapshot(selected.libraryAsset.id, snapshotName).then((result) => { setNativeHistory(result); setSnapshotName(`Version ${result.snapshots.length + 1}`) })
-      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot creation failed'))
+      .catch((error) => setNotice(formatUserError(error, 'Snapshot creation failed')))
   }
 
   function restoreSnapshot(snapshotId: string) {
     if (!selected.libraryAsset) return
     void restoreNativeSnapshot(selected.libraryAsset.id, snapshotId).then(applyHistoryResult)
-      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot restore failed'))
+      .catch((error) => setNotice(formatUserError(error, 'Snapshot restore failed')))
   }
 
   function renameSnapshot(snapshotId: string, currentName: string) {
@@ -1843,13 +1844,13 @@ export function App() {
     const name = window.prompt('Snapshot name', currentName)?.trim()
     if (!name) return
     void renameNativeSnapshot(selected.libraryAsset.id, snapshotId, name).then(setNativeHistory)
-      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot rename failed'))
+      .catch((error) => setNotice(formatUserError(error, 'Snapshot rename failed')))
   }
 
   function deleteSnapshot(snapshotId: string) {
     if (!selected.libraryAsset) return
     void deleteNativeSnapshot(selected.libraryAsset.id, snapshotId).then((result) => { setNativeHistory(result); if (snapshotCompareId === snapshotId) setSnapshotCompareId(null) })
-      .catch((error) => setNotice(error instanceof Error ? error.message : 'Snapshot delete failed'))
+      .catch((error) => setNotice(formatUserError(error, 'Snapshot delete failed')))
   }
 
   function toggleRating() {
@@ -1955,7 +1956,7 @@ export function App() {
       setRenderStatus('Browser fallback preview')
     } catch (error) {
       setExportBusy(false)
-      setNotice(error instanceof Error ? error.message : 'Export failed')
+      setNotice(formatUserError(error, 'Export failed'))
       setRenderStatus('Export failed')
     }
   }
@@ -1993,7 +1994,7 @@ export function App() {
       <span className="eyebrow">Crash recovery</span><h2 id="recovery-title">Starroom found an interrupted session</h2>
       <p>Recover the previous workspace, selected photo, panels and zoom, or discard only the recovery state. Source photos are never modified.</p>
       <div><button className="export-button" autoFocus onClick={() => { restoreSession(recoveryState); setRecoveryState(null); setSessionReady(true) }}>Recover</button>
-        <button onClick={() => void discardNativeRecovery().then(() => { setRecoveryState(null); setSessionReady(true) }).catch((error) => setNotice(error instanceof Error ? error.message : 'Recovery discard failed'))}>Discard</button></div>
+        <button onClick={() => void discardNativeRecovery().then(() => { setRecoveryState(null); setSessionReady(true) }).catch((error) => setNotice(formatUserError(error, 'Recovery discard failed')))}>Discard</button></div>
     </section></div>}
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
