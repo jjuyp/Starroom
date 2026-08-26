@@ -20,6 +20,8 @@
   closure; fail RC packaging on a missing, unknown or stale dependency license record.
 - [x] Add a packaged-executable offline self-test for real Library/History/Session/shared Export
   APIs, deterministic second export, source immutability and explicit local-model discovery state.
+- [x] Add a versioned Project sidecar load boundary: schema-1 compatibility, schema-2 current,
+  typed future/corrupt rejection and fsync-backed atomic persistence.
 - [ ] Resolve every Level-4 release blocker, synchronize version `1.0.0-rc.1`, pass final gates and
   create the RC tag/artifacts. Do not declare Final, merge PR #2 or start M31.
 

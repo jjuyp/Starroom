@@ -2,8 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 use starroom_core::{GlobalAdjustments, SourceIdentity};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, io::Write, path::Path};
 use thiserror::Error;
+
+pub const PROJECT_SCHEMA_VERSION: u32 = 2;
+pub const PROJECT_MINIMUM_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -13,6 +16,8 @@ pub enum ProjectError {
     Io(#[from] std::io::Error),
     #[error("project layer stack is invalid: {0}")]
     InvalidLayers(&'static str),
+    #[error("project schema version is unsupported: {0}")]
+    UnsupportedSchema(u32),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,6 +526,14 @@ pub struct AdjustmentLayer {
 }
 
 impl Project {
+    pub fn validate_schema(&self) -> Result<(), ProjectError> {
+        if !(PROJECT_MINIMUM_SCHEMA_VERSION..=PROJECT_SCHEMA_VERSION).contains(&self.schema_version)
+        {
+            return Err(ProjectError::UnsupportedSchema(self.schema_version));
+        }
+        Ok(())
+    }
+
     /// Validates the persisted non-destructive layer document. Rendering has a separate typed
     /// request validation, but sidecars must never persist ambiguous order or invalid opacity.
     pub fn validate_layers(&self) -> Result<(), ProjectError> {
@@ -548,10 +561,30 @@ impl Project {
     }
 
     pub fn write_sidecar(&self, path: impl AsRef<Path>) -> Result<(), ProjectError> {
+        self.validate_schema()?;
         self.validate_layers()?;
         let json = serde_json::to_vec_pretty(self)?;
-        fs::write(path, json)?;
+        let path = path.as_ref();
+        let parent = path
+            .parent()
+            .filter(|value| !value.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        temporary.write_all(&json)?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(path)
+            .map_err(|error| ProjectError::Io(error.error))?;
         Ok(())
+    }
+
+    pub fn read_sidecar(path: impl AsRef<Path>) -> Result<Self, ProjectError> {
+        let bytes = fs::read(path)?;
+        let project: Self = serde_json::from_slice(&bytes)?;
+        project.validate_schema()?;
+        project.validate_layers()?;
+        Ok(project)
     }
 }
 
@@ -747,6 +780,44 @@ mod tests {
         let restored: Project = serde_json::from_str(json).expect("deserialize old project");
         assert!(restored.layers.is_empty());
         assert!(restored.camera_profile.is_none());
+    }
+
+    #[test]
+    fn sidecar_upgrade_boundary_is_atomic_typed_and_failure_safe() {
+        let root =
+            std::env::temp_dir().join(format!("starroom-project-m30-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("legacy.starroom.json");
+        let legacy = r#"{"schemaVersion":1,"engineVersion":"0.1.0","source":{"path":"photo.jpg","contentHash":"abc","byteLength":42},"globalAdjustments":{"exposureEv":0.0,"contrast":0.0,"highlights":0.0,"shadows":0.0,"whites":0.0,"blacks":0.0,"temperature":0.0,"tint":0.0,"vibrance":0.0,"saturation":0.0},"masks":[]}"#;
+        fs::write(&path, legacy).unwrap();
+        let loaded = Project::read_sidecar(&path).unwrap();
+        assert_eq!(loaded.schema_version, 1);
+        loaded.write_sidecar(&path).unwrap();
+        assert_eq!(Project::read_sidecar(&path).unwrap().schema_version, 1);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+
+        let future_path = root.join("future.starroom.json");
+        fs::write(
+            &future_path,
+            legacy.replace("\"schemaVersion\":1", "\"schemaVersion\":999"),
+        )
+        .unwrap();
+        let future_before = fs::read(&future_path).unwrap();
+        assert!(matches!(
+            Project::read_sidecar(&future_path),
+            Err(ProjectError::UnsupportedSchema(999))
+        ));
+        assert_eq!(fs::read(&future_path).unwrap(), future_before);
+
+        let corrupt_path = root.join("corrupt.starroom.json");
+        fs::write(&corrupt_path, b"{not-json").unwrap();
+        let corrupt_before = fs::read(&corrupt_path).unwrap();
+        assert!(matches!(
+            Project::read_sidecar(&corrupt_path),
+            Err(ProjectError::Serialize(_))
+        ));
+        assert_eq!(fs::read(&corrupt_path).unwrap(), corrupt_before);
     }
 
     #[test]

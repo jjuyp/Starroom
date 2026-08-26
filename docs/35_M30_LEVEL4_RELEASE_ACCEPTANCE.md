@@ -25,6 +25,8 @@ substitutes:
 - Session: clean close, crash-recovery marker, corrupt JSON and unsupported/invalid state.
 - History: persist/reload determinism, corrupt JSON, corrupt checkpoint, 10,000-command restore,
   undo/redo and branch truncation.
+- Project: schema-1 compatibility, current schema-2 round-trip, future/corrupt typed rejection and
+  atomic sidecar replacement without rewriting rejected input.
 - Library: empty-database initialization, schema reopen, corrupt/future database rejection, missing
   source, relink, missing thumbnail, damaged-cache regeneration, stable pagination and 100,000
   metadata-only assets.

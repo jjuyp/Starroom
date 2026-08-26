@@ -3903,6 +3903,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starroom-core",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

@@ -7,6 +7,7 @@ const reportUrl = new URL('../docs/36_M30_DEPENDENCY_LICENSE_REPORT.json', impor
 const cargoLock = readFileSync(new URL('Cargo.lock', root))
 const npmLock = readFileSync(new URL('package-lock.json', root))
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const canonicalText = (bytes) => Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'))
 const allowed = new Set([
   '0BSD', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'CC0-1.0',
   'CDLA-Permissive-2.0', 'ISC', 'LGPL-2.1-or-later', 'MIT', 'MIT-0',
@@ -50,8 +51,8 @@ const npm = Object.entries(packageLock.packages)
 const report = {
   schemaVersion: 1,
   policy: 'GPL-3.0-or-later combined work; preserve file-level and notice obligations',
-  cargoLockSha256: sha256(cargoLock),
-  packageLockSha256: sha256(npmLock),
+  cargoLockSha256: sha256(canonicalText(cargoLock)),
+  packageLockSha256: sha256(canonicalText(npmLock)),
   rust,
   npm,
 }
