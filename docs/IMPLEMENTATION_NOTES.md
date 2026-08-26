@@ -1,4 +1,10 @@
 # Implementation Notes
+## 2026-08-26 M30 release-candidate qualification
+
+- M30 begins under feature freeze after M28 acceptance `94a9ccc` / `32942892981` and M29 acceptance `d83fd9f` / `32943720530`. Official `@tauri-apps/cli` 2.11.4 is an exact build-time pin. A separate Windows gate now builds the real MSVC release executable and NSIS installer, launches the unpacked and clean-installed executable, performs silent uninstall, records SHA-256 values and uploads the artifacts.
+- `scripts/validate-release.mjs` enforces synchronized package/Cargo/Tauri identity, release icon/notices, exclusion of tracked ONNX/checkpoint weights and absence of executable browser/Rust network-client APIs. XMP namespace/schema/source-reference URLs are data or comments and do not constitute a network client.
+- Level-4 remains deliberately unaccepted while photographic Golden review, non-Exposure GPU migrations, a true 100 MP pixel workflow, legal offline AI weights and physical multi-monitor qualification are absent. `docs/35_M30_LEVEL4_RELEASE_ACCEPTANCE.md` records these as release blockers/field-validation decisions rather than converting earlier plan/fixture evidence into false claims.
+
 ## 2026-08-26 M28-M29 performance and desktop hardening candidate
 
 - M28 instruments the Native render/export graph with per-stage CPU duration, local process current/peak working set and exact cache hit/miss counters. The M13 scheduler now exercises 24/45/60/100 MP plans, visible priority, generation supersession, dirty-region identity and bounded RAM/VRAM accounting. Scale regressions execute 100,000 metadata-only Library rows, 10,000 History commands and bounded 100/500-item export queues without loading a corresponding pixel corpus into memory.

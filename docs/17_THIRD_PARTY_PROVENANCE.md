@@ -69,6 +69,7 @@ The authoritative resolved versions are in `Cargo.lock`. “Direct” means decl
 | `http-range` | Transitive byte-range support enabled by Tauri's `protocol-asset` feature for scoped native thumbnails | 0.1.5 | MIT | No | Yes | Retain MIT notice; this is transport support, not image processing. |
 | `@tauri-apps/api` | Frontend `invoke`, runtime detection and scoped asset URL bridge; no image processing | 2.11.1 | MIT OR Apache-2.0 | No | Bundled JS | Official Tauri package; retain the selected permissive notice. |
 | `@tauri-apps/plugin-dialog` | Typed frontend binding for the native dialog plugin; no image processing | 2.7.2 | MIT OR Apache-2.0 | No | Bundled JS | Keep JS and Rust plugin versions compatible and review permissions on upgrades. |
+| `@tauri-apps/cli` | M30 reproducible Windows release/NSIS build orchestration | 2.11.4, exact package-lock pin; [tauri-apps/tauri](https://github.com/tauri-apps/tauri) | MIT OR Apache-2.0 | No | Build-time only | Does not enter photo processing or the shipped JS bundle. Retain the selected permissive notice and keep the CLI/config schema aligned with Tauri 2 runtime crates. |
 
 ## Current JavaScript image-related dependencies
 

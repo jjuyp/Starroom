@@ -1,5 +1,18 @@
 # Complete Internal Build Plan
 
+## M30 Starroom v1.0 Release Candidate (feature freeze, in progress 2026-08-26)
+
+- [x] Move the engineering task to M30 feature freeze and pin official Tauri CLI 2.11.4.
+- [x] Add release identity/model-exclusion/offline API validation and a Windows MSVC + NSIS
+  build/install/launch/uninstall workflow with executable/installer hashes.
+- [x] Add third-party notices and an honest Level-4 matrix that keeps photographic Golden,
+  non-Exposure GPU stages, full 100 MP workflow, unbundled AI weights and physical display testing
+  visible as release blockers/field-validation gates.
+- [ ] Pass the first real Windows installer/runtime workflow and repair all packaging/runtime faults.
+- [ ] Complete migration/corruption/clean-install and full integration matrix evidence.
+- [ ] Resolve every Level-4 release blocker, synchronize version `1.0.0-rc.1`, pass final gates and
+  create the RC tag/artifacts. Do not declare Final, merge PR #2 or start M31.
+
 ## M29 Production UX / Reliability (accepted 2026-08-26)
 
 - [x] Route the Command Palette and all required keyboard shortcuts through one real command catalog.
