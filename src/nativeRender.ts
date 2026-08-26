@@ -50,6 +50,12 @@ export interface NativeExportProgress {
   running: boolean
   progress: { processed: number; total: number; completed: number; failed: number; cancelled: number }
 }
+export interface NativeSessionState {
+  version: 1; workspace: 'library' | 'edit' | 'compare'; selectedAssetId: number | null
+  selectedSourcePath: string | null; activeTool: string; libraryPanelOpen: boolean
+  filmstripOpen: boolean; zoomMode: 'fit' | '100'; zoomScale: number; libraryContext: string
+}
+export interface NativeSessionOpen { state: NativeSessionState | null; recoveryAvailable: boolean }
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
@@ -527,6 +533,10 @@ export async function exportNativeBatch(destinationDirectory: string, settings: 
 
 export async function cancelNativeExport() { return invoke<boolean>('native_export_cancel') }
 export async function queryNativeExportProgress() { return invoke<NativeExportProgress>('native_export_progress') }
+export async function openNativeSession() { return invoke<NativeSessionOpen>('session_open') }
+export async function autosaveNativeSession(state: NativeSessionState) { return invoke<void>('session_autosave', { state }) }
+export async function markNativeSessionClean(state: NativeSessionState) { return invoke<void>('session_mark_clean', { state }) }
+export async function discardNativeRecovery() { return invoke<void>('session_discard_recovery') }
 
 export async function exportNativeJpeg(
   sourcePath: string,

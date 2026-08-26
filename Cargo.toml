@@ -22,6 +22,7 @@ members = [
   "crates/starroom-library",
   "crates/starroom-history",
   "crates/starroom-export",
+  "crates/starroom-session",
   "src-tauri",
 ]
 default-members = [
@@ -46,6 +47,7 @@ default-members = [
   "crates/starroom-library",
   "crates/starroom-history",
   "crates/starroom-export",
+  "crates/starroom-session",
 ]
 
 [workspace.package]

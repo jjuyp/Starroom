@@ -38,3 +38,4 @@ starroom-look = { path = "../crates/starroom-look" }
 starroom-library = { path = "../crates/starroom-library" }
 starroom-history = { path = "../crates/starroom-history" }
 starroom-export = { path = "../crates/starroom-export" }
+starroom-session = { path = "../crates/starroom-session" }

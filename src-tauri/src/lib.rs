@@ -55,6 +55,7 @@ use starroom_render::{
         Viewport,
     },
 };
+use starroom_session::{SessionOpen, SessionState};
 use std::path::{Path, PathBuf};
 use std::{
     collections::BTreeMap,
@@ -396,6 +397,33 @@ fn history_path(asset_id: i64) -> Result<PathBuf, String> {
         .ok_or_else(|| "HistoryPersistenceFailed: invalid app data directory".to_owned())?
         .join("history");
     Ok(root.join(format!("asset-{asset_id}.history.json")))
+}
+
+fn session_path() -> Result<PathBuf, String> {
+    default_library_path()?
+        .parent()
+        .map(|root| root.join("session.json"))
+        .ok_or_else(|| "SessionPersistenceFailed: invalid app data directory".to_owned())
+}
+
+#[tauri::command]
+fn session_open() -> Result<SessionOpen, String> {
+    starroom_session::open(&session_path()?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn session_autosave(state: SessionState) -> Result<(), String> {
+    starroom_session::autosave(&session_path()?, &state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn session_mark_clean(state: SessionState) -> Result<(), String> {
+    starroom_session::mark_clean(&session_path()?, &state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn session_discard_recovery() -> Result<(), String> {
+    starroom_session::discard(&session_path()?).map_err(|error| error.to_string())
 }
 
 fn history_result(history: &EditHistory) -> NativeHistoryResult {
@@ -2703,6 +2731,10 @@ pub fn run() {
             history_snapshot_restore,
             history_snapshot_rename,
             history_snapshot_delete,
+            session_open,
+            session_autosave,
+            session_mark_clean,
+            session_discard_recovery,
             native_export_batch,
             native_export_cancel,
             native_export_progress

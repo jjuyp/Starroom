@@ -302,6 +302,9 @@ button:disabled { opacity: .35; cursor: default; }
 .command-palette [role="option"]:hover,.command-palette [role="option"]:focus-visible { color:var(--text-1); background:var(--hover); }
 .command-palette kbd { padding:2px 5px; border:1px solid var(--border); border-radius:4px; color:var(--text-3); background:var(--surface-3); font:9px "Cascadia Mono",monospace; }
 .command-palette p { padding:18px; color:var(--text-3); text-align:center; font-size:10px; }
+.recovery-dialog { width:min(440px,calc(100vw - 32px)); padding:20px; border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border)); border-radius:10px; color:var(--text-1); background:var(--surface-1); box-shadow:0 24px 70px rgba(0,0,0,.5); }
+.recovery-dialog h2 { margin:5px 0 9px; font-size:17px; }.recovery-dialog p { margin:0 0 18px; color:var(--text-2); font-size:11px; line-height:1.55; }
+.recovery-dialog > div { display:flex; justify-content:flex-end; gap:8px; }.recovery-dialog button { min-width:88px; min-height:34px; padding:7px 12px; border:1px solid var(--border); border-radius:7px; color:var(--text-1); background:var(--surface-2); }
 .compact-warning { display: none; }
 
 @media (max-width: 1180px) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
@@ -26,6 +26,7 @@ import {
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
   cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
+  autosaveNativeSession, discardNativeRecovery, markNativeSessionClean, openNativeSession, type NativeSessionState,
 } from './nativeRender'
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
 
@@ -911,6 +912,10 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [commandQuery, setCommandQuery] = useState('')
   const [copiedSettings, setCopiedSettings] = useState<EditSnapshot | null>(null)
+  const [recoveryState, setRecoveryState] = useState<NativeSessionState | null>(null)
+  const [sessionReady, setSessionReady] = useState(() => !nativeRuntimeAvailable())
+  const pendingSession = useRef<NativeSessionState | null>(null)
+  const currentSession = useRef<NativeSessionState | null>(null)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const [mixerBand, setMixerBand] = useState('Red')
@@ -955,7 +960,28 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
 
+  const restoreSession = useCallback((state: NativeSessionState) => {
+    const workspaces: WorkspaceView[] = ['library', 'edit', 'compare']
+    const tools = toolItems.map(({ id }) => id)
+    const filters: LibraryFilter[] = ['all', 'recent', 'five-star', 'edited']
+    if (workspaces.includes(state.workspace)) setView(state.workspace)
+    if (tools.includes(state.activeTool as Tool)) setTool(state.activeTool as Tool)
+    if (filters.includes(state.libraryContext as LibraryFilter)) setFilter(state.libraryContext as LibraryFilter)
+    setLeftOpen(state.libraryPanelOpen)
+    setFilmstripOpen(state.filmstripOpen)
+    setZoom(state.zoomMode)
+    setZoomScale(state.zoomScale)
+    pendingSession.current = state
+  }, [setFilmstripOpen, setLeftOpen])
+
   useEffect(() => () => objectUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    void openNativeSession().then((result) => {
+      if (result.recoveryAvailable && result.state) setRecoveryState(result.state)
+      else { if (result.state) restoreSession(result.state); setSessionReady(true) }
+    }).catch((error) => { setNotice(error instanceof Error ? error.message : 'Session restore failed'); setSessionReady(true) })
+  }, [restoreSession])
   useEffect(() => {
     const finish = () => setPreviewInteraction('final')
     window.addEventListener('pointerup', finish)
@@ -1017,6 +1043,40 @@ export function App() {
   }
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
+  useEffect(() => {
+    const pending = pendingSession.current
+    if (!pending) return
+    const photo = photos.find((candidate) => candidate.libraryAsset?.id === pending.selectedAssetId
+      || (pending.selectedSourcePath && candidate.sourcePath === pending.selectedSourcePath))
+    if (photo) { setSelectedId(photo.id); pendingSession.current = null }
+  }, [photos])
+  const sessionState = useMemo<NativeSessionState>(() => ({
+    version: 1, workspace: view, selectedAssetId: selected.libraryAsset?.id ?? null,
+    selectedSourcePath: selected.sourcePath ?? null, activeTool: tool,
+    libraryPanelOpen: leftOpen, filmstripOpen, zoomMode: zoom, zoomScale,
+    libraryContext: filter,
+  }), [view, selected.libraryAsset?.id, selected.sourcePath, tool, leftOpen, filmstripOpen, zoom, zoomScale, filter])
+  useEffect(() => { currentSession.current = sessionState }, [sessionState])
+  useEffect(() => {
+    if (!sessionReady || !nativeRuntimeAvailable()) return
+    const timer = window.setTimeout(() => {
+      void autosaveNativeSession(sessionState).catch((error) => setNotice(error instanceof Error ? error.message : 'Autosave failed'))
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [sessionReady, sessionState])
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    let unlisten: (() => void) | undefined
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const windowHandle = getCurrentWindow()
+      unlisten = await windowHandle.onCloseRequested(async (event) => {
+        event.preventDefault()
+        if (currentSession.current) await markNativeSessionClean(currentSession.current)
+        await windowHandle.destroy()
+      })
+    }).catch(() => undefined)
+    return () => unlisten?.()
+  }, [])
   const nativeHistoryState = useMemo(() => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
     selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
@@ -1929,6 +1989,12 @@ export function App() {
 
   return <main className={`app theme-${theme}`} data-theme={theme}>
     {commandPaletteOpen && <CommandPalette query={commandQuery} setQuery={setCommandQuery} execute={executeCommand} close={() => setCommandPaletteOpen(false)} />}
+    {recoveryState && <div className="command-backdrop" role="presentation"><section className="recovery-dialog" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
+      <span className="eyebrow">Crash recovery</span><h2 id="recovery-title">Starroom found an interrupted session</h2>
+      <p>Recover the previous workspace, selected photo, panels and zoom, or discard only the recovery state. Source photos are never modified.</p>
+      <div><button className="export-button" autoFocus onClick={() => { restoreSession(recoveryState); setRecoveryState(null); setSessionReady(true) }}>Recover</button>
+        <button onClick={() => void discardNativeRecovery().then(() => { setRecoveryState(null); setSessionReady(true) }).catch((error) => setNotice(error instanceof Error ? error.message : 'Recovery discard failed'))}>Discard</button></div>
+    </section></div>}
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
       canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} exportBusy={exportBusy} />
