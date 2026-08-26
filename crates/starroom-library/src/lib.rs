@@ -1475,7 +1475,7 @@ mod tests {
     }
 
     #[test]
-    fn one_hundred_thousand_metadata_assets_search_sort_and_page() {
+    fn m28_one_hundred_thousand_metadata_assets_search_sort_and_page() {
         let root = temp("one-hundred-thousand");
         let mut library = Library::open(root.join("db.sqlite")).unwrap();
         let started = Instant::now();

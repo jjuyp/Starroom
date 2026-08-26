@@ -768,7 +768,7 @@ mod tests {
         ));
     }
     #[test]
-    fn ten_thousand_entries_checkpoint_restore_undo_redo_and_branch_scale() {
+    fn m28_ten_thousand_entries_checkpoint_restore_undo_redo_and_branch_scale() {
         let mut history = EditHistory::with_checkpoint_interval(state(), 100).unwrap();
         let started = std::time::Instant::now();
         for index in 0..10_000 {

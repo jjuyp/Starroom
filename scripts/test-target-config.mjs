@@ -124,6 +124,7 @@ export const targets = {
       ['test', '--locked', '-p', 'starroom-history', 'm28_', '--', '--nocapture'],
       ['test', '--locked', '-p', 'starroom-export', 'm28_', '--', '--nocapture'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'm28_', '--', '--nocapture'],
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'raw_shared_graph', 'raw_preview_and_export_use_the_same_native_graph', '--', '--nocapture'],
     ],
     web: [],
     golden: ['raw', 'tone', 'curve', 'color', 'grading', 'detail', 'geometry', 'mask', 'portrait', 'skin', 'hdr'],

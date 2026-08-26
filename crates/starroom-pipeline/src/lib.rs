@@ -3224,6 +3224,10 @@ mod tests {
         let reference = render_source_preview_to_srgb8(&source, &settings).expect("reference");
         let (profiled, profile) = profile_source_preview_to_srgb8(&source, &settings);
         assert_eq!(profiled.expect("profiled"), reference);
+        println!(
+            "M28_PREVIEW_PROFILE {}",
+            serde_json::to_string(&profile).expect("profile JSON")
+        );
         for stage in [
             ProfileStage::CameraTransform,
             ProfileStage::WhiteBalance,
