@@ -2595,24 +2595,26 @@ async fn native_export_batch(
             }
         };
         let cancelled = Arc::clone(&export_runtime.cancelled);
-        let item_result = tauri::async_runtime::spawn_blocking(move || {
-            export_one(
+        let (professional, item_result) = tauri::async_runtime::spawn_blocking(move || {
+            let result = export_one(
                 &NativeSharedGraphRenderer,
                 &professional,
                 &settings,
                 &cancelled,
-            )
-            .map_err(|error| (professional, error))
+            );
+            (professional, result)
         })
         .await
         .map_err(|error| format!("AtomicWriteFailed: export worker failed: {error}"))?;
         match item_result {
             Ok(item) => result.completed.push(item),
-            Err((request, starroom_export::ExportError::Cancelled)) => result.cancelled.push(
-                export_failure(&request, ExportItemStatus::Cancelled, "Cancelled"),
-            ),
-            Err((request, error)) => result.failed.push(export_failure(
-                &request,
+            Err(starroom_export::ExportError::Cancelled) => result.cancelled.push(export_failure(
+                &professional,
+                ExportItemStatus::Cancelled,
+                "Cancelled",
+            )),
+            Err(error) => result.failed.push(export_failure(
+                &professional,
                 ExportItemStatus::Failed,
                 &error.to_string(),
             )),
