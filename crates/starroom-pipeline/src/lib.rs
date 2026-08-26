@@ -1324,6 +1324,13 @@ fn apply_precreative_geometry(
     } else {
         settings.geometry
     };
+    if geometry_parameters == GeometryParameters::default() {
+        return Ok(profiling::measure(
+            ProfileStage::Geometry,
+            working_bytes,
+            || optically_corrected,
+        ));
+    }
     let geometrically_corrected = profiling::measure(ProfileStage::Geometry, working_bytes, || {
         apply_geometry(
             optically_corrected.width,
@@ -1394,16 +1401,21 @@ fn render_prepared_working_graph(
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
+    let detail_is_identity = detail_stage_is_identity(settings);
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
-        let denoised = denoise(&creative, settings.denoise);
-        let locally_adjusted = local_detail(&denoised, settings.local_detail);
-        let detailed = sharpen(&locally_adjusted, settings.sharpen);
-        apply_finishing_effects(
-            &detailed,
-            settings.grain,
-            settings.vignette,
-            &settings.image_identity,
-        )
+        if detail_is_identity {
+            creative
+        } else {
+            let denoised = denoise(&creative, settings.denoise);
+            let locally_adjusted = local_detail(&denoised, settings.local_detail);
+            let detailed = sharpen(&locally_adjusted, settings.sharpen);
+            apply_finishing_effects(
+                &detailed,
+                settings.grain,
+                settings.vignette,
+                &settings.image_identity,
+            )
+        }
     })?;
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.as_chunks::<3>().0 {
@@ -1435,6 +1447,18 @@ fn render_prepared_working_graph(
             camera_profile_hash: camera_profile.map(|profile| profile.hash.clone()),
         },
     })
+}
+
+fn detail_stage_is_identity(settings: &RenderSettings) -> bool {
+    settings.denoise.luminance.abs() <= f32::EPSILON
+        && settings.denoise.chroma.abs() <= f32::EPSILON
+        && settings.denoise.high_iso.abs() <= f32::EPSILON
+        && settings.local_detail.texture.abs() <= f32::EPSILON
+        && settings.local_detail.clarity.abs() <= f32::EPSILON
+        && settings.local_detail.dehaze.abs() <= f32::EPSILON
+        && settings.sharpen.amount.abs() <= f32::EPSILON
+        && settings.grain.amount.abs() <= f32::EPSILON
+        && settings.vignette.amount.abs() <= f32::EPSILON
 }
 
 /// Returns the exact Linear Rec.2020 D65 image presented to M21, after source colour, optics,
@@ -3253,5 +3277,30 @@ mod tests {
         }
         assert!(profile.total_cpu_nanoseconds > 0);
         assert!(profile.peak_working_bytes >= 3 * 3 * size_of::<f32>() as u64);
+    }
+
+    #[test]
+    fn m30_identity_geometry_and_detail_take_exact_no_op_paths() {
+        let source = LinearImage::new(
+            2,
+            2,
+            vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2],
+        )
+        .expect("linear source");
+        let settings = RenderSettings::default();
+        let prepared =
+            apply_precreative_geometry(source.clone(), &settings, None).expect("identity geometry");
+        assert_eq!(prepared, source);
+        assert!(detail_stage_is_identity(&settings));
+
+        let mut adjusted = settings.clone();
+        adjusted.local_detail.clarity = 0.01;
+        assert!(!detail_stage_is_identity(&adjusted));
+        adjusted = settings.clone();
+        adjusted.grain.amount = 0.01;
+        assert!(!detail_stage_is_identity(&adjusted));
+        adjusted = settings;
+        adjusted.vignette.amount = -0.01;
+        assert!(!detail_stage_is_identity(&adjusted));
     }
 }
