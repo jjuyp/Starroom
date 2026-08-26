@@ -27,6 +27,7 @@ import {
   type NativeHistoryResult,
   cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
 } from './nativeRender'
+import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -843,6 +844,27 @@ function ExportPanel({ settings, busy, selectedCount, nativeAvailable, onChange,
   </section>
 }
 
+function CommandPalette({ query, setQuery, execute, close }: {
+  query: string; setQuery: (value: string) => void; execute: (id: CommandId) => void; close: () => void
+}) {
+  const matches = searchCommands(query)
+  return <div className="command-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
+    <section className="command-palette" role="dialog" aria-modal="true" aria-label="Command Palette">
+      <label><span>Command Palette</span><input autoFocus value={query} placeholder="Search commands…" aria-label="Search commands"
+        onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+          if (event.key === 'Escape') close()
+          if (event.key === 'Enter' && matches[0]) execute(matches[0].id)
+        }} /></label>
+      <div role="listbox" aria-label="Available commands">
+        {matches.map((command) => <button key={command.id} role="option" aria-selected="false" onClick={() => execute(command.id)}>
+          <span>{command.label}</span><kbd>{command.shortcut}</kbd>
+        </button>)}
+        {!matches.length && <p>No matching command</p>}
+      </div>
+    </section>
+  </div>
+}
+
 function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo, canRedo, undo, redo, onExport, exportBusy }: {
   view: WorkspaceView; setView: (view: WorkspaceView) => void
   theme: Theme; setTheme: (theme: Theme) => void
@@ -886,6 +908,9 @@ export function App() {
   const [renderStatus, setRenderStatus] = useState('Ready')
   const [dimensions, setDimensions] = useState('—')
   const [notice, setNotice] = useState('')
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [copiedSettings, setCopiedSettings] = useState<EditSnapshot | null>(null)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const [mixerBand, setMixerBand] = useState('Red')
@@ -1223,16 +1248,6 @@ export function App() {
     setBefore(false)
     setNotice(`${removed?.name ?? 'Photo'} removed from Starroom · source file was not deleted`)
   }
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null
-      if (event.key !== 'Delete' || target?.matches('input, select, textarea')) return
-      removePhoto(selectedId)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  })
 
   function adjust(key: AdjustmentKey, value: number, recordHistory = true) {
     updateSelected((photo) => {
@@ -1789,6 +1804,45 @@ export function App() {
       history: [...photo.history, takeSnapshot(photo)], future: [] }))
   }
 
+  function executeCommand(id: CommandId) {
+    setCommandPaletteOpen(false)
+    switch (id) {
+      case 'undo': undo(); return
+      case 'redo': redo(); return
+      case 'copySettings':
+        setCopiedSettings(takeSnapshot(selected))
+        setNotice('Settings copied')
+        return
+      case 'pasteSettings':
+        if (!copiedSettings) { setNotice('Copy settings from a photo first'); return }
+        updateSelected((photo) => ({ ...applySnapshot(photo, copiedSettings), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+        setBefore(false)
+        setNotice('Settings pasted through the shared edit state')
+        return
+      case 'before': setBefore((value) => !value); return
+      case 'mask': setView('edit'); setTool('masks'); setBefore(false); return
+      case 'healing': setView('edit'); setTool('heal'); setBefore(false); return
+      case 'crop': setView('edit'); setTool('geometry'); setBefore(false); return
+      case 'fit': setZoom('fit'); setZoomScale(1); setPan({ x: 0, y: 0 }); return
+      case 'oneToOne': setZoom('100'); setZoomScale(1); setPan({ x: 0, y: 0 }); return
+      case 'filmstrip': setFilmstripOpen((value) => !value); return
+      case 'panels': setLeftOpen((value) => !value); return
+      case 'export': void exportJpeg(); return
+      case 'pick':
+      case 'reject': {
+        if (!selected.libraryAsset) { setNotice('Pick / Reject requires a Native Library asset'); return }
+        void updateLibraryWorkflow({ flag: id === 'pick' ? 'pick' : 'reject' })
+        return
+      }
+      default: {
+        const rating = Number(id.slice(4))
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) return
+        updateSelected((photo) => ({ ...photo, rating }))
+        if (selected.libraryAsset) void updateLibraryWorkflow({ rating })
+      }
+    }
+  }
+
   async function exportJpeg() {
     setRenderStatus(selected.renderBackend === 'native' ? 'Native full-resolution export…' : 'Browser fallback export…')
     try {
@@ -1846,7 +1900,35 @@ export function App() {
     }
   }
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const typing = target?.matches('input, select, textarea, [contenteditable="true"]')
+      const modifier = event.ctrlKey || event.metaKey
+      if (modifier && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandQuery('')
+        setCommandPaletteOpen(true)
+        return
+      }
+      if (event.key === 'Escape' && commandPaletteOpen) {
+        event.preventDefault()
+        setCommandPaletteOpen(false)
+        return
+      }
+      if (typing || commandPaletteOpen) return
+      const command = resolveCommandShortcut(event)
+      if (command) {
+        event.preventDefault()
+        executeCommand(command)
+      } else if (event.key === 'Delete') removePhoto(selectedId)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
+
   return <main className={`app theme-${theme}`} data-theme={theme}>
+    {commandPaletteOpen && <CommandPalette query={commandQuery} setQuery={setCommandQuery} execute={executeCommand} close={() => setCommandPaletteOpen(false)} />}
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
       canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} exportBusy={exportBusy} />
