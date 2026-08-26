@@ -9,7 +9,11 @@
   non-Exposure GPU stages, full 100 MP workflow, unbundled AI weights and physical display testing
   visible as release blockers/field-validation gates.
 - [ ] Pass the first real Windows installer/runtime workflow and repair all packaging/runtime faults.
-- [ ] Complete migration/corruption/clean-install and full integration matrix evidence.
+- [x] Add a production-API recovery matrix for corrupt Session/History, missing source/thumbnail,
+  deterministic History persistence and incomplete export temporary files; retain clean-install and
+  full Level-4 execution as acceptance gates.
+- [x] Distribute the complete GPLv3 text, third-party notices and model provenance in the Windows
+  bundle and fail release validation when any required legal resource is absent.
 - [ ] Resolve every Level-4 release blocker, synchronize version `1.0.0-rc.1`, pass final gates and
   create the RC tag/artifacts. Do not declare Final, merge PR #2 or start M31.
 

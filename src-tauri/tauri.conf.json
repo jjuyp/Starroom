@@ -19,6 +19,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"]
+    "icon": ["icons/icon.ico"],
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../NOTICE.md": "NOTICE.md",
+      "../MODEL_PROVENANCE.md": "MODEL_PROVENANCE.md",
+      "../docs/17_THIRD_PARTY_PROVENANCE.md": "docs/17_THIRD_PARTY_PROVENANCE.md"
+    }
   }
 }

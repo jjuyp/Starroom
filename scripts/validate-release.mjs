@@ -14,8 +14,11 @@ if (pkg.version !== expected || tauri.version !== expected) {
 }
 if (!cargo.includes(`version = "${expected}"`)) throw new Error('Cargo workspace version differs from the release version')
 if (!tauri.bundle?.active || !tauri.bundle?.icon?.includes('icons/icon.ico')) throw new Error('Windows bundle or release icon is not configured')
+if (tauri.bundle?.licenseFile !== '../LICENSE') throw new Error('Windows bundle license file is not configured')
 
 for (const path of [
+  'LICENSE',
+  'THIRD_PARTY_NOTICES.md',
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
   'docs/17_THIRD_PARTY_PROVENANCE.md',
@@ -23,6 +26,13 @@ for (const path of [
   'vendor/libraw-0.22.2/LICENSE.CDDL',
 ]) {
   if (!existsSync(new URL(path, root))) throw new Error(`Missing release notice or asset: ${path}`)
+}
+
+const bundledResources = tauri.bundle?.resources ?? {}
+for (const destination of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'NOTICE.md', 'MODEL_PROVENANCE.md']) {
+  if (!Object.values(bundledResources).includes(destination)) {
+    throw new Error(`Required notice is not bundled: ${destination}`)
+  }
 }
 
 const tracked = spawnSync('git', ['ls-files'], { cwd: new URL('.', root), encoding: 'utf8' })

@@ -1,6 +1,7 @@
 # Starroom third-party notices
 
-Starroom is licensed GPL-3.0-or-later. The authoritative dependency, source revision, integration
+Starroom is licensed GPL-3.0-or-later; the complete license text is distributed as `LICENSE`.
+The authoritative dependency, source revision, integration
 mode, binary inclusion and redistribution-risk inventory is
 [`docs/17_THIRD_PARTY_PROVENANCE.md`](docs/17_THIRD_PARTY_PROVENANCE.md). Model code and weight
 licenses are separately recorded in [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md).

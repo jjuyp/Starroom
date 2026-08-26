@@ -12,7 +12,25 @@ claim exists until every release blocker below is closed with an immutable CI UR
 - [ ] Windows MSVC release executable and NSIS installer build
 - [ ] clean-directory silent install, executable launch, second installed launch and silent uninstall
 - [ ] release identity, tracked-model exclusion and production network API scan
+- [ ] GPL license, third-party notices and model provenance included in the Windows bundle
 - [ ] installer/executable SHA-256 artifact report
+
+## Recovery and migration matrix
+
+The automated release suite must exercise production persistence APIs rather than test-only
+substitutes:
+
+- Session: clean close, crash-recovery marker, corrupt JSON and unsupported/invalid state.
+- History: persist/reload determinism, corrupt JSON, corrupt checkpoint, 10,000-command restore,
+  undo/redo and branch truncation.
+- Library: empty-database initialization, schema reopen, missing source, relink, missing thumbnail,
+  stable pagination and 100,000 metadata-only assets.
+- Export: atomic success, cancellation cleanup, isolated batch failure and an incomplete temporary
+  file left by another process that cannot replace or block a valid final output.
+
+The cross-crate release cases live in `crates/starroom-export/tests/m30_release_recovery.rs`; the
+remaining cases are colocated with the owning production crate and run under the locked workspace
+test gate.
 
 ## Release blockers not represented by a green build alone
 
