@@ -31,6 +31,7 @@ import {
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
 import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
+import { supportedNativePhotoPaths } from './importPaths'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -922,6 +923,7 @@ export function App() {
   const [dimensions, setDimensions] = useState('—')
   const [notice, setNotice] = useState('')
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const [commandQuery, setCommandQuery] = useState('')
   const [copiedSettings, setCopiedSettings] = useState<EditSnapshot | null>(null)
   const [recoveryState, setRecoveryState] = useState<NativeSessionState | null>(null)
@@ -1037,7 +1039,7 @@ export function App() {
     return () => window.clearTimeout(timeout)
   }, [notice])
 
-  function selectPhoto(id: string) {
+  const selectPhoto = useCallback((id: string) => {
     setSelectedId(id)
     setZoom('fit')
     setReferenceResult(null)
@@ -1053,7 +1055,43 @@ export function App() {
     setAiMaskRequestId(null)
     setMaskOverlayVisible(false)
     setSnapshotCompareId(null)
-  }
+  }, [])
+
+  const importNativePaths = useCallback((paths: readonly string[]) => {
+    const supported = supportedNativePhotoPaths(paths)
+    if (!supported.length) {
+      setNotice('No supported Native photos were dropped. Starroom did not create a Browser fallback.')
+      return
+    }
+    const imported = supported.map<PhotoItem>((sourcePath) => ({
+      id: crypto.randomUUID(),
+      name: sourcePath.split(/[\\/]/).at(-1) ?? sourcePath,
+      src: nativeThumbnailUrl(sourcePath),
+      sourcePath,
+      renderBackend: 'native',
+      imported: true,
+      rating: 0,
+      adjustments: { ...defaultAdjustments },
+      curvePoints: copyCurve(defaultCurvePoints),
+      curveChannels: defaultCurveChannels(),
+      whiteBalanceMode: 'sourceDefault',
+      whiteBalanceSample: null,
+      opticsState: { ...defaultNativeOpticsState },
+      mask: { ...defaultMask },
+      layers: [],
+      skinRetouch: defaultNativeSkinRetouch(),
+      healingOperations: [],
+      history: [],
+      future: [],
+    }))
+    setPhotos((current) => [...imported, ...current])
+    selectPhoto(imported[0].id)
+    setFilter('all')
+    setView('edit')
+    setBefore(false)
+    const rejected = paths.length - supported.length
+    setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported into Native preview${rejected ? ` · ${rejected} unsupported rejected` : ''}`)
+  }, [selectPhoto])
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
   useEffect(() => { transientEditsPending.current = !selected.libraryAsset && hasPhotoEdits(selected) }, [selected])
@@ -1092,6 +1130,21 @@ export function App() {
     }).catch(() => undefined)
     return () => unlisten?.()
   }, [])
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    let unlisten: (() => void) | undefined
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      unlisten = await getCurrentWindow().onDragDropEvent(({ payload }) => {
+        if (payload.type === 'enter' || payload.type === 'over') setDragActive(true)
+        if (payload.type === 'leave') setDragActive(false)
+        if (payload.type === 'drop') {
+          setDragActive(false)
+          importNativePaths(payload.paths)
+        }
+      })
+    }).catch(() => undefined)
+    return () => unlisten?.()
+  }, [importNativePaths])
   const nativeHistoryState = useMemo(() => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
     selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
@@ -1262,33 +1315,7 @@ export function App() {
     try {
       const paths = await chooseNativePhotoPaths()
       if (!paths.length) return
-      const imported = paths.map<PhotoItem>((sourcePath) => ({
-        id: crypto.randomUUID(),
-        name: sourcePath.split(/[\\/]/).at(-1) ?? sourcePath,
-        src: nativeThumbnailUrl(sourcePath),
-        sourcePath,
-        renderBackend: 'native',
-        imported: true,
-        rating: 0,
-        adjustments: { ...defaultAdjustments },
-        curvePoints: copyCurve(defaultCurvePoints),
-        curveChannels: defaultCurveChannels(),
-        whiteBalanceMode: 'sourceDefault',
-        whiteBalanceSample: null,
-        opticsState: { ...defaultNativeOpticsState },
-        mask: { ...defaultMask },
-        layers: [],
-        skinRetouch: defaultNativeSkinRetouch(),
-        healingOperations: [],
-        history: [],
-        future: [],
-      }))
-      setPhotos((current) => [...imported, ...current])
-      selectPhoto(imported[0].id)
-      setFilter('all')
-      setView('edit')
-      setBefore(false)
-      setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported into Native preview`)
+      importNativePaths(paths)
     } catch (error) {
       setNotice(formatUserError(error, 'Native photo picker failed'))
     }
@@ -2003,6 +2030,7 @@ export function App() {
   })
 
   return <main className={`app theme-${theme}`} data-theme={theme}>
+    {dragActive && <div className="native-drop-overlay" role="status" aria-live="polite">Drop photos to open them in the Native pipeline</div>}
     {commandPaletteOpen && <CommandPalette query={commandQuery} setQuery={setCommandQuery} execute={executeCommand} close={() => setCommandPaletteOpen(false)} />}
     {recoveryState && <div className="command-backdrop" role="presentation"><section className="recovery-dialog" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
       <span className="eyebrow">Crash recovery</span><h2 id="recovery-title">Starroom found an interrupted session</h2>
