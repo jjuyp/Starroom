@@ -843,11 +843,29 @@ function CommandPalette({ query, setQuery, execute, close }: {
   query: string; setQuery: (value: string) => void; execute: (id: CommandId) => void; close: () => void
 }) {
   const matches = searchCommands(query)
+  const dialogRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => previousFocus?.focus()
+  }, [])
+  const keepFocusInDialog = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      close()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('input, button:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [])]
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable.at(-1)!
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }
   return <div className="command-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
-    <section className="command-palette" role="dialog" aria-modal="true" aria-label="Command Palette">
+    <section ref={dialogRef} className="command-palette" role="dialog" aria-modal="true" aria-label="Command Palette" onKeyDown={keepFocusInDialog}>
       <label><span>Command Palette</span><input autoFocus value={query} placeholder="Search commands…" aria-label="Search commands"
         onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
-          if (event.key === 'Escape') close()
           if (event.key === 'Enter' && matches[0]) execute(matches[0].id)
         }} /></label>
       <div role="listbox" aria-label="Available commands">
