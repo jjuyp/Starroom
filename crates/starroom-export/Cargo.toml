@@ -19,5 +19,7 @@ thiserror.workspace = true
 [dev-dependencies]
 kamadak-exif = "=0.6.1"
 starroom-history = { path = "../starroom-history" }
+starroom-heal = { path = "../starroom-heal" }
 starroom-library = { path = "../starroom-library" }
+starroom-project = { path = "../starroom-project" }
 starroom-session = { path = "../starroom-session" }

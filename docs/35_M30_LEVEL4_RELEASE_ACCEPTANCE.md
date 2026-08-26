@@ -18,6 +18,8 @@ claim exists until every release blocker below is closed with an immutable CI UR
 - [ ] lock-resolved dependency report and deduplicated verbatim upstream license texts included and
   hash-verified after clean install
 - [ ] installer/executable SHA-256 artifact report
+- [ ] explicit 24/45/60/100 MP real-pixel preview + masked/healed full-resolution export gate with
+  output-dimension, source-immutability, elapsed-time and process-peak-memory evidence
 
 ## Recovery and migration matrix
 
