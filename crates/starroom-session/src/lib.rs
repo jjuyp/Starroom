@@ -146,5 +146,19 @@ mod tests {
         let path = root.path().join("session.json");
         fs::write(&path, b"not-json").unwrap();
         assert!(matches!(open(&path), Err(SessionError::Invalid(_))));
+
+        let mut future = state();
+        future.version = SESSION_VERSION + 1;
+        assert!(matches!(
+            autosave(&root.path().join("future.json"), &future),
+            Err(SessionError::Invalid(_))
+        ));
+
+        let mut invalid_zoom = state();
+        invalid_zoom.zoom_scale = f32::NAN;
+        assert!(matches!(
+            mark_clean(&root.path().join("invalid-zoom.json"), &invalid_zoom),
+            Err(SessionError::Invalid(_))
+        ));
     }
 }
