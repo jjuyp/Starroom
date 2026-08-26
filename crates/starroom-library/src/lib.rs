@@ -63,6 +63,18 @@ fn sql_error(error: rusqlite::Error) -> LibraryError {
         {
             LibraryError::DatabaseBusy
         }
+        rusqlite::Error::SqliteFailure(code, message)
+            if matches!(
+                code.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            ) =>
+        {
+            LibraryError::CorruptDatabase(
+                message
+                    .clone()
+                    .unwrap_or_else(|| "SQLite reported a corrupt or invalid database".into()),
+            )
+        }
         _ => LibraryError::Sql(error),
     }
 }
@@ -849,7 +861,14 @@ impl Library {
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
         let destination = directory.join(format!("{identity}.jpg"));
         if destination.is_file() {
-            return Ok(destination);
+            if image::open(&destination).is_ok() {
+                return Ok(destination);
+            }
+            fs::remove_file(&destination).map_err(|error| {
+                LibraryError::ThumbnailFailed(format!(
+                    "damaged thumbnail cache could not be replaced: {error}"
+                ))
+            })?;
         }
         let decoded = decode_source_preview(&asset.source_path, size.pixels())
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
@@ -1315,6 +1334,41 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_database_is_typed_and_never_reinitialized() {
+        let root = temp("corrupt-database");
+        let database = root.join("library.sqlite");
+        let corrupt = b"this is not a SQLite database";
+        fs::write(&database, corrupt).unwrap();
+        assert!(matches!(
+            Library::open(&database),
+            Err(LibraryError::CorruptDatabase(_))
+        ));
+        assert_eq!(fs::read(database).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn future_database_schema_is_rejected_without_downgrade() {
+        let root = temp("future-database");
+        let database = root.join("library.sqlite");
+        {
+            let library = Library::open(&database).unwrap();
+            library
+                .connection
+                .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        assert!(matches!(
+            Library::open(&database),
+            Err(LibraryError::MigrationFailed(_))
+        ));
+        let connection = Connection::open(&database).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION + 1);
+    }
+
+    #[test]
     fn import_duplicate_workflow_keyword_query_and_collections() {
         let root = temp("workflow");
         let a = root.join("A.png");
@@ -1457,6 +1511,31 @@ mod tests {
             key,
             Library::thumbnail_identity(&first[0], ThumbnailSize::Small256)
         );
+    }
+
+    #[test]
+    fn damaged_thumbnail_cache_is_rebuilt_from_immutable_source() {
+        let root = temp("damaged-thumbnail");
+        let source = root.join("source.png");
+        png(&source, [25, 80, 140]);
+        let source_before = fs::read(&source).unwrap();
+        let mut library = Library::open(root.join("db.sqlite")).unwrap();
+        let asset_id = library
+            .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        let cache = root.join("cache");
+        let thumbnail = library
+            .generate_thumbnail(asset_id, &cache, ThumbnailSize::Small256)
+            .unwrap();
+        fs::write(&thumbnail, b"damaged cache bytes").unwrap();
+
+        let rebuilt = library
+            .generate_thumbnail(asset_id, &cache, ThumbnailSize::Small256)
+            .unwrap();
+        assert_eq!(rebuilt, thumbnail);
+        assert!(image::open(&rebuilt).is_ok());
+        assert_eq!(fs::read(&source).unwrap(), source_before);
     }
 
     #[test]

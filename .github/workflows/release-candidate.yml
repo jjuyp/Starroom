@@ -24,6 +24,7 @@ jobs:
           toolchain: stable
       - run: npm ci
       - run: npm run test:infra
+      - run: npm run test:licenses
       - run: node scripts/validate-release.mjs
       - run: npm run build:desktop
       - shell: pwsh

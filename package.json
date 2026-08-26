@@ -31,6 +31,8 @@
     "test:milestone": "node scripts/test-target.mjs --level milestone",
     "test:full": "node scripts/test-target.mjs --level full",
     "test:infra": "node scripts/validate-development-infrastructure.mjs",
+    "test:licenses": "node scripts/validate-licenses.mjs",
+    "licenses:update": "node scripts/validate-licenses.mjs --write",
     "golden:select": "node scripts/select-golden-fixtures.mjs",
     "preview": "vite preview"
   },

@@ -23,8 +23,9 @@ substitutes:
 - Session: clean close, crash-recovery marker, corrupt JSON and unsupported/invalid state.
 - History: persist/reload determinism, corrupt JSON, corrupt checkpoint, 10,000-command restore,
   undo/redo and branch truncation.
-- Library: empty-database initialization, schema reopen, missing source, relink, missing thumbnail,
-  stable pagination and 100,000 metadata-only assets.
+- Library: empty-database initialization, schema reopen, corrupt/future database rejection, missing
+  source, relink, missing thumbnail, damaged-cache regeneration, stable pagination and 100,000
+  metadata-only assets.
 - Export: atomic success, cancellation cleanup, isolated batch failure and an incomplete temporary
   file left by another process that cannot replace or block a valid final output.
 

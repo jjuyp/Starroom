@@ -22,6 +22,7 @@ for (const path of [
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
   'docs/17_THIRD_PARTY_PROVENANCE.md',
+  'docs/36_M30_DEPENDENCY_LICENSE_REPORT.json',
   'src-tauri/icons/icon.ico',
   'vendor/libraw-0.22.2/LICENSE.CDDL',
 ]) {
@@ -29,7 +30,14 @@ for (const path of [
 }
 
 const bundledResources = tauri.bundle?.resources ?? {}
-for (const destination of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'NOTICE.md', 'MODEL_PROVENANCE.md']) {
+for (const destination of [
+  'LICENSE',
+  'THIRD_PARTY_NOTICES.md',
+  'NOTICE.md',
+  'MODEL_PROVENANCE.md',
+  'docs/17_THIRD_PARTY_PROVENANCE.md',
+  'docs/36_M30_DEPENDENCY_LICENSE_REPORT.json',
+]) {
   if (!Object.values(bundledResources).includes(destination)) {
     throw new Error(`Required notice is not bundled: ${destination}`)
   }

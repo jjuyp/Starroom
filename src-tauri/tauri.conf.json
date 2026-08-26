@@ -26,7 +26,8 @@
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../NOTICE.md": "NOTICE.md",
       "../MODEL_PROVENANCE.md": "MODEL_PROVENANCE.md",
-      "../docs/17_THIRD_PARTY_PROVENANCE.md": "docs/17_THIRD_PARTY_PROVENANCE.md"
+      "../docs/17_THIRD_PARTY_PROVENANCE.md": "docs/17_THIRD_PARTY_PROVENANCE.md",
+      "../docs/36_M30_DEPENDENCY_LICENSE_REPORT.json": "docs/36_M30_DEPENDENCY_LICENSE_REPORT.json"
     }
   }
 }
