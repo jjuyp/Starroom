@@ -98,15 +98,14 @@ fn persist(path: &Path, state: &SessionState, clean_shutdown: bool) -> Result<()
         state: state.clone(),
     })
     .map_err(|error| SessionError::Invalid(error.to_string()))?;
-    let result = (|| {
+    (|| {
         let mut file = tempfile::NamedTempFile::new_in(parent).map_err(io)?;
         file.write_all(&bytes).map_err(io)?;
         file.as_file().sync_all().map_err(io)?;
         file.persist(path)
             .map(|_| ())
             .map_err(|error| io(error.error))
-    })();
-    result
+    })()
 }
 fn io(error: std::io::Error) -> SessionError {
     SessionError::Persistence(error.to_string())
