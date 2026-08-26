@@ -64,6 +64,7 @@ pub enum ExportError {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExportFormat {
+    #[default]
     Jpeg,
     Png,
     Tiff,
