@@ -2,6 +2,18 @@ name: M30 Large Image Gate
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/starroom-v0.2-core-quality
+    paths:
+      - .github/workflows/m30-large-image.yml
+      - Cargo.lock
+      - crates/starroom-export/**
+      - crates/starroom-heal/**
+      - crates/starroom-imageio/**
+      - crates/starroom-pipeline/**
+      - crates/starroom-project/**
+      - crates/starroom-render/**
 
 permissions:
   contents: read
