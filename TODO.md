@@ -18,6 +18,8 @@
   bundle and fail release validation when any required legal resource is absent.
 - [x] Generate and lock-check the complete 556-crate Rust and six-package production npm license
   closure; fail RC packaging on a missing, unknown or stale dependency license record.
+- [x] Bundle 268 content-hash-deduplicated upstream license/notice texts and verify their installed
+  hashes during clean-install smoke testing.
 - [x] Add a packaged-executable offline self-test for real Library/History/Session/shared Export
   APIs, deterministic second export, source immutability and explicit local-model discovery state.
 - [x] Add a versioned Project sidecar load boundary: schema-1 compatibility, schema-2 current,

@@ -81,6 +81,7 @@ function Assert-BundledResource([string]$SourceRelativePath) {
 $installedResources = @(
   Assert-BundledResource 'LICENSE'
   Assert-BundledResource 'THIRD_PARTY_NOTICES.md'
+  Assert-BundledResource 'THIRD_PARTY_LICENSES.txt'
   Assert-BundledResource 'NOTICE.md'
   Assert-BundledResource 'MODEL_PROVENANCE.md'
   Assert-BundledResource 'docs\17_THIRD_PARTY_PROVENANCE.md'

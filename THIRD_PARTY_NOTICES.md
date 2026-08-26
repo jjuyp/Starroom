@@ -7,6 +7,8 @@ mode, binary inclusion and redistribution-risk inventory is
 licenses are separately recorded in [`MODEL_PROVENANCE.md`](MODEL_PROVENANCE.md).
 The complete lockfile-resolved Rust and production JavaScript dependency closure is recorded in
 [`docs/36_M30_DEPENDENCY_LICENSE_REPORT.json`](docs/36_M30_DEPENDENCY_LICENSE_REPORT.json).
+Deduplicated verbatim license and notice documents extracted from those locked packages are
+distributed in [`THIRD_PARTY_LICENSES.txt`](THIRD_PARTY_LICENSES.txt).
 
 The release includes or links code from LibRaw (CDDL-1.0 selected), LittleCMS and Rust wrappers
 (MIT), Lensfun code/database (LGPL-3.0-or-later / CC-BY-SA-3.0), Tauri (MIT OR Apache-2.0), wgpu

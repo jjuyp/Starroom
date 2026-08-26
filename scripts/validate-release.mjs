@@ -19,6 +19,7 @@ if (tauri.bundle?.licenseFile !== '../LICENSE') throw new Error('Windows bundle 
 for (const path of [
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
+  'THIRD_PARTY_LICENSES.txt',
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
   'docs/17_THIRD_PARTY_PROVENANCE.md',
@@ -33,6 +34,7 @@ const bundledResources = tauri.bundle?.resources ?? {}
 for (const destination of [
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
+  'THIRD_PARTY_LICENSES.txt',
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
   'docs/17_THIRD_PARTY_PROVENANCE.md',

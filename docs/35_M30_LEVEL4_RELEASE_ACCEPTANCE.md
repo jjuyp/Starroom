@@ -15,6 +15,8 @@ claim exists until every release blocker below is closed with an immutable CI UR
   two deterministic Native exports, immutable source and explicit local-model availability state
 - [ ] release identity, tracked-model exclusion and production network API scan
 - [ ] GPL license, third-party notices and model provenance included in the Windows bundle
+- [ ] lock-resolved dependency report and deduplicated verbatim upstream license texts included and
+  hash-verified after clean install
 - [ ] installer/executable SHA-256 artifact report
 
 ## Recovery and migration matrix

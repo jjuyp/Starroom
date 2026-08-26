@@ -24,6 +24,7 @@
     "resources": {
       "../LICENSE": "LICENSE",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../THIRD_PARTY_LICENSES.txt": "THIRD_PARTY_LICENSES.txt",
       "../NOTICE.md": "NOTICE.md",
       "../MODEL_PROVENANCE.md": "MODEL_PROVENANCE.md",
       "../docs/17_THIRD_PARTY_PROVENANCE.md": "docs/17_THIRD_PARTY_PROVENANCE.md",
