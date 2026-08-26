@@ -3199,12 +3199,16 @@ mod tests {
         assert!(high.data.iter().all(|value| value.is_finite()));
         let unique_high = high
             .data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|pixel| (pixel[0] * 65_535.0).round() as u16)
             .collect::<std::collections::BTreeSet<_>>();
         let unique_eight = eight
             .data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|pixel| pixel[0])
             .collect::<std::collections::BTreeSet<_>>();
         assert!(unique_high.len() > unique_eight.len());
