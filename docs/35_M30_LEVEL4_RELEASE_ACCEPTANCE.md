@@ -11,6 +11,8 @@ claim exists until every release blocker below is closed with an immutable CI UR
 - [ ] shared Preview/Export, CPU/GPU Exposure parity, Library/History/export scale and M28 regression
 - [ ] Windows MSVC release executable and NSIS installer build
 - [ ] clean-directory silent install, executable launch, second installed launch and silent uninstall
+- [ ] packaged executable self-test: Library import, History/Snapshot, Session recovery/clean close,
+  two deterministic Native exports, immutable source and explicit local-model availability state
 - [ ] release identity, tracked-model exclusion and production network API scan
 - [ ] GPL license, third-party notices and model provenance included in the Windows bundle
 - [ ] installer/executable SHA-256 artifact report
@@ -32,6 +34,11 @@ substitutes:
 The cross-crate release cases live in `crates/starroom-export/tests/m30_release_recovery.rs`; the
 remaining cases are colocated with the owning production crate and run under the locked workspace
 test gate.
+
+The installed production executable additionally supports the bounded diagnostic
+`--release-self-test <empty-directory>`. The NSIS gate invokes it against a new runner directory;
+the mode cannot accept a non-empty target and uses the same Library, History, Session and Native
+shared-export APIs as the desktop commands.
 
 ## Release blockers not represented by a green build alone
 

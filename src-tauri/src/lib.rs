@@ -2681,6 +2681,203 @@ fn native_export_cancel(runtime: State<'_, NativeExportRuntime>) -> bool {
     true
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSelfTestReport {
+    schema_version: u32,
+    library: &'static str,
+    history: &'static str,
+    session: &'static str,
+    native_export: &'static str,
+    deterministic_export: bool,
+    source_immutable: bool,
+    portrait_models: &'static str,
+    ai_mask_models: &'static str,
+    ai_denoise_model: &'static str,
+}
+
+/// Executes a bounded, offline production-API workflow from the packaged executable.
+///
+/// This is a release diagnostic, not an alternate renderer: it imports a generated encoded source,
+/// persists Library/History/Session state and renders twice through `NativeSharedGraphRenderer`.
+/// The caller must provide a new or empty directory so no user state can be overwritten.
+pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
+    if root.exists()
+        && root
+            .read_dir()
+            .map_err(|error| error.to_string())?
+            .next()
+            .is_some()
+    {
+        return Err(format!(
+            "release self-test directory is not empty: {}",
+            root.display()
+        ));
+    }
+    std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+
+    let width = 64;
+    let height = 48;
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            rgb.extend_from_slice(&[(x * 4) as u8, (y * 5) as u8, ((x + y) * 2) as u8]);
+        }
+    }
+    let source = root.join("release-self-test.jpg");
+    let encoded = encode_jpeg_rgb8(&rgb, width as u32, height as u32, 95, None)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(&source, encoded).map_err(|error| error.to_string())?;
+    let source_before = Sha256::digest(std::fs::read(&source).map_err(|error| error.to_string())?);
+
+    let mut library =
+        Library::open(root.join("library.sqlite")).map_err(|error| error.to_string())?;
+    let asset_id = library
+        .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+        .map_err(|error| error.to_string())?
+        .imported
+        .into_iter()
+        .next()
+        .ok_or_else(|| "release self-test source was not imported".to_owned())?;
+    library
+        .set_workflow(&[asset_id], Some(5), Some(AssetFlag::Pick), None)
+        .map_err(|error| error.to_string())?;
+
+    let mut history = EditHistory::new(serde_json::json!({"exposure": 0.0, "layers": []}))
+        .map_err(|error| error.to_string())?;
+    history
+        .commit(
+            "Release exposure",
+            "tone",
+            EditCommand::ReplaceState {
+                before: history.state().clone(),
+                after: serde_json::json!({"exposure": 0.25, "layers": []}),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    history
+        .create_snapshot("Release checkpoint")
+        .map_err(|error| error.to_string())?;
+    let history_path = root.join("history.json");
+    history
+        .persist(&history_path)
+        .map_err(|error| error.to_string())?;
+    let loaded_history = EditHistory::load(&history_path).map_err(|error| error.to_string())?;
+    if loaded_history.state_version() != history.state_version() {
+        return Err("release History round-trip changed the edit identity".into());
+    }
+
+    let session_path = root.join("session.json");
+    let session = SessionState {
+        version: starroom_session::SESSION_VERSION,
+        workspace: "edit".into(),
+        selected_asset_id: Some(asset_id),
+        selected_source_path: Some(source.clone()),
+        active_tool: "light".into(),
+        library_panel_open: true,
+        filmstrip_open: true,
+        zoom_mode: "fit".into(),
+        zoom_scale: 1.0,
+        library_context: "all".into(),
+    };
+    starroom_session::autosave(&session_path, &session).map_err(|error| error.to_string())?;
+    if !starroom_session::open(&session_path)
+        .map_err(|error| error.to_string())?
+        .recovery_available
+    {
+        return Err("release Session autosave did not expose recovery state".into());
+    }
+    starroom_session::mark_clean(&session_path, &session).map_err(|error| error.to_string())?;
+    if starroom_session::open(&session_path)
+        .map_err(|error| error.to_string())?
+        .recovery_available
+    {
+        return Err("release Session clean close retained recovery state".into());
+    }
+
+    let mut render_settings = RenderSettings::default();
+    render_settings.tone.exposure_ev = 0.25;
+    let request = ProfessionalExportRequest {
+        asset_id,
+        source_path: source.clone(),
+        destination_directory: root.join("exports"),
+        original_name: "release-self-test.jpg".into(),
+        capture_date: None,
+        rating: 5,
+        keywords: vec!["release-self-test".into()],
+        camera: None,
+        look: None,
+        sequence: 1,
+        source_fingerprint: "release-self-test-fixture".into(),
+        edit_state_identity: loaded_history.state_version().0,
+        settings: ExportSettings::default(),
+    };
+    let first = export_one(
+        &NativeSharedGraphRenderer,
+        &request,
+        &render_settings,
+        &AtomicBool::new(false),
+    )
+    .map_err(|error| error.to_string())?
+    .destination
+    .ok_or_else(|| "release export returned no destination".to_owned())?;
+    let second = export_one(
+        &NativeSharedGraphRenderer,
+        &request,
+        &render_settings,
+        &AtomicBool::new(false),
+    )
+    .map_err(|error| error.to_string())?
+    .destination
+    .ok_or_else(|| "second release export returned no destination".to_owned())?;
+    let deterministic_export = std::fs::read(first).map_err(|error| error.to_string())?
+        == std::fs::read(second).map_err(|error| error.to_string())?;
+    if !deterministic_export {
+        return Err("release Native exports are not deterministic".into());
+    }
+    let source_after = Sha256::digest(std::fs::read(&source).map_err(|error| error.to_string())?);
+    let source_immutable = source_before == source_after;
+    if !source_immutable {
+        return Err("release workflow modified source pixels".into());
+    }
+
+    let portrait_models = match local_portrait_models().verify() {
+        Err(PortraitError::DetectorModelMissing { .. })
+        | Err(PortraitError::ParserModelMissing { .. }) => "typed-unavailable",
+        Err(error) => {
+            return Err(format!(
+                "unexpected portrait model discovery state: {error}"
+            ));
+        }
+        Ok(()) => "available",
+    };
+    let ai_mask_registry = local_ai_mask_models();
+    let ai_mask_models =
+        if !ai_mask_registry.foreground.path.is_file() && !ai_mask_registry.scene.path.is_file() {
+            "typed-unavailable"
+        } else {
+            "available"
+        };
+    let ai_denoise_model = if local_nafnet_model().is_file() {
+        "available"
+    } else {
+        "typed-unavailable"
+    };
+
+    Ok(ReleaseSelfTestReport {
+        schema_version: 1,
+        library: "ok",
+        history: "ok",
+        session: "ok",
+        native_export: "ok",
+        deterministic_export,
+        source_immutable,
+        portrait_models,
+        ai_mask_models,
+        ai_denoise_model,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2785,6 +2982,24 @@ mod tests {
             grain: GrainSettings::default(),
             vignette: VignetteSettings::default(),
         }
+    }
+
+    #[test]
+    fn m30_packaged_release_self_test_exercises_production_workflow() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-m30-release-self-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let report = release_self_test(&root).unwrap();
+        assert_eq!(report.library, "ok");
+        assert_eq!(report.history, "ok");
+        assert_eq!(report.session, "ok");
+        assert_eq!(report.native_export, "ok");
+        assert!(report.deterministic_export);
+        assert!(report.source_immutable);
+        std::fs::write(root.join("keep"), b"user state").unwrap();
+        assert!(release_self_test(&root).is_err());
     }
 
     #[test]

@@ -18,6 +18,8 @@
   bundle and fail release validation when any required legal resource is absent.
 - [x] Generate and lock-check the complete 556-crate Rust and six-package production npm license
   closure; fail RC packaging on a missing, unknown or stale dependency license record.
+- [x] Add a packaged-executable offline self-test for real Library/History/Session/shared Export
+  APIs, deterministic second export, source immutability and explicit local-model discovery state.
 - [ ] Resolve every Level-4 release blocker, synchronize version `1.0.0-rc.1`, pass final gates and
   create the RC tag/artifacts. Do not declare Final, merge PR #2 or start M31.
 
