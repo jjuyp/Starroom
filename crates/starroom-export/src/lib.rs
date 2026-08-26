@@ -25,6 +25,7 @@ use thiserror::Error;
 pub const EXPORT_PRESET_SCHEMA_VERSION: u32 = 1;
 pub const EXPORT_ENGINE_VERSION: &str = "starroom-export-v1";
 const MAX_WORKING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const F32_BYTES: u64 = 4;
 
 #[derive(Debug, Error)]
 pub enum ExportError {
@@ -565,7 +566,7 @@ pub fn export_one<R: FullResolutionRenderer>(
             ProfileStage::Resize,
             u64::from(width)
                 .saturating_mul(u64::from(height))
-                .saturating_mul(3 * u64::from(f32::BITS / 8)),
+                .saturating_mul(3 * F32_BYTES),
             || imageops::resize(&image, width, height, imageops::FilterType::Lanczos3).into_raw(),
         );
         rendered.width = width;
@@ -575,7 +576,7 @@ pub fn export_one<R: FullResolutionRenderer>(
         ProfileStage::Detail,
         u64::from(width)
             .saturating_mul(u64::from(height))
-            .saturating_mul(3 * u64::from(f32::BITS / 8)),
+            .saturating_mul(3 * F32_BYTES),
         || {
             apply_output_sharpen(
                 &mut rendered.rgb,

@@ -36,6 +36,8 @@ use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage
 use starroom_render::gpu::{GpuError, GpuRenderer};
 use starroom_render::profiling::{self, ProfileStage};
 use std::time::Instant;
+
+const F32_BYTES: u64 = 4;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1063,7 +1065,7 @@ fn apply_creative_graph(
     // the established CPU reference math until each earns its own parity gate; this avoids a
     // second color-science implementation.
     let pixel_count = pixels.len();
-    let working_bytes = (pixel_count as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    let working_bytes = (pixel_count as u64).saturating_mul(3 * F32_BYTES);
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         pixels
             .into_iter()
@@ -1173,7 +1175,7 @@ fn to_working_image(
         .iter()
         .map(|rgba| [rgba[0], rgba[1], rgba[2]])
         .collect();
-    let working_bytes = (pixels.len() as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    let working_bytes = (pixels.len() as u64).saturating_mul(3 * F32_BYTES);
     let input_source = profiling::measure(ProfileStage::CameraTransform, working_bytes, || {
         LittleCmsProvider.input_to_working(
             &mut pixels,
@@ -1214,7 +1216,7 @@ fn to_working_raw(
         .iter()
         .map(|pixel| [pixel[0], pixel[1], pixel[2]])
         .collect();
-    let working_bytes = (pixels.len() as u64).saturating_mul(3 * u64::from(f32::BITS / 8));
+    let working_bytes = (pixels.len() as u64).saturating_mul(3 * F32_BYTES);
     profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         apply_white_balance(
             &mut pixels,
@@ -1288,7 +1290,7 @@ fn apply_precreative_geometry(
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
 ) -> Result<LinearImage, PipelineError> {
-    let working_bytes = (working.data.len() as u64).saturating_mul(u64::from(f32::BITS / 8));
+    let working_bytes = (working.data.len() as u64).saturating_mul(F32_BYTES);
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
             LensProfileStatus::MissingMetadata,
@@ -1349,7 +1351,7 @@ fn render_prepared_working_graph(
 ) -> Result<RenderedRgbF32, PipelineError> {
     // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
     // caches are separate; an enabled request without its native residual is a typed failure.
-    let working_bytes = (geometry_image.data.len() as u64).saturating_mul(u64::from(f32::BITS / 8));
+    let working_bytes = (geometry_image.data.len() as u64).saturating_mul(F32_BYTES);
     let model_adjusted = if settings.ai_denoise.enabled {
         let residual = settings
             .ai_denoise_residual
