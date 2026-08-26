@@ -3775,6 +3775,7 @@ dependencies = [
  "starroom-library",
  "starroom-pipeline",
  "starroom-render",
+ "starroom-session",
  "thiserror 2.0.20",
 ]
 
