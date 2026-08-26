@@ -2827,7 +2827,10 @@ mod tests {
             mode: starroom_heal::HealMode::Heal,
             target: starroom_heal::HealPoint { x: 1.0, y: 0.0 },
             source: Some(starroom_heal::HealPoint { x: 0.0, y: 0.0 }),
-            radius: 0.3,
+            // Healing radii are expressed in source pixels and production validation deliberately
+            // rejects sub-pixel operations. Keep this tiny fixture on the valid boundary so the
+            // test exercises the complete CPU/hybrid graph instead of failing during validation.
+            radius: 0.5,
             feather: 0.4,
             opacity: 0.65,
             rotation_degrees: 0.0,
