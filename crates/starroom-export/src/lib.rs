@@ -61,7 +61,7 @@ pub enum ExportError {
     AtomicWriteFailed(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExportFormat {
     Jpeg,
@@ -1197,7 +1197,9 @@ mod tests {
             assert_eq!(decoded.color(), image::ColorType::Rgb16);
             let samples = decoded.into_rgb16().into_raw();
             let unique = samples
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|pixel| pixel[0])
                 .collect::<std::collections::BTreeSet<_>>();
             assert!(unique.len() > 256, "must not be an 8-bit up-conversion");
