@@ -49,6 +49,7 @@ use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match
 use starroom_render::{
     RenderGraph,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
+    profiling::{self, ProfileStage, RenderProfile},
     scheduler::{
         Completion, DEFAULT_TILE_EDGE, RenderCacheIdentity, RenderScheduler, SchedulerStatus,
         Viewport,
@@ -997,7 +998,10 @@ fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 
 
 /// Process-wide M13 scheduler state. It holds only derived preview/cache bytes and request
 /// identities; the immutable source image remains on disk and full export never reads this cache.
-struct NativePreviewScheduler(Mutex<RenderScheduler>);
+struct NativePreviewScheduler {
+    scheduler: Mutex<RenderScheduler>,
+    last_profile: Mutex<Option<RenderProfile>>,
+}
 
 /// Process-local M16 model/session and soft-mask cache. It never crosses the Tauri boundary:
 /// IPC transports face geometry and a compact cache reference, while Preview/Export resolve the
@@ -1146,7 +1150,10 @@ const fn default_face_crop_scale() -> f32 {
 
 impl Default for NativePreviewScheduler {
     fn default() -> Self {
-        Self(Mutex::new(RenderScheduler::default()))
+        Self {
+            scheduler: Mutex::new(RenderScheduler::default()),
+            last_profile: Mutex::new(None),
+        }
     }
 }
 
@@ -2216,10 +2223,21 @@ fn native_preview_scheduler_status(
     scheduler: State<'_, NativePreviewScheduler>,
 ) -> Result<SchedulerStatus, String> {
     scheduler
-        .0
+        .scheduler
         .lock()
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())
         .map(|scheduler| scheduler.status())
+}
+
+#[tauri::command]
+fn native_preview_profile(
+    scheduler: State<'_, NativePreviewScheduler>,
+) -> Result<Option<RenderProfile>, String> {
+    scheduler
+        .last_profile
+        .lock()
+        .map(|profile| profile.clone())
+        .map_err(|_| "native preview profile lock was poisoned".to_owned())
 }
 
 #[tauri::command]
@@ -2228,6 +2246,29 @@ fn native_preview(
     portrait_runtime: State<'_, NativePortraitRuntime>,
     ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
     ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
+    request: NativePreviewRequest,
+) -> Result<Response, String> {
+    let (result, profile) = profiling::capture(|| {
+        native_preview_inner(
+            scheduler.inner(),
+            portrait_runtime.inner(),
+            ai_mask_runtime.inner(),
+            ai_denoise_runtime.inner(),
+            request,
+        )
+    });
+    *scheduler
+        .last_profile
+        .lock()
+        .map_err(|_| "native preview profile lock was poisoned".to_owned())? = Some(profile);
+    result
+}
+
+fn native_preview_inner(
+    scheduler: &NativePreviewScheduler,
+    portrait_runtime: &NativePortraitRuntime,
+    ai_mask_runtime: &NativeAiMaskRuntime,
+    ai_denoise_runtime: &NativeAiDenoiseRuntime,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
     let source_identity = preview_source_identity(&request.source_path)?;
@@ -2253,23 +2294,25 @@ fn native_preview(
     .fingerprint();
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
-    attach_portrait_masks(&mut settings, &portrait_runtime)?;
-    attach_generated_masks(&mut settings, &ai_mask_runtime)?;
+    attach_portrait_masks(&mut settings, portrait_runtime)?;
+    attach_generated_masks(&mut settings, ai_mask_runtime)?;
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
-    let decoded = decode_source_preview(&request.source_path, level.max_edge())
-        .map_err(|error| format!("native preview decode failed: {error}"))?;
+    let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
+        decode_source_preview(&request.source_path, level.max_edge())
+    })
+    .map_err(|error| format!("native preview decode failed: {error}"))?;
     attach_ai_denoise(
         &decoded,
         &request.source_path,
         &mut settings,
         requested_denoise_provider,
         &request.request_id,
-        &ai_denoise_runtime,
+        ai_denoise_runtime,
     )?;
     let (source_width, source_height) = source_dimensions(&decoded);
     let job = scheduler
-        .0
+        .scheduler
         .lock()
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
         .schedule_preview(
@@ -2284,7 +2327,7 @@ fn native_preview(
         );
     let frame_tile = job.full_frame_tile();
     if let Some(frame) = scheduler
-        .0
+        .scheduler
         .lock()
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
         .cached_tile(&frame_tile.identity)
@@ -2322,12 +2365,14 @@ fn native_preview(
     };
     let flags = profile_flag(rendered.color.input) | backend_flags;
     let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
-    let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
-        .map_err(|error| format!("native preview encode failed: {error}"))?;
+    let jpeg = profiling::measure(ProfileStage::Encode, 0, || {
+        encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
+    })
+    .map_err(|error| format!("native preview encode failed: {error}"))?;
     let frame = preview_frame(rendered.width, rendered.height, flags, profile_id, jpeg)?;
     let estimated_vram_bytes = rendered.width as usize * rendered.height as usize * 8;
     let completion = scheduler
-        .0
+        .scheduler
         .lock()
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
         .complete_tile(&frame_tile, frame.clone(), estimated_vram_bytes);
@@ -2626,6 +2671,7 @@ pub fn run() {
             advise_native_image,
             native_preview,
             native_preview_scheduler_status,
+            native_preview_profile,
             native_export_jpeg,
             portrait_detect,
             ai_mask_generate,
