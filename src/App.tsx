@@ -30,6 +30,7 @@ import {
 } from './nativeRender'
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
 import { formatUserError } from './errorPresentation'
+import { clientPointToNormalized } from './viewportCoordinates'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -368,11 +369,7 @@ function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit,
     return `${index ? 'L' : 'M'} ${x * 300} ${(1 - y) * 120}`
   }).join(' ')
   const eventPoint = (event: React.PointerEvent<SVGSVGElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return {
-      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      y: Math.max(0, Math.min(1, 1 - (event.clientY - rect.top) / rect.height)),
-    }
+    return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect(), true)
   }
   const updatePoint = (id: string, next: Partial<ToneCurvePoint>) => {
     const updated = points.map((point) => point.id === id ? { ...point, ...next } : point).sort((a, b) => a.x - b.x)
@@ -477,8 +474,7 @@ function MaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
   const [dragMode, setDragMode] = useState<MaskDragMode>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const position = (event: React.PointerEvent<SVGSVGElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }
+    return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
   }
   const angle = mask.rotation * Math.PI / 180
   const rotatePoint = (localX: number, localY: number) => ({
@@ -573,8 +569,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
   const healingStroke = useRef<Array<{ x: number; y: number }> | null>(null)
   const maskBrushStroke = useRef<Array<{ x: number; y: number }> | null>(null)
   const healPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const bounds = event.currentTarget.getBoundingClientRect()
-    return { x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)), y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)) }
+    return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
   }
 
   useEffect(() => {
@@ -677,9 +672,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
       onPointerUp={(event) => { const healing = healingStroke.current; const brushing = maskBrushStroke.current; healingStroke.current = null; maskBrushStroke.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); if (healing?.length) onHealingStroke?.(healing); if (brushing?.length) onBrushStroke?.(brushing) }}
       onDoubleClick={(event) => {
         if (before) return
-        const bounds = event.currentTarget.getBoundingClientRect()
-        const pointX = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width))
-        const pointY = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+        const { x: pointX, y: pointY } = clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
         if (onColorSample) { onColorSample(pointX, pointY); return }
         if (photo.whiteBalanceMode !== 'neutralPicker' || !onWhiteBalancePick) return
         const size = .06
