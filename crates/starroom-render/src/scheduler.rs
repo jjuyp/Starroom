@@ -774,5 +774,33 @@ mod tests {
             // pathological allocation/sort regression without claiming an image-render timing.
             assert!(milliseconds < 250, "{name} tile planning exceeded 250ms");
         }
+
+        let mut scheduler = RenderScheduler::default();
+        let full = scheduler.schedule_preview(
+            "dirty-region-comparison",
+            "benchmark-graph",
+            4096,
+            4096,
+            4096,
+            Viewport::full(4096, 4096),
+            DEFAULT_TILE_EDGE,
+            32,
+        );
+        let dirty = full.dirty_tiles(
+            PixelRect {
+                x: 1024,
+                y: 1024,
+                width: 64,
+                height: 64,
+            },
+            32,
+        );
+        println!(
+            "M28_DIRTY_REGION baseline_full_tiles={} optimized_dirty_tiles={}",
+            full.tiles.len(),
+            dirty.len()
+        );
+        assert!(!dirty.is_empty());
+        assert!(dirty.len() < full.tiles.len());
     }
 }
