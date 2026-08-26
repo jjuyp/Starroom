@@ -1,6 +1,6 @@
 # Complete Internal Build Plan
 
-## M29 Production UX / Reliability (acceptance candidate 2026-08-26)
+## M29 Production UX / Reliability (accepted 2026-08-26)
 
 - [x] Route the Command Palette and all required keyboard shortcuts through one real command catalog.
 - [x] Add pixel-free atomic autosave, explicit Recover/Discard crash recovery and clean session restore.
@@ -10,10 +10,11 @@
   reduced motion and responsive desktop behavior.
 - [x] Exercise command search/tool invocation in a real browser, audit requests as local-only, and add
   deterministic Native workflow -> session reopen -> second Export integration coverage.
-- [ ] Record final warning-denied Full Acceptance after the latest workflow regression is pushed.
-- [ ] Keep Draft PR #2 open and unmerged; M30 installer/runtime qualification remains separate.
+- [x] Record warning-denied Full Acceptance for production code in push run `32942892981`; the
+  dedicated M29 acceptance commit below receives its own final run before M30 begins.
+- [x] Keep Draft PR #2 open and unmerged; M30 installer/runtime qualification remains separate.
 
-## M28 Performance / Scale / GPU Optimization (acceptance candidate 2026-08-26)
+## M28 Performance / Scale / GPU Optimization (accepted 2026-08-26)
 
 - [x] Add per-stage shared-graph timing, process working-set/peak telemetry and cache counters.
 - [x] Add interactive preview priority, generation cancellation, exact cache identity, bounded LRU and
@@ -22,8 +23,9 @@
   and 100/500-item bounded batch queues under the Full Acceptance performance gate.
 - [x] Retain CPU as the complete reference; GPU Exposure is parity-tested and all unsupported GPU
   stages remain explicit rather than being reported as migrated.
-- [ ] Publish the measured Windows runner baseline/optimized numbers in the M28 Performance Report.
-- [ ] Record the final M28 acceptance SHA and green Full Acceptance URL.
+- [x] Publish measured Windows runner numbers and honest workload boundaries in
+  `docs/33_M28_PERFORMANCE_REPORT.md`, including a 64 -> 4 dirty-tile comparison.
+- [x] Acceptance commit `94a9ccc`; Full Acceptance `32942892981` passed Web and Rust.
 
 ## M27 Professional Export Completion (accepted 2026-08-25)
 

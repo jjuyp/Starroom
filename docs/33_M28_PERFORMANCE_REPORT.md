@@ -42,6 +42,7 @@ remaining time is the separately repeated performance corpus.
 | 45 MP plan | 48 tiles; <1 ms timer resolution | planning only |
 | 60 MP plan | 48 tiles; <1 ms timer resolution | planning only |
 | 100 MP plan | 48 tiles; <1 ms timer resolution | planning only |
+| local 64×64 dirty region on 4096² preview | 64 full-frame tiles -> 4 dirty tiles | 93.75% fewer scheduled work units; exact output parity remains required |
 | 100,000 Library rows | 3,476.044 ms | transaction insert plus indexed query corpus |
 | 10,000 History commands | 542.542 ms | commit/checkpoint/reload/snapshot/undo/redo/branch corpus |
 | 500-item export queue | 7,363.446 ms | 499 completed, one isolated failure, 500 progress events; compact mock pixels |
@@ -78,3 +79,10 @@ not inferred successes.
 
 M30 must re-run the final performance gate on the packaged Windows executable and treat any
 regression as a release blocker.
+
+Final acceptance: commit `94a9ccca81bf874fbe8013e694f1e8f0e691fda9`, [Windows Full
+Acceptance 32942892981](https://github.com/jjuyp/Starroom/actions/runs/32942892981), Web and Rust
+successful. The repeated runner observation was 3,523.973 ms for 100,000 Library rows, 549.899 ms
+for 10,000 History commands, 4,319.946 ms for the 500-item queue, and RAW decode/first
+preview/rerender 184.44/3,508.79/3,482.24 ms. Variation from the source run is retained rather than
+cherry-picking the faster measurement.
