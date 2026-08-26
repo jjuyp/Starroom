@@ -1,5 +1,30 @@
 # Complete Internal Build Plan
 
+## M29 Production UX / Reliability (acceptance candidate 2026-08-26)
+
+- [x] Route the Command Palette and all required keyboard shortcuts through one real command catalog.
+- [x] Add pixel-free atomic autosave, explicit Recover/Discard crash recovery and clean session restore.
+- [x] Map Native typed failures into user-facing categories without discarding diagnostics.
+- [x] Add Tauri Native file drop with explicit unsupported rejection and no silent Browser fallback.
+- [x] Add DPI-invariant image-coordinate regressions, focus containment/restoration, ARIA/focus styles,
+  reduced motion and responsive desktop behavior.
+- [x] Exercise command search/tool invocation in a real browser, audit requests as local-only, and add
+  deterministic Native workflow -> session reopen -> second Export integration coverage.
+- [ ] Record final warning-denied Full Acceptance after the latest workflow regression is pushed.
+- [ ] Keep Draft PR #2 open and unmerged; M30 installer/runtime qualification remains separate.
+
+## M28 Performance / Scale / GPU Optimization (acceptance candidate 2026-08-26)
+
+- [x] Add per-stage shared-graph timing, process working-set/peak telemetry and cache counters.
+- [x] Add interactive preview priority, generation cancellation, exact cache identity, bounded LRU and
+  tile/dirty-region planning without changing final render semantics.
+- [x] Exercise deterministic 24/45/60/100 MP plans, 100,000 metadata assets, 10,000 history commands
+  and 100/500-item bounded batch queues under the Full Acceptance performance gate.
+- [x] Retain CPU as the complete reference; GPU Exposure is parity-tested and all unsupported GPU
+  stages remain explicit rather than being reported as migrated.
+- [ ] Publish the measured Windows runner baseline/optimized numbers in the M28 Performance Report.
+- [ ] Record the final M28 acceptance SHA and green Full Acceptance URL.
+
 ## M27 Professional Export Completion (accepted 2026-08-25)
 
 - [x] Preserve the existing Native shared graph as float through the selected LittleCMS output

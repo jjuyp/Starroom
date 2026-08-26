@@ -1124,8 +1124,14 @@ export function App() {
       unlisten = await windowHandle.onCloseRequested(async (event) => {
         event.preventDefault()
         if (transientEditsPending.current && !window.confirm('This Browser fallback photo has edits that are not stored in Native History. Close Starroom and discard those transient edits?')) return
-        if (currentSession.current) await markNativeSessionClean(currentSession.current)
-        await windowHandle.destroy()
+        try {
+          if (currentSession.current) await markNativeSessionClean(currentSession.current)
+          await windowHandle.destroy()
+        } catch (error) {
+          // A failed clean-session write is recoverable. Keep the window alive and preserve the
+          // interrupted autosave envelope instead of silently closing with ambiguous state.
+          setNotice(formatUserError(error, 'Starroom could not save the session before closing'))
+        }
       })
     }).catch(() => undefined)
     return () => unlisten?.()
