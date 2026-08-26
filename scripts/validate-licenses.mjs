@@ -60,9 +60,24 @@ const serialized = `${JSON.stringify(report, null, 2)}\n`
 if (process.argv.includes('--write')) {
   writeFileSync(reportUrl, serialized)
 } else {
-  const existing = readFileSync(reportUrl, 'utf8')
-  if (existing !== serialized) {
-    throw new Error('Dependency license report is stale; run npm run licenses:update and review it')
+  const existing = JSON.parse(readFileSync(reportUrl, 'utf8'))
+  if (existing.schemaVersion !== report.schemaVersion
+      || existing.cargoLockSha256 !== report.cargoLockSha256
+      || existing.packageLockSha256 !== report.packageLockSha256) {
+    throw new Error('Dependency license report lock identity is stale; run npm run licenses:update and review it')
+  }
+  const reviewedRust = new Map(existing.rust.map((pkg) => [
+    `${pkg.name}@${pkg.version}|${pkg.source}`,
+    pkg.license,
+  ]))
+  for (const pkg of rust) {
+    const key = `${pkg.name}@${pkg.version}|${pkg.source}`
+    if (reviewedRust.get(key) !== pkg.license) {
+      throw new Error(`Rust dependency is absent or changed in the reviewed report: ${key}`)
+    }
+  }
+  if (JSON.stringify(existing.npm) !== JSON.stringify(npm)) {
+    throw new Error('Production npm dependency licenses differ from the reviewed report')
   }
 }
 
