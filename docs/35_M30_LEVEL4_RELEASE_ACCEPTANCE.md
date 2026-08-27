@@ -2,6 +2,8 @@
 
 Status: feature freeze; release-candidate qualification in progress. No `v1.0.0-rc.1` tag or Final
 claim exists until every release blocker below is closed with an immutable CI URL and artifact hash.
+The single status ledger is `docs/37_M30_RELEASE_BLOCKERS.md`; this checklist cannot override an
+`OPEN` product blocker or treat an `EXTERNAL` infrastructure condition as a passing gate.
 
 ## Automated gates
 

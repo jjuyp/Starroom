@@ -13,6 +13,13 @@ Produce a verifiable Windows `v1.0.0-rc.1`, not Final. Complete Level-4 integrat
 CPU/GPU parity, scale, offline/privacy, migration/recovery, license and installer runtime gates.
 Package, install, launch and uninstall the real MSVC Windows binary in CI before creating the RC.
 
+## Validation order
+
+Use Fast -> Targeted -> Full -> Release. Batch related fixes, run only affected local/Blueprint
+targets first, and keep `.github/workflows/release-candidate.yml` manual-only until one immutable
+candidate HEAD is ready. Heavy 100 MP and installer jobs run together only at the final Release gate.
+The authoritative blocker ledger is `docs/37_M30_RELEASE_BLOCKERS.md`.
+
 ## Relevant modules
 
 - `.github/workflows`, `scripts/test-target.mjs`, packaging/release validation

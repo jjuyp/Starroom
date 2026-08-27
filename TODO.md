@@ -24,6 +24,10 @@
   APIs, deterministic second export, source immutability and explicit local-model discovery state.
 - [x] Add a versioned Project sidecar load boundary: schema-1 compatibility, schema-2 current,
   typed future/corrupt rejection and fsync-backed atomic persistence.
+- [ ] Verify the Geometry/Detail identity zero-copy paths against the former full path, including
+  buffer reuse, profiler-stage retention and shared Preview/Export regressions.
+- [x] Make the expensive RC workflow manual-only, pin Rust 1.97.1 and separate reusable MSVC test
+  and release caches by lockfile, target and profile; ordinary pushes use classified Blueprint jobs.
 - [ ] Pass the explicit real-pixel 24/45/60/100 MP Windows gate covering bounded preview plus
   full-resolution masked/healed Native export with source immutability and measured peak memory.
 - [ ] Resolve every Level-4 release blocker, synchronize version `1.0.0-rc.1`, pass final gates and

@@ -1401,21 +1401,8 @@ fn render_prepared_working_graph(
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
-    let detail_is_identity = detail_stage_is_identity(settings);
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
-        if detail_is_identity {
-            creative
-        } else {
-            let denoised = denoise(&creative, settings.denoise);
-            let locally_adjusted = local_detail(&denoised, settings.local_detail);
-            let detailed = sharpen(&locally_adjusted, settings.sharpen);
-            apply_finishing_effects(
-                &detailed,
-                settings.grain,
-                settings.vignette,
-                &settings.image_identity,
-            )
-        }
+        apply_detail_stage(creative, settings)
     })?;
     let mut pixels = Vec::with_capacity(width as usize * height as usize);
     for pixel in detailed.data.as_chunks::<3>().0 {
@@ -1459,6 +1446,25 @@ fn detail_stage_is_identity(settings: &RenderSettings) -> bool {
         && settings.sharpen.amount.abs() <= f32::EPSILON
         && settings.grain.amount.abs() <= f32::EPSILON
         && settings.vignette.amount.abs() <= f32::EPSILON
+}
+
+fn apply_detail_stage(
+    image: LinearImage,
+    settings: &RenderSettings,
+) -> Result<LinearImage, PipelineError> {
+    if detail_stage_is_identity(settings) {
+        return Ok(image);
+    }
+    let denoised = denoise(&image, settings.denoise);
+    let locally_adjusted = local_detail(&denoised, settings.local_detail);
+    let detailed = sharpen(&locally_adjusted, settings.sharpen);
+    apply_finishing_effects(
+        &detailed,
+        settings.grain,
+        settings.vignette,
+        &settings.image_identity,
+    )
+    .map_err(PipelineError::from)
 }
 
 /// Returns the exact Linear Rec.2020 D65 image presented to M21, after source colour, optics,
@@ -3288,10 +3294,46 @@ mod tests {
         )
         .expect("linear source");
         let settings = RenderSettings::default();
+        let geometry_input = source.clone();
+        let geometry_buffer = geometry_input.data.as_ptr();
         let prepared =
-            apply_precreative_geometry(source.clone(), &settings, None).expect("identity geometry");
-        assert_eq!(prepared, source);
+            apply_precreative_geometry(geometry_input, &settings, None).expect("identity geometry");
+        assert_eq!(prepared.data.as_ptr(), geometry_buffer);
+        let legacy_geometry = apply_geometry(
+            source.width,
+            source.height,
+            &source.data,
+            GeometryParameters::default(),
+        )
+        .expect("legacy identity geometry");
+        assert_eq!(
+            (prepared.width, prepared.height),
+            (legacy_geometry.width, legacy_geometry.height)
+        );
+        assert!(
+            prepared
+                .data
+                .iter()
+                .zip(&legacy_geometry.data)
+                .all(|(optimized, reference)| (optimized - reference).abs() <= 1.0e-6)
+        );
         assert!(detail_stage_is_identity(&settings));
+        let detail_input = source.clone();
+        let detail_buffer = detail_input.data.as_ptr();
+        let optimized_detail =
+            apply_detail_stage(detail_input, &settings).expect("optimized identity detail");
+        assert_eq!(optimized_detail.data.as_ptr(), detail_buffer);
+        let denoised = denoise(&source, settings.denoise);
+        let locally_adjusted = local_detail(&denoised, settings.local_detail);
+        let detailed = sharpen(&locally_adjusted, settings.sharpen);
+        let legacy_detail = apply_finishing_effects(
+            &detailed,
+            settings.grain,
+            settings.vignette,
+            &settings.image_identity,
+        )
+        .expect("legacy identity detail");
+        assert_eq!(optimized_detail, legacy_detail);
 
         let mut adjusted = settings.clone();
         adjusted.local_detail.clarity = 0.01;
