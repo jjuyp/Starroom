@@ -3,6 +3,9 @@
 ## M30 Starroom v1.0 Release Candidate (feature freeze, in progress 2026-08-26)
 
 - [x] Move the engineering task to M30 feature freeze and pin official Tauri CLI 2.11.4.
+- [x] Synchronize the immutable RC identity `1.0.0-rc.1` across Cargo workspace/lock, npm
+  package/lock and Tauri bundle configuration, with a validator that rejects stale path-package
+  versions.
 - [x] Add release identity/model-exclusion/offline API validation and a Windows MSVC + NSIS
   build/install/launch/uninstall workflow with executable/installer hashes.
 - [x] Add third-party notices and an honest Level-4 matrix that keeps photographic Golden,

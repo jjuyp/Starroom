@@ -263,6 +263,8 @@ pub enum ColorManagementError {
         pixel: usize,
         channel: usize,
     },
+    #[error("LittleCMS generated an invalid {role} ICC header")]
+    GeneratedProfileHeader { role: ProfileRole },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,6 +361,29 @@ fn ensure_finite(stage: &'static str, pixels: &[[f32; 3]]) -> Result<(), ColorMa
     Ok(())
 }
 
+/// LittleCMS initializes bytes 24..36 of a newly generated ICC profile from the wall clock.
+/// Built-in Starroom profiles are release resources, not user-authored profiles, so their
+/// creation metadata must not make otherwise identical exports differ across seconds.
+fn canonicalize_generated_profile(
+    mut bytes: Vec<u8>,
+    role: ProfileRole,
+) -> Result<Vec<u8>, ColorManagementError> {
+    const ICC_SIGNATURE_OFFSET: usize = 36;
+    const ICC_CREATED_OFFSET: usize = 24;
+    const ICC_CREATED_END: usize = 36;
+    // 2026-01-01 00:00:00, encoded as six big-endian ICC uInt16Number fields.
+    const STARROOM_PROFILE_EPOCH: [u8; 12] = [
+        0x07, 0xea, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+    if bytes.len() < 128
+        || bytes.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4) != Some(b"acsp")
+    {
+        return Err(ColorManagementError::GeneratedProfileHeader { role });
+    }
+    bytes[ICC_CREATED_OFFSET..ICC_CREATED_END].copy_from_slice(&STARROOM_PROFILE_EPOCH);
+    Ok(bytes)
+}
+
 impl LittleCmsProvider {
     #[must_use]
     pub fn engine_version(&self) -> u32 {
@@ -366,12 +391,14 @@ impl LittleCmsProvider {
     }
 
     pub fn srgb_profile_bytes(&self) -> Result<Vec<u8>, ColorManagementError> {
-        Profile::new_srgb()
-            .icc()
-            .map_err(|source| ColorManagementError::InvalidProfile {
-                role: ProfileRole::Output,
-                source,
-            })
+        let bytes =
+            Profile::new_srgb()
+                .icc()
+                .map_err(|source| ColorManagementError::InvalidProfile {
+                    role: ProfileRole::Output,
+                    source,
+                })?;
+        canonicalize_generated_profile(bytes, ProfileRole::Output)
     }
 
     pub fn builtin_output_profile_bytes(
@@ -447,12 +474,13 @@ impl LittleCmsProvider {
         let red = ToneCurve::new(gamma);
         let green = ToneCurve::new(gamma);
         let blue = ToneCurve::new(gamma);
-        Profile::new_rgb(&white, &primaries, &[&red, &green, &blue])
+        let bytes = Profile::new_rgb(&white, &primaries, &[&red, &green, &blue])
             .and_then(|profile| profile.icc())
             .map_err(|source| ColorManagementError::InvalidProfile {
                 role: ProfileRole::Output,
                 source,
-            })
+            })?;
+        canonicalize_generated_profile(bytes, ProfileRole::Output)
     }
 
     pub fn input_to_working(
@@ -717,6 +745,31 @@ mod tests {
                     fallback[channel]
                 );
             }
+        }
+    }
+
+    #[test]
+    fn generated_builtin_profiles_have_deterministic_valid_headers() {
+        let provider = LittleCmsProvider;
+        for builtin in [
+            BuiltinOutputProfile::Srgb,
+            BuiltinOutputProfile::DisplayP3,
+            BuiltinOutputProfile::AdobeRgb,
+            BuiltinOutputProfile::Rec2020,
+        ] {
+            let first = provider
+                .builtin_output_profile_bytes(builtin)
+                .expect("first built-in profile");
+            let second = provider
+                .builtin_output_profile_bytes(builtin)
+                .expect("second built-in profile");
+            assert_eq!(first, second, "{builtin:?} profile bytes are not stable");
+            assert_eq!(
+                &first[24..36],
+                &[0x07, 0xea, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0],
+                "{builtin:?} profile creation metadata is not canonical"
+            );
+            Profile::new_icc(&first).expect("canonical profile remains parseable by LittleCMS");
         }
     }
 

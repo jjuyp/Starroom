@@ -6,6 +6,7 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8')
 const pkg = JSON.parse(read('package.json'))
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json'))
 const cargo = read('Cargo.toml')
+const cargoLock = read('Cargo.lock')
 const expectedArg = process.argv.find((arg) => arg.startsWith('--expected-version='))
 const expected = expectedArg?.split('=', 2)[1] ?? pkg.version
 
@@ -13,6 +14,10 @@ if (pkg.version !== expected || tauri.version !== expected) {
   throw new Error(`Release versions differ: expected=${expected} package=${pkg.version} tauri=${tauri.version}`)
 }
 if (!cargo.includes(`version = "${expected}"`)) throw new Error('Cargo workspace version differs from the release version')
+const starroomLockVersions = [...cargoLock.matchAll(/\[\[package\]\]\r?\nname = "(starroom-[^"]+)"\r?\nversion = "([^"]+)"/g)]
+if (!starroomLockVersions.length || starroomLockVersions.some(([, , version]) => version !== expected)) {
+  throw new Error(`Cargo.lock contains a stale Starroom package version; expected ${expected}`)
+}
 if (!tauri.bundle?.active || !tauri.bundle?.icon?.includes('icons/icon.ico')) throw new Error('Windows bundle or release icon is not configured')
 if (tauri.bundle?.licenseFile !== '../LICENSE') throw new Error('Windows bundle license file is not configured')
 
@@ -61,4 +66,4 @@ for (const path of productionPaths) {
 }
 if (networkFindings.length) throw new Error(`Unexpected production network surface: ${networkFindings.join(', ')}`)
 
-console.log(`OK Starroom ${expected} release identity, local-model exclusion and offline production-source scan`)
+console.log(`OK Starroom ${expected} release identity (${starroomLockVersions.length} locked packages), local-model exclusion and offline production-source scan`)
