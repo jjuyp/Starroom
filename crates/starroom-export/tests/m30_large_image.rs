@@ -28,7 +28,7 @@ fn root() -> PathBuf {
 
 fn write_gradient_jpeg(path: &Path, width: u32, height: u32) {
     let mut rgb = vec![0_u8; width as usize * height as usize * 3];
-    for (index, pixel) in rgb.chunks_exact_mut(3).enumerate() {
+    for (index, pixel) in rgb.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         let x = index % width as usize;
         let y = index / width as usize;
         pixel[0] = ((x * 255) / width as usize) as u8;
@@ -42,14 +42,14 @@ fn write_gradient_jpeg(path: &Path, width: u32, height: u32) {
 }
 
 fn settings() -> RenderSettings {
-    let mut settings = RenderSettings::default();
-    settings.tone.exposure_ev = 0.25;
-    settings.tone.highlights = -0.2;
-    settings.tone.shadows = 0.2;
+    let mut tone = RenderSettings::default().tone;
+    tone.exposure_ev = 0.25;
+    tone.highlights = -0.2;
+    tone.shadows = 0.2;
 
     let mut layer_adjustments = LayerAdjustments::default();
     layer_adjustments.tone.exposure_ev = 0.2;
-    settings.layers = vec![NativeAdjustmentLayer {
+    let layers = vec![NativeAdjustmentLayer {
         id: "m30-radial".into(),
         name: "M30 radial mask".into(),
         enabled: true,
@@ -67,7 +67,7 @@ fn settings() -> RenderSettings {
         .into(),
         adjustments: layer_adjustments,
     }];
-    settings.healing_operations = vec![HealingOperation {
+    let healing_operations = vec![HealingOperation {
         id: "m30-heal".into(),
         enabled: true,
         mode: HealMode::Heal,
@@ -83,8 +83,13 @@ fn settings() -> RenderSettings {
         source_mode: SourceMode::Manual,
         metadata: BTreeMap::new(),
     }];
-    settings.image_identity = "m30-large-gradient".into();
-    settings
+    RenderSettings {
+        tone,
+        layers,
+        healing_operations,
+        image_identity: "m30-large-gradient".into(),
+        ..RenderSettings::default()
+    }
 }
 
 #[test]
