@@ -1,15 +1,78 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Starroom Look",
+  "$id": "https://starroom.app/schemas/look/v1",
+  "title": "Starroom Portable Look v1",
   "type": "object",
-  "required": ["schemaVersion", "name", "engineCompatibility", "parameters"],
+  "additionalProperties": false,
+  "required": ["schema", "schemaVersion", "id", "name", "metadata", "tone", "relativeColor", "curves", "colorMixer", "grading", "denoise", "localDetail", "sharpen", "grain", "vignette"],
   "properties": {
-    "schemaVersion": {"type": "integer", "minimum": 1},
-    "name": {"type": "string"},
-    "author": {"type": "string"},
-    "engineCompatibility": {"type": "string"},
-    "defaultAmount": {"type": "number", "minimum": 0, "maximum": 1},
-    "protectedCategories": {"type": "array", "items": {"type": "string"}},
-    "parameters": {"type": "object"}
+    "schema": { "const": "https://starroom.app/schemas/look/v1" },
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "tone": { "$ref": "#/$defs/tone" },
+    "relativeColor": { "$ref": "#/$defs/relativeColor" },
+    "curves": { "$ref": "#/$defs/curves" },
+    "colorMixer": { "type": "object" },
+    "grading": { "type": "object" },
+    "denoise": { "type": "object" },
+    "localDetail": { "type": "object" },
+    "sharpen": { "type": "object" },
+    "grain": { "$ref": "#/$defs/grain" },
+    "vignette": { "$ref": "#/$defs/vignette" }
+  },
+  "$defs": {
+    "finite": { "type": "number" },
+    "unit": { "type": "number", "minimum": 0, "maximum": 1 },
+    "signedUnit": { "type": "number", "minimum": -1, "maximum": 1 },
+    "metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["author", "description", "tags", "extensions"],
+      "properties": {
+        "author": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "tags": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 80 } },
+        "extensions": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 500 } }
+      }
+    },
+    "tone": {
+      "type": "object", "additionalProperties": false,
+      "required": ["exposure_ev", "contrast", "highlights", "shadows", "whites", "blacks"],
+      "properties": {
+        "exposure_ev": { "$ref": "#/$defs/finite" }, "contrast": { "$ref": "#/$defs/signedUnit" },
+        "highlights": { "$ref": "#/$defs/signedUnit" }, "shadows": { "$ref": "#/$defs/signedUnit" },
+        "whites": { "$ref": "#/$defs/signedUnit" }, "blacks": { "$ref": "#/$defs/signedUnit" }
+      }
+    },
+    "relativeColor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["temperature", "tint", "vibrance", "saturation"],
+      "properties": {
+        "temperature": { "$ref": "#/$defs/signedUnit" }, "tint": { "$ref": "#/$defs/signedUnit" },
+        "vibrance": { "$ref": "#/$defs/signedUnit" }, "saturation": { "$ref": "#/$defs/signedUnit" }
+      }
+    },
+    "point": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+      "properties": { "x": { "$ref": "#/$defs/unit" }, "y": { "$ref": "#/$defs/unit" } }
+    },
+    "curves": {
+      "type": "object", "additionalProperties": false, "required": ["master", "red", "green", "blue"],
+      "properties": {
+        "master": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/point" } },
+        "red": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/point" } },
+        "green": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/point" } },
+        "blue": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/point" } }
+      }
+    },
+    "grain": {
+      "type": "object", "additionalProperties": false, "required": ["amount", "size", "roughness", "color", "seed"],
+      "properties": { "amount": { "$ref": "#/$defs/unit" }, "size": { "type": "number", "minimum": 0.1, "maximum": 1 }, "roughness": { "$ref": "#/$defs/unit" }, "color": { "$ref": "#/$defs/unit" }, "seed": { "type": "integer", "minimum": 0 } }
+    },
+    "vignette": {
+      "type": "object", "additionalProperties": false, "required": ["amount", "midpoint", "roundness", "feather", "highlightProtect"],
+      "properties": { "amount": { "$ref": "#/$defs/signedUnit" }, "midpoint": { "$ref": "#/$defs/unit" }, "roundness": { "$ref": "#/$defs/signedUnit" }, "feather": { "$ref": "#/$defs/unit" }, "highlightProtect": { "$ref": "#/$defs/unit" } }
+    }
   }
 }

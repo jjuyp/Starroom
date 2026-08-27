@@ -1,0 +1,51 @@
+{
+  "contractVersion": 1,
+  "description": "Frozen Browser Canvas reference values used to quantify the M1C Native CPU migration gap.",
+  "cases": [
+    {
+      "name": "neutral",
+      "sourceRgb8": [32, 64, 128, 180, 120, 60],
+      "browserRgb8": [32, 64, 128, 180, 120, 60],
+      "adjustments": {},
+      "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }],
+      "maxChannelDelta": 2,
+      "maxMeanDelta": 1.0
+    },
+    {
+      "name": "exposure",
+      "sourceRgb8": [32, 64, 128, 180, 120, 60],
+      "browserRgb8": [43, 83, 162, 227, 152, 78],
+      "adjustments": { "exposure": 0.75 },
+      "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }],
+      "maxChannelDelta": 5,
+      "maxMeanDelta": 3.0
+    },
+    {
+      "name": "white-balance",
+      "sourceRgb8": [80, 100, 120, 160, 140, 100],
+      "browserRgb8": [83, 101, 113, 166, 141, 94],
+      "adjustments": { "temperature": 45.0, "tint": -20.0 },
+      "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }],
+      "maxChannelDelta": 24,
+      "maxMeanDelta": 14.0
+    },
+    {
+      "name": "tone",
+      "sourceRgb8": [24, 30, 40, 120, 130, 140, 230, 220, 210],
+      "browserRgb8": [75, 89, 112, 121, 131, 141, 226, 216, 206],
+      "adjustments": { "contrast": 20.0, "shadows": 35.0, "highlights": -25.0 },
+      "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }],
+      "maxChannelDelta": 12,
+      "maxMeanDelta": 7.0
+    },
+    {
+      "name": "curve",
+      "sourceRgb8": [32, 64, 128, 180, 120, 60],
+      "browserRgb8": [57, 102, 141, 184, 135, 98],
+      "adjustments": {},
+      "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 0.25, "y": 0.4 }, { "x": 0.5, "y": 0.55 }, { "x": 1.0, "y": 1.0 }],
+      "maxChannelDelta": 72,
+      "maxMeanDelta": 40.0
+    }
+  ]
+}

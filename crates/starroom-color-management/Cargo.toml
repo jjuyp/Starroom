@@ -1,0 +1,12 @@
+[package]
+name = "starroom-color-management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lcms2 = { version = "=6.1.1", default-features = false, features = ["static"] }
+serde.workspace = true
+starroom-color = { path = "../starroom-color" }
+thiserror.workspace = true

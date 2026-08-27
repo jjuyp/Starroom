@@ -7,6 +7,19 @@ vite.config.js
 vite.config.d.ts
 .starroom-cache/
 models/weights/
+# M16: licensed local-only model binaries. Public source stores only provenance and SHA pins.
+models/local/
 fixtures/private/
 .env
 output/playwright/
+.tmp-*/
+.starroom-reports/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.starroom-library/
+.starroom-history/
+.starroom-snapshots/
+.starroom-export-presets/
+*.starroom-tmp
+exports.jsonl

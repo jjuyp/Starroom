@@ -2,19 +2,59 @@
 resolver = "2"
 members = [
   "crates/starroom-core",
+  "crates/starroom-color",
+  "crates/starroom-advisor",
+  "crates/starroom-portrait",
   "crates/starroom-project",
+  "crates/starroom-render",
+  "crates/starroom-detail",
+  "crates/starroom-geometry",
+  "crates/starroom-optics",
+  "crates/starroom-grading",
+  "crates/starroom-color-management",
+  "crates/starroom-heal",
+  "crates/starroom-imageio",
+  "crates/starroom-pipeline",
+  "crates/starroom-raw",
+  "crates/starroom-ai-denoise",
+  "crates/starroom-reference",
+  "crates/starroom-look",
+  "crates/starroom-library",
+  "crates/starroom-history",
+  "crates/starroom-export",
+  "crates/starroom-session",
   "src-tauri",
 ]
 default-members = [
   "crates/starroom-core",
+  "crates/starroom-color",
+  "crates/starroom-advisor",
+  "crates/starroom-portrait",
   "crates/starroom-project",
+  "crates/starroom-render",
+  "crates/starroom-detail",
+  "crates/starroom-geometry",
+  "crates/starroom-optics",
+  "crates/starroom-grading",
+  "crates/starroom-color-management",
+  "crates/starroom-heal",
+  "crates/starroom-imageio",
+  "crates/starroom-pipeline",
+  "crates/starroom-raw",
+  "crates/starroom-ai-denoise",
+  "crates/starroom-reference",
+  "crates/starroom-look",
+  "crates/starroom-library",
+  "crates/starroom-history",
+  "crates/starroom-export",
+  "crates/starroom-session",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "1.0.0-rc.1"
 edition = "2024"
-license = "UNLICENSED"
-rust-version = "1.85"
+license = "GPL-3.0-or-later"
+rust-version = "1.88"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
