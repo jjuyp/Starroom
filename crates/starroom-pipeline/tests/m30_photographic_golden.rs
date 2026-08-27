@@ -52,8 +52,10 @@ fn m30_active_photographic_golden_assets_use_the_shared_native_graph() {
         let immutable_source = fs::read(&source).expect("read immutable Golden source");
         let decoded = decode_source_preview(&source, 1024).expect("decode Golden source");
 
-        let mut identity = RenderSettings::default();
-        identity.image_identity = asset_id.to_owned();
+        let identity = RenderSettings {
+            image_identity: asset_id.to_owned(),
+            ..RenderSettings::default()
+        };
         let preview = render_source_preview_to_srgb8(&decoded, &identity)
             .expect("identity Native preview succeeds");
         let export = render_source_export_to_srgb8(&decoded, &identity)
