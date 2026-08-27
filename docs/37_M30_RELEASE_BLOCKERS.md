@@ -11,14 +11,14 @@ Status vocabulary is intentionally closed: `OPEN`, `FIXED`, `VERIFIED`, `EXTERNA
 
 | ID | Status | Blocker | Required evidence |
 | --- | --- | --- | --- |
-| M30-R01 | OPEN | Identity Geometry and Detail stages previously copied/resampled neutral full frames. | Small old-path parity, exact buffer reuse, profiler-stage retention, targeted render tests. |
+| M30-R01 | FIXED | Identity Geometry and Detail stages previously copied/resampled neutral full frames. | Small old-path parity, exact buffer reuse, profiler-stage retention and targeted render tests are implemented; candidate CI verification remains required. |
 | M30-R02 | OPEN | Real 24/45/60/100 MP open, bounded preview, Mask, Healing and full-resolution Export. | RC workflow log with dimensions, immutable-source assertion, elapsed time and process peak memory. |
 | M30-R03 | FIXED | Installed production workflow self-test. | Exact candidate installer must run Library -> History/Snapshot -> Session -> two byte-identical Native exports and uninstall. |
 | M30-R04 | FIXED | Offline AI availability contract. | Installed self-test must report bundled models available or unbundled models `typed-unavailable`; no download/cloud/API fallback. |
 | M30-R05 | FIXED | Session, History, Project, Library and Export migration/corruption/recovery matrix. | Locked workspace tests and installed recovery path pass on the candidate HEAD. |
 | M30-R06 | FIXED | Dependency redistribution and installed legal resources. | Cargo/package lock identities, reviewed closure, 268 deduplicated upstream texts and installed SHA-256 checks pass. |
 | M30-R07 | FIXED | Privacy/offline production-source policy. | Release validator and installed self-test prove no telemetry, hidden upload, cloud or API-key dependency. |
-| M30-R08 | OPEN | Photographic Golden corpus remains manifest-only for several required scenes. | License-cleared active fixtures, provenance/hash records and deterministic full-pipeline regression evidence. |
+| M30-R08 | FIXED | Photographic Golden corpus remains manifest-only for several required scenes. | Five immutable public-domain/CC assets now cover all photographic cases, provenance/hash validation is mandatory and a shared Native full-pipeline regression proves identity Preview/Export parity, finite output, deterministic edits and source immutability. Candidate CI remains required. |
 | M30-R09 | VERIFIED | M28 accepted scale/cache/history/library/batch and current GPU-capable Exposure parity baseline. | M28 acceptance `94a9ccca81bf874fbe8013e694f1e8f0e691fda9`, run `32942892981`; CPU-only stages remain explicit, not fake GPU paths. |
 | M30-R10 | OPEN | Exact-candidate Windows MSVC executable, NSIS clean install/runtime/self-test/uninstall and artifact hashes. | One successful Release Candidate Gate for the final candidate SHA. |
 | M30-R11 | EXTERNAL | GitHub-hosted Windows jobs are currently returning zero-job `startup_failure` or remaining queued. | Retry after hosted runner recovery. Examples: `32985982566`, `32985843647`, `32985840314`. |

@@ -50,13 +50,14 @@ shared-export APIs as the desktop commands.
 
 ## Release blockers not represented by a green build alone
 
-- The photographic Golden cases are still planned; the active suite is numerical/synthetic plus
-  RAW decode fixtures. A green manifest is not a human-reviewed portrait/night/full-pipeline image
-  comparison.
+- Five immutable, license-reviewed photographs now activate the portrait, low-key, backlight, HDR,
+  night, neon, high-ISO, black/white, texture and mixed-light cases. The suite hashes every source
+  and runs deterministic shared Native Preview/Export and finite/extreme-control regressions. The
+  ColorChecker remains the existing BSD numerical oracle; human competitor A/B remains field work.
 - wgpu production migration covers Exposure only. The other requested CPU/GPU parity stages remain
   explicit CPU reference stages.
-- 100 MP coverage is tile-plan and conservative memory-preflight validation, not a measured full
-  100 MP open/mask/heal/export workflow.
+- The real-pixel 100 MP open/mask/heal/export test is implemented but remains unaccepted until it
+  passes on the exact immutable Release Candidate HEAD with elapsed and peak-memory evidence.
 - Local-only AI weights are not distributable in the installer. Clean install can verify discovery
   and typed unavailable state but cannot claim offline AI Mask/Skin/Denoise inference without
   legally packageable weights.

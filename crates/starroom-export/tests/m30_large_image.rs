@@ -1,5 +1,4 @@
 use image::{ExtendedColorType, ImageEncoder, ImageReader, codecs::jpeg::JpegEncoder};
-use starroom_color::ToneParameters;
 use starroom_export::{
     ExportFormat, ExportRequest, ExportSettings, MetadataPolicy, NativeSharedGraphRenderer,
     export_one_profiled,
@@ -43,56 +42,49 @@ fn write_gradient_jpeg(path: &Path, width: u32, height: u32) {
 }
 
 fn settings() -> RenderSettings {
-    RenderSettings {
-        tone: ToneParameters {
-            exposure_ev: 0.25,
-            highlights: -0.2,
-            shadows: 0.2,
-            ..Default::default()
-        },
-        layers: vec![NativeAdjustmentLayer {
-            id: "m30-radial".into(),
-            name: "M30 radial mask".into(),
-            enabled: true,
-            opacity: 0.6,
-            blend_mode: LayerBlendMode::Normal,
-            mask: MaskDefinition::Radial {
-                x: 0.5,
-                y: 0.5,
-                width: 0.4,
-                height: 0.5,
-                rotation: 18.0,
-                feather: 0.35,
-                invert: false,
-            }
-            .into(),
-            adjustments: LayerAdjustments {
-                tone: ToneParameters {
-                    exposure_ev: 0.2,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        }],
-        healing_operations: vec![HealingOperation {
-            id: "m30-heal".into(),
-            enabled: true,
-            mode: HealMode::Heal,
-            target: HealPoint { x: 0.55, y: 0.52 },
-            source: Some(HealPoint { x: 0.45, y: 0.52 }),
-            radius: 16.0,
-            feather: 0.5,
-            opacity: 0.8,
-            rotation_degrees: 0.0,
-            scale: 1.0,
-            tone_adaptation: true,
-            texture_adaptation: true,
-            source_mode: SourceMode::Manual,
-            metadata: BTreeMap::new(),
-        }],
-        image_identity: "m30-large-gradient".into(),
-        ..Default::default()
-    }
+    let mut settings = RenderSettings::default();
+    settings.tone.exposure_ev = 0.25;
+    settings.tone.highlights = -0.2;
+    settings.tone.shadows = 0.2;
+
+    let mut layer_adjustments = LayerAdjustments::default();
+    layer_adjustments.tone.exposure_ev = 0.2;
+    settings.layers = vec![NativeAdjustmentLayer {
+        id: "m30-radial".into(),
+        name: "M30 radial mask".into(),
+        enabled: true,
+        opacity: 0.6,
+        blend_mode: LayerBlendMode::Normal,
+        mask: MaskDefinition::Radial {
+            x: 0.5,
+            y: 0.5,
+            width: 0.4,
+            height: 0.5,
+            rotation: 18.0,
+            feather: 0.35,
+            invert: false,
+        }
+        .into(),
+        adjustments: layer_adjustments,
+    }];
+    settings.healing_operations = vec![HealingOperation {
+        id: "m30-heal".into(),
+        enabled: true,
+        mode: HealMode::Heal,
+        target: HealPoint { x: 0.55, y: 0.52 },
+        source: Some(HealPoint { x: 0.45, y: 0.52 }),
+        radius: 16.0,
+        feather: 0.5,
+        opacity: 0.8,
+        rotation_degrees: 0.0,
+        scale: 1.0,
+        tone_adaptation: true,
+        texture_adaptation: true,
+        source_mode: SourceMode::Manual,
+        metadata: BTreeMap::new(),
+    }];
+    settings.image_identity = "m30-large-gradient".into();
+    settings
 }
 
 #[test]

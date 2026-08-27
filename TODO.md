@@ -26,6 +26,9 @@
   typed future/corrupt rejection and fsync-backed atomic persistence.
 - [ ] Verify the Geometry/Detail identity zero-copy paths against the former full path, including
   buffer reuse, profiler-stage retention and shared Preview/Export regressions.
+- [x] Add five immutable, license-reviewed photographic Golden assets with author/source/license,
+  camera/format/hash metadata and an executable shared Native Preview/Export determinism, finite,
+  extreme-control and source-immutability regression. ColorChecker remains a numerical oracle.
 - [x] Make the expensive RC workflow manual-only, pin Rust 1.97.1 and separate reusable MSVC test
   and release caches by lockfile, target and profile; ordinary pushes use classified Blueprint jobs.
 - [ ] Pass the explicit real-pixel 24/45/60/100 MP Windows gate covering bounded preview plus
