@@ -25,3 +25,10 @@ Neural weights under `models/local/` are intentionally untracked and unbundled. 
 BiSeNet, SegFormer and NAFNet checkpoint redistribution has not been cleared for this public binary.
 An installer without those exact local weights must report the corresponding AI capability as
 unavailable and must not download or substitute a model silently.
+
+Source and CI distributions include five M30 photographic Golden fixtures. The Eileen Collins
+portrait is NASA public-domain material redistributed through scikit-image. Night-city and neon
+fixtures are CC0-1.0 works by Dgmsaikat and JINDONG H. The fire-performer and wild-cherry Google
+WebP Gallery JPEG derivatives are CC-BY-SA-3.0 works by Luc Viatour and Benjamin Gimmel. Exact
+source URLs, revisions, camera/format metadata and SHA-256 values are recorded in
+`fixtures/golden/manifest.json`; the CC0 and CC-BY-SA legal texts are retained beside the fixtures.

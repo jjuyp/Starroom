@@ -27,7 +27,7 @@
   APIs, deterministic second export, source immutability and explicit local-model discovery state.
 - [x] Add a versioned Project sidecar load boundary: schema-1 compatibility, schema-2 current,
   typed future/corrupt rejection and fsync-backed atomic persistence.
-- [ ] Verify the Geometry/Detail identity zero-copy paths against the former full path, including
+- [x] Verify the Geometry/Detail identity zero-copy paths against the former full path, including
   buffer reuse, profiler-stage retention and shared Preview/Export regressions.
 - [x] Add five immutable, license-reviewed photographic Golden assets with author/source/license,
   camera/format/hash metadata and an executable shared Native Preview/Export determinism, finite,
