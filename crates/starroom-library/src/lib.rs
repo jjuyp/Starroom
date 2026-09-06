@@ -18,10 +18,11 @@ use std::{
 };
 use thiserror::Error;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 pub const FINGERPRINT_VERSION: &str = "StarroomAssetFingerprintV1";
 const SAMPLE_BYTES: u64 = 64 * 1024;
 static THUMBNAIL_WRITE_ID: AtomicU64 = AtomicU64::new(0);
+static IMPORT_BATCH_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -211,6 +212,7 @@ pub struct LibraryQuery {
     pub capture_from: Option<i64>,
     pub capture_to: Option<i64>,
     pub missing: Option<bool>,
+    pub recent_batch: bool,
     pub sort: SortField,
     pub direction: SortDirection,
     pub limit: u32,
@@ -234,6 +236,7 @@ impl Default for LibraryQuery {
             capture_from: None,
             capture_to: None,
             missing: None,
+            recent_batch: false,
             sort: SortField::ImportTime,
             direction: SortDirection::Descending,
             limit: 200,
@@ -389,7 +392,17 @@ impl Library {
                 .execute_batch(MIGRATION_V1)
                 .map_err(|error| LibraryError::MigrationFailed(error.to_string()))?;
             transaction
-                .pragma_update(None, "user_version", SCHEMA_VERSION)
+                .pragma_update(None, "user_version", 1)
+                .map_err(sql_error)?;
+            transaction.commit().map_err(sql_error)?;
+        }
+        if version < 2 {
+            let transaction = self.connection.transaction().map_err(sql_error)?;
+            transaction
+                .execute_batch(MIGRATION_V2)
+                .map_err(|error| LibraryError::MigrationFailed(error.to_string()))?;
+            transaction
+                .pragma_update(None, "user_version", 2)
                 .map_err(sql_error)?;
             transaction.commit().map_err(sql_error)?;
         }
@@ -402,6 +415,7 @@ impl Library {
         cancelled: &AtomicBool,
     ) -> Result<ImportResult, LibraryError> {
         let mut result = ImportResult::default();
+        let batch_id = next_batch_id();
         for chunk in paths.chunks(250) {
             if cancelled.load(Ordering::Relaxed) {
                 result.cancelled = true;
@@ -413,7 +427,7 @@ impl Library {
                     result.cancelled = true;
                     break;
                 }
-                match import_one(&transaction, path) {
+                match import_one(&transaction, path, batch_id) {
                     Ok(ImportDisposition::Imported(id)) => result.imported.push(id),
                     Ok(ImportDisposition::AlreadyPresent) => {
                         result.already_present.push(path.clone())
@@ -454,6 +468,21 @@ impl Library {
         }
         transaction.commit().map_err(sql_error)?;
         Ok(removed)
+    }
+
+    pub fn update_metadata(&self, id: i64, metadata: &AssetMetadata) -> Result<(), LibraryError> {
+        self.connection.execute(
+            "UPDATE assets SET file_type=?,width=?,height=?,orientation=?,capture_time=?,camera_make=?,camera_model=?,lens_make=?,lens_model=?,focal_length=?,aperture=?,shutter_speed=?,iso=?,updated_at=? WHERE id=?",
+            params![metadata.file_type, metadata.width, metadata.height, metadata.orientation,
+                metadata.capture_time, metadata.camera_make, metadata.camera_model, metadata.lens_make,
+                metadata.lens_model, metadata.focal_length, metadata.aperture, metadata.shutter_speed,
+                metadata.iso, now(), id],
+        ).map_err(sql_error)?;
+        Ok(())
+    }
+
+    pub fn extract_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
+        read_metadata(path)
     }
 
     pub fn recursive_paths(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, LibraryError> {
@@ -547,6 +576,31 @@ impl Library {
             value.keywords = self.keywords_for(value.id)?;
         }
         Ok(asset)
+    }
+
+    /// Return the complete current query identity set without loading pixels, metadata records,
+    /// keywords or only the visible page. This is the native contract for filtered Ctrl/Cmd+A.
+    pub fn query_ids(&self, query: &LibraryQuery) -> Result<Vec<i64>, LibraryError> {
+        let (where_sql, values) = build_where(query)?;
+        let sort = match query.sort {
+            SortField::CaptureTime => "a.capture_time",
+            SortField::ImportTime => "a.import_time",
+            SortField::Filename => "a.source_path_normalized",
+            SortField::Rating => "a.rating",
+        };
+        let direction = match query.direction {
+            SortDirection::Ascending => "ASC",
+            SortDirection::Descending => "DESC",
+        };
+        let sql = format!(
+            "SELECT a.id FROM assets a {where_sql} ORDER BY {sort} {direction},a.id {direction}"
+        );
+        let mut statement = self.connection.prepare(&sql).map_err(sql_error)?;
+        statement
+            .query_map(params_from_iter(values), |row| row.get(0))
+            .map_err(sql_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql_error)
     }
 
     pub fn set_workflow(
@@ -891,10 +945,8 @@ impl Library {
         fs::create_dir_all(&directory)
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
         let destination = directory.join(format!("{identity}.jpg"));
-        if destination.is_file() {
-            if image::open(&destination).is_ok() {
-                return Ok(destination);
-            }
+        if destination.is_file() && image::open(&destination).is_ok() {
+            return Ok(destination);
         }
         let decoded = decode_source_preview(&asset.source_path, size.pixels())
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
@@ -927,6 +979,7 @@ enum ImportDisposition {
 fn import_one(
     transaction: &Transaction<'_>,
     path: &Path,
+    batch_id: i64,
 ) -> Result<ImportDisposition, LibraryError> {
     if !supported(path) {
         return Err(LibraryError::UnsupportedFile(path.to_owned()));
@@ -953,7 +1006,8 @@ fn import_one(
             ImportDisposition::Duplicate
         });
     }
-    let metadata = read_metadata(path)?;
+    // Registration must not decode sensor data. Full metadata is enriched asynchronously.
+    let metadata = quick_metadata(path)?;
     let modified = file_modified(path)?;
     let timestamp = now();
     let identity = format!("v1:{}:{}", fingerprint.byte_length, fingerprint.digest);
@@ -961,7 +1015,7 @@ fn import_one(
         "SELECT MAX(COALESCE((SELECT MAX(id) FROM assets),0),COALESCE((SELECT CAST(value AS INTEGER) FROM library_settings WHERE key='retired_asset_high_water'),0))+1",
         [], |row| row.get(0),
     ).map_err(sql_error)?;
-    transaction.execute("INSERT INTO assets(id,source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'unflagged','none',0,?,?)", params![id,path.to_string_lossy(),normalized,identity,FINGERPRINT_VERSION,fingerprint.digest,fingerprint.byte_length,modified,metadata.file_type,metadata.width,metadata.height,metadata.orientation,metadata.capture_time,timestamp,metadata.camera_make,metadata.camera_model,metadata.lens_make,metadata.lens_model,metadata.focal_length,metadata.aperture,metadata.shutter_speed,metadata.iso,timestamp,timestamp]).map_err(sql_error)?;
+    transaction.execute("INSERT INTO assets(id,source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,import_batch_id,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'unflagged','none',0,?,?)", params![id,path.to_string_lossy(),normalized,identity,FINGERPRINT_VERSION,fingerprint.digest,fingerprint.byte_length,modified,metadata.file_type,metadata.width,metadata.height,metadata.orientation,metadata.capture_time,timestamp,batch_id,metadata.camera_make,metadata.camera_model,metadata.lens_make,metadata.lens_model,metadata.focal_length,metadata.aperture,metadata.shutter_speed,metadata.iso,timestamp,timestamp]).map_err(sql_error)?;
     Ok(ImportDisposition::Imported(transaction.last_insert_rowid()))
 }
 
@@ -1084,6 +1138,23 @@ fn read_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
     })
 }
 
+fn quick_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
+    let file_type = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let dimensions = matches!(file_type.as_str(), "jpg" | "jpeg" | "png" | "tif" | "tiff")
+        .then(|| image::image_dimensions(path).ok())
+        .flatten();
+    Ok(AssetMetadata {
+        file_type,
+        width: dimensions.map(|value| value.0),
+        height: dimensions.map(|value| value.1),
+        ..Default::default()
+    })
+}
+
 fn finite_positive(value: f32) -> Option<f32> {
     if value.is_finite() && value > 0.0 {
         Some(value)
@@ -1132,6 +1203,20 @@ fn file_modified(path: &Path) -> Result<i64, LibraryError> {
 }
 fn now() -> i64 {
     system_time(SystemTime::now())
+}
+fn next_batch_id() -> i64 {
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
+        .min(i64::MAX as u128) as u64;
+    let id = IMPORT_BATCH_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
+            Some(clock.max(previous.saturating_add(1)))
+        })
+        .unwrap_or_default()
+        .max(clock);
+    id as i64
 }
 fn system_time(value: SystemTime) -> i64 {
     value
@@ -1240,6 +1325,9 @@ fn build_where(
         clauses.push("a.missing=?".into());
         values.push(Value::Integer(i64::from(value)));
     }
+    if query.recent_batch {
+        clauses.push("a.import_batch_id=(SELECT MAX(import_batch_id) FROM assets)".into());
+    }
     Ok((
         if clauses.is_empty() {
             String::new()
@@ -1333,6 +1421,13 @@ CREATE TABLE collection_assets(id INTEGER PRIMARY KEY,collection_id INTEGER NOT 
 CREATE TABLE smart_collection_rules(collection_id INTEGER PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,schema_version INTEGER NOT NULL,rule_json TEXT NOT NULL CHECK(json_valid(rule_json)));
 "#;
 
+const MIGRATION_V2: &str = r#"
+ALTER TABLE assets ADD COLUMN import_batch_id INTEGER NOT NULL DEFAULT 0;
+UPDATE assets SET import_batch_id=import_time WHERE import_batch_id=0;
+CREATE INDEX assets_import_batch ON assets(import_batch_id,id);
+UPDATE library_settings SET value='2' WHERE key='schema_version';
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,7 +1449,7 @@ mod tests {
         let db = root.join("library.sqlite");
         {
             let library = Library::open(&db).unwrap();
-            assert_eq!(library.schema_version().unwrap(), 1);
+            assert_eq!(library.schema_version().unwrap(), SCHEMA_VERSION);
             assert_eq!(
                 library
                     .connection
@@ -1364,7 +1459,7 @@ mod tests {
             );
         }
         let library = Library::open(&db).unwrap();
-        assert_eq!(library.schema_version().unwrap(), 1);
+        assert_eq!(library.schema_version().unwrap(), SCHEMA_VERSION);
     }
 
     #[test]
@@ -1378,6 +1473,72 @@ mod tests {
             Err(LibraryError::CorruptDatabase(_))
         ));
         assert_eq!(fs::read(database).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn v1_catalog_migrates_to_v2_and_latest_import_batch_is_exact() {
+        let root = temp("v1-to-v2");
+        let database = root.join("library.sqlite");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(MIGRATION_V1).unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        drop(connection);
+        let a = root.join("a.png");
+        let b = root.join("b.png");
+        png(&a, [1, 2, 3]);
+        png(&b, [4, 5, 6]);
+        let mut library = Library::open(&database).unwrap();
+        assert_eq!(library.schema_version().unwrap(), 2);
+        let first = library
+            .import_paths(&[a], &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        let second = library
+            .import_paths(&[b], &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        let recent = library
+            .query(&LibraryQuery {
+                recent_batch: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            recent.iter().map(|asset| asset.id).collect::<Vec<_>>(),
+            vec![second]
+        );
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn two_hundred_asset_registration_avoids_pixel_decode() {
+        let root = temp("rc2-two-hundred-registration");
+        let paths: Vec<_> = (0..200)
+            .map(|index| {
+                let path = root.join(format!("photo-{index:03}.png"));
+                png(&path, [index as u8, 10, 20]);
+                path
+            })
+            .collect();
+        let mut library = Library::open(root.join("db.sqlite")).unwrap();
+        let started = Instant::now();
+        let result = library
+            .import_paths(&paths, &AtomicBool::new(false))
+            .unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(result.imported.len(), 200);
+        assert!(
+            elapsed.as_secs_f64() < 5.0,
+            "200 registrations took {elapsed:?}"
+        );
+        assert_eq!(
+            library.query_ids(&LibraryQuery::default()).unwrap().len(),
+            200
+        );
+        eprintln!(
+            "RC2_LIBRARY_REGISTRATION_200_MS={:.3}",
+            elapsed.as_secs_f64() * 1000.0
+        );
     }
 
     #[test]

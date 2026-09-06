@@ -1,4 +1,27 @@
 # Implementation Notes
+## 2026-09-06 v1.0.0-rc.2 field validation
+
+- Tauri asset URLs now grant only the exact generated thumbnail-cache file. Library thumbnails are
+  generated outside the SQLite mutex and delivered by a bounded progressive queue, so one corrupt or
+  unsupported asset cannot hold back the rest of the grid.
+- Library schema v2 stores a monotonic import-batch identity. Registration uses filesystem identity
+  and cheap raster header dimensions; full encoded/RAW metadata enrichment runs on a blocking worker
+  without holding the catalog lock during decode. Recent Imports therefore means the exact newest
+  batch, and filtered Ctrl/Cmd+A uses a native ID-only query that is independent of pagination.
+- Removal is one Native SQLite transaction with foreign-key cascades and a retired-ID high-water
+  mark. It never deletes or moves source files. Stable-ID Shift/Ctrl/Meta/Ctrl-Shift selection,
+  shortcuts 0-5, visible thumbnail rating and immediate Five Stars filtering use this catalog state.
+- Native Preview runs off the WebView thread. Per-surface latest-wins scheduling keeps one active and
+  one newest pending request, cooperatively cancels superseded work between shared-graph stages and
+  rejects stale results before publish. A bounded source/tier decode cache and process-wide GPU
+  device reuse accelerate repeated sliders and A-B-A switching without caching creative output.
+- The field UI uses Library/Develop/Retouch/Compare navigation. Develop owns Navigator plus
+  Presets/Layers/History, including full Snapshot lifecycle; Export is a floating glass panel and
+  Portrait/Layers/Looks are context-disclosed. Image math remains entirely in the Rust graph.
+- Per the explicit user decision, BiSeNet remains an ignored local-only model and is not included in
+  public rc.2 packaging. A clean install must state Model not installed for Face/Skin; no download,
+  cloud, API or synthetic provider is permitted.
+
 ## 2026-08-26 M30 release-candidate qualification
 
 - M30 begins under feature freeze after M28 acceptance `94a9ccc` / `32942892981` and M29 acceptance `d83fd9f` / `32943720530`. Official `@tauri-apps/cli` 2.11.4 is an exact build-time pin. A separate Windows gate now builds the real MSVC release executable and NSIS installer, launches the unpacked and clean-installed executable, performs silent uninstall, records SHA-256 values and uploads the artifacts.

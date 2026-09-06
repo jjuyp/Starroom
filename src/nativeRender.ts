@@ -26,6 +26,7 @@ export interface NativeLibraryQuery {
   colorLabel?: NativeColorLabel | null; fileTypes?: string[]; minimumIso?: number | null
   maximumIso?: number | null; captureFrom?: number | null; captureTo?: number | null
   missing?: boolean | null; sort?: 'captureTime' | 'importTime' | 'filename' | 'rating'
+  recentBatch?: boolean
   direction?: 'ascending' | 'descending'; limit?: number; offset?: number
 }
 export interface NativeHistoryEntry { sequence: number; timestamp: number; description: string; affectedStage: string; version: string }
@@ -485,8 +486,16 @@ export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {
   return invoke<NativeLibraryAsset[]>('library_query', { query: {
     text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,
     flag: null, colorLabel: null, fileTypes: [], minimumIso: null, maximumIso: null,
-    captureFrom: null, captureTo: null, missing: null, sort: 'importTime', direction: 'descending',
+    captureFrom: null, captureTo: null, missing: null, recentBatch: false, sort: 'importTime', direction: 'descending',
     limit: 200, offset: 0, ...query,
+  } })
+}
+export async function queryNativeLibraryIds(query: NativeLibraryQuery = {}) {
+  return invoke<number[]>('library_query_ids', { query: {
+    text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,
+    flag: null, colorLabel: null, fileTypes: [], minimumIso: null, maximumIso: null,
+    captureFrom: null, captureTo: null, missing: null, recentBatch: false,
+    sort: 'importTime', direction: 'descending', limit: 200, offset: 0, ...query,
   } })
 }
 

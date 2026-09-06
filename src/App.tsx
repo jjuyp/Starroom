@@ -23,8 +23,8 @@ import {
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
-  openNativeLibrary, queryNativeLibrary, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
-  type NativeLibraryAsset, type NativeLibraryCollection, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
+  openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
+  type NativeLibraryAsset, type NativeLibraryCollection, type NativeLibraryQuery, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
   cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
@@ -882,17 +882,18 @@ function CommandPalette({ query, setQuery, execute, close }: {
   </div>
 }
 
-function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo, canRedo, undo, redo, onExport, exportBusy }: {
+function AppHeader({ view, setView, theme, setTheme, before, setBefore, canUndo, canRedo, undo, redo, onRetouch, onExport, exportBusy }: {
   view: WorkspaceView; setView: (view: WorkspaceView) => void
   theme: Theme; setTheme: (theme: Theme) => void
   before: boolean; setBefore: (value: boolean) => void; canUndo: boolean; canRedo: boolean
-  undo: () => void; redo: () => void; onExport: () => void; exportBusy: boolean
+  undo: () => void; redo: () => void; onRetouch: () => void; onExport: () => void; exportBusy: boolean
 }) {
   return <header className="topbar">
     <div className="brand"><span className="brand-mark"><Aperture size={18} /></span><strong>Starroom</strong></div>
     <nav aria-label="Workspace">
       <button className={view === 'library' ? 'active' : ''} onClick={() => setView('library')}>Library</button>
-      <button className={view === 'edit' ? 'active' : ''} onClick={() => setView('edit')}>Edit</button>
+      <button className={view === 'edit' ? 'active' : ''} onClick={() => setView('edit')}>Develop</button>
+      <button onClick={onRetouch}>Retouch</button>
       <button className={view === 'compare' ? 'active' : ''} onClick={() => setView('compare')}>Compare</button>
     </nav>
     <div className="top-actions">
@@ -912,6 +913,7 @@ export function App() {
   const [photos, setPhotos] = useState<PhotoItem[]>([demoPhoto])
   const [selectedId, setSelectedId] = useState(demoPhoto.id)
   const [filter, setFilter] = useState<LibraryFilter>('all')
+  const [developTab, setDevelopTab] = useState<'presets' | 'layers' | 'history'>('history')
   const [view, setView] = useState<WorkspaceView>('edit')
   const [tool, setTool] = useState<Tool>('light')
   const [selectedCurvePoint, setSelectedCurvePoint] = useState<string | null>('midtone')
@@ -975,6 +977,7 @@ export function App() {
     resize: { mode: 'original' }, outputSharpen: 'off', sharpenAmount: 'standard', metadata: 'allMetadata', includeLocation: false,
     copyright: null, filenameTemplate: '{original_name}-starroom', collision: 'autoRename' })
   const [exportBusy, setExportBusy] = useState(false)
+  const [exportPanelOpen, setExportPanelOpen] = useState(false)
   const [previewInteraction, setPreviewInteraction] = useState<'interactive' | 'final'>('final')
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
@@ -1209,8 +1212,15 @@ export function App() {
     edited: photos.filter(hasPhotoEdits).length,
   }), [photos])
 
+  function nativeQuery(queryText: string, page: number, activeFilter: LibraryFilter): NativeLibraryQuery {
+    return { text: queryText.trim() || null, limit: 200, offset: page * 200,
+      sort: 'importTime', direction: 'descending', recentBatch: activeFilter === 'recent',
+      minimumRating: activeFilter === 'five-star' ? 5 : null }
+  }
+
   function chooseFilter(next: LibraryFilter) {
     setFilter(next)
+    if (nativeRuntimeAvailable() && next !== 'edited') { void refreshLibrary(librarySearch, 0, next); return }
     const first = photos.find((photo) => next === 'all' || (next === 'recent' && photo.imported) || (next === 'five-star' && photo.rating === 5) || (next === 'edited' && hasPhotoEdits(photo)))
     if (first) selectPhoto(first.id)
   }
@@ -1237,11 +1247,11 @@ export function App() {
     setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported`)
   }
 
-  async function refreshLibrary(queryText = librarySearch, page = libraryPage) {
+  async function refreshLibrary(queryText = librarySearch, page = libraryPage, activeFilter = filter) {
     if (!nativeRuntimeAvailable()) return
     setLibraryBusy(true)
     try {
-      const assets = await queryNativeLibrary({ text: queryText.trim() || null, limit: 200, offset: page * 200, sort: 'importTime', direction: 'descending' })
+      const assets = await queryNativeLibrary(nativeQuery(queryText, page, activeFilter))
       const existing = new Map(photos.filter((photo) => photo.libraryAsset).map((photo) => [photo.libraryAsset!.id, photo]))
       const rows = assets.map((asset) => {
         const current = existing.get(asset.id)
@@ -1294,6 +1304,21 @@ export function App() {
     if (!selectedLibraryIds.length) return
     await updateNativeLibraryWorkflow(selectedLibraryIds, values)
     await refreshLibrary()
+  }
+
+  async function rateLibraryAsset(assetId: number, rating: number) {
+    const nextRating = Math.max(0, Math.min(5, Math.trunc(rating)))
+    setLibraryAssets((current) => current.map((asset) => asset.id === assetId ? { ...asset, rating: nextRating } : asset))
+    setPhotos((current) => current.map((photo) => photo.libraryAsset?.id === assetId
+      ? { ...photo, rating: nextRating, libraryAsset: { ...photo.libraryAsset, rating: nextRating } }
+      : photo))
+    try {
+      await updateNativeLibraryWorkflow([assetId], { rating: nextRating })
+      if (filter === 'five-star' && nextRating !== 5) await refreshLibrary(librarySearch, 0, filter)
+    } catch (error) {
+      setNotice(formatUserError(error, 'Rating update failed'))
+      await refreshLibrary(librarySearch, libraryPage, filter)
+    }
   }
 
   async function addLibraryKeyword(keyword: string) {
@@ -2041,6 +2066,15 @@ export function App() {
         setCommandPaletteOpen(true)
         return
       }
+      if (modifier && event.key.toLowerCase() === 'a' && view === 'library') {
+        event.preventDefault()
+        void queryNativeLibraryIds(nativeQuery(librarySearch, 0, filter)).then((ids) => {
+          setSelectedLibraryIds(ids)
+          libraryAnchor.current = ids[0] ?? null
+          setNotice(`${ids.length} photos selected in current Library result`)
+        }).catch((error) => setNotice(formatUserError(error, 'Select all failed')))
+        return
+      }
       if (event.key === 'Escape' && commandPaletteOpen) {
         event.preventDefault()
         setCommandPaletteOpen(false)
@@ -2072,10 +2106,25 @@ export function App() {
     </section></div>}
     <AppHeader view={view} setView={(next) => { setView(next); setBefore(false) }} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
-      canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo} onExport={exportJpeg} exportBusy={exportBusy} />
+      canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo}
+      onRetouch={() => { setView('edit'); setTool('heal'); setBefore(false) }} onExport={() => { if (view === 'library') void exportJpeg(); else setExportPanelOpen(true) }} exportBusy={exportBusy} />
     <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
       <aside className="library-panel">
-        <div className="panel-title"><span>Library</span><IconButton label="Collapse library" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
+        <div className="panel-title"><span>{view === 'library' ? 'Library' : 'Develop'}</span><IconButton label="Collapse left panel" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
+        {view !== 'library' ? <div className="develop-left">
+          <section className="navigator-card" aria-label="Navigator"><strong>Navigator</strong><img src={selected.src} alt="Navigator preview" /><small>{selected.name}</small></section>
+          <div className="develop-tabs" role="tablist" aria-label="Develop sidebar">
+            {(['presets', 'layers', 'history'] as const).map((tab) => <button key={tab} role="tab" aria-selected={developTab === tab} className={developTab === tab ? 'active' : ''} onClick={() => setDevelopTab(tab)}>{tab[0].toUpperCase() + tab.slice(1)}</button>)}
+          </div>
+          {developTab === 'presets' && <section className="develop-tab-content"><strong>Presets</strong><small>Named Looks and curve presets remain non-destructive.</small></section>}
+          {developTab === 'layers' && <section className="develop-tab-content"><strong>{selected.layers.length} Layers</strong>{selected.layers.map((layer) => <button key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>{layer.name}</button>)}</section>}
+          {developTab === 'history' && <section className="develop-tab-content history-panel" aria-label="Edit history and snapshots">
+            <div className="layer-stack-head"><strong>History / Snapshots</strong><small>{nativeHistory?.stateVersion.slice(0, 8) ?? 'opening'}</small></div>
+            <div className="snapshot-create"><input aria-label="Snapshot name" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} /><button onClick={createSnapshot}>Save</button></div>
+            <div className="history-list">{nativeHistory?.snapshots.map((snapshot) => <div className="snapshot-row" key={snapshot.id}><button onClick={() => restoreSnapshot(snapshot.id)}><strong>{snapshot.name}</strong><small>Restore</small></button><button onClick={() => { setSnapshotCompareId(snapshot.id); setView('compare') }}>Compare</button><button onClick={() => renameSnapshot(snapshot.id, snapshot.name)}>Rename</button><button onClick={() => deleteSnapshot(snapshot.id)}>Delete</button></div>)}</div>
+            <div className="history-list">{nativeHistory?.entries.slice(-12).reverse().map((entry) => <div key={entry.sequence}><span>{entry.sequence}</span><strong>{entry.description}</strong><small>{entry.affectedStage}</small></div>)}</div>
+          </section>}
+        </div> : <>
         <button className="import-button" onClick={() => view === 'library' ? void importLibraryFolder() : void requestPhotoImport()}><ImagePlus size={16} /> {view === 'library' ? 'Import folder' : 'Add photos'}</button>
         <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/svg+xml" multiple hidden onChange={(event) => { importPhotos(event.target.files); event.target.value = '' }} />
         <span className="format-note">Native: JPEG · PNG · TIFF · NEF · ARW · CR2/CR3 · DNG · RAF</span>
@@ -2092,6 +2141,7 @@ export function App() {
           <div className="portrait-regions"><button onClick={() => void createLibraryCollection('normal')}>+ Collection</button><button onClick={() => void createLibraryCollection('smart')}>+ Smart</button></div>
         </div>
         <div className="library-summary"><Library size={15} /><span>{filteredPhotos.length} visible photos</span></div>
+        </>}
       </aside>
       {!leftOpen && <button className="edge-toggle left" aria-label="Open library" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
 
@@ -2110,7 +2160,13 @@ export function App() {
             <button className="photo-card-preview" onClick={(event) => selectLibraryAsset(event, asset)} onDoubleClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Select ${photo.name}; double-click to edit`}>
               {photo.src ? <img loading="lazy" src={photo.src} alt={photo.name} /> : <span className="missing-thumbnail">Thumbnail unavailable</span>}
             </button>
-            <div><span title={photo.name}>{photo.name}</span><small>{asset.missing ? 'Missing' : `${asset.metadata.fileType.toUpperCase()} · ${asset.rating}★`} · {asset.keywords.join(', ') || 'No keywords'}</small></div>
+            <div><span title={photo.name}>{photo.name}</span><small>{asset.missing ? 'Missing' : asset.metadata.fileType.toUpperCase()} · {asset.keywords.join(', ') || 'No keywords'}</small></div>
+            <div className="thumbnail-rating" aria-label={`Rate ${photo.name}`}>
+              {[1, 2, 3, 4, 5].map((rating) => <button key={rating} aria-label={`${rating} star${rating === 1 ? '' : 's'}`}
+                className={asset.rating >= rating ? 'active' : ''} onClick={(event) => { event.stopPropagation(); void rateLibraryAsset(asset.id, asset.rating === rating ? 0 : rating) }}>
+                <Star size={11} fill={asset.rating >= rating ? 'currentColor' : 'none'} />
+              </button>)}
+            </div>
           </article>
         })}</div>
       </section> : <section className="canvas-area">
@@ -2179,13 +2235,15 @@ export function App() {
         </section>}
 
       <aside className="inspector-panel">
-        <ExportPanel settings={exportSettings} busy={exportBusy} selectedCount={view === 'library' ? Math.max(1, selectedLibraryIds.length) : 1}
-          nativeAvailable={(view === 'library' && selectedLibraryIds.length ? selectedLibraryIds.map((id) => photos.find((photo) => photo.libraryAsset?.id === id)).filter(Boolean) : [selected]).every((photo) => photo?.renderBackend === 'native')}
-          onChange={setExportSettings} onExport={() => void exportJpeg()} onCancel={() => void cancelNativeExport().then(() => setNotice('Export cancellation requested · completed files remain valid'))} />
+        {exportPanelOpen && <div className="export-popover glass-popover"><button className="popover-close" aria-label="Close export settings" onClick={() => setExportPanelOpen(false)}>×</button>
+          <ExportPanel settings={exportSettings} busy={exportBusy} selectedCount={view === 'library' ? Math.max(1, selectedLibraryIds.length) : 1}
+            nativeAvailable={(view === 'library' && selectedLibraryIds.length ? selectedLibraryIds.map((id) => photos.find((photo) => photo.libraryAsset?.id === id)).filter(Boolean) : [selected]).every((photo) => photo?.renderBackend === 'native')}
+            onChange={setExportSettings} onExport={() => void exportJpeg()} onCancel={() => void cancelNativeExport().then(() => setNotice('Export cancellation requested · completed files remain valid'))} />
+        </div>}
         {view === 'library' && <LibraryMetadataPanel asset={libraryAssets.find((asset) => asset.id === selectedLibraryIds.at(-1)) ?? null}
           selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} onRemoveKeyword={(keyword) => void removeLibraryKeyword(keyword)} />}
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
-        <section className="portrait-panel" aria-label="Portrait masks">
+        {(tool === 'masks' || tool === 'heal') && <section className="portrait-panel" aria-label="Portrait masks">
           <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native'}>Detect faces</button></div>
           {selected.renderBackend !== 'native' && <small>Native image required. Browser fallback is intentionally unavailable.</small>}
           {portraitDetection && <div className={`portrait-status status-${portraitDetection.status}`}>
@@ -2257,8 +2315,8 @@ export function App() {
               <button disabled={!advisorResult.suggestions.length} onClick={() => { applyAdvisorSuggestions(advisorResult.suggestions); setAdvisorResult(null) }}>Apply all safe</button><button onClick={() => setAdvisorResult(null)}>Dismiss</button>
               {advisorResult.suggestions.map((suggestion) => <div key={suggestion.id} className="portrait-face"><strong>{suggestion.what}</strong><small>{suggestion.why} · {suggestion.confidence}</small><span>{suggestion.control} {suggestion.amount > 0 ? '+' : ''}{suggestion.amount.toFixed(suggestion.control === 'exposure' ? 2 : 0)}</span><button onClick={() => previewAdvisorSuggestion(suggestion)}>Preview</button><button onClick={() => { applyAdvisorSuggestions([suggestion]); setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current) }}>Apply</button><button onClick={() => setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current)}>Ignore</button></div>)}</div>}
           </div>
-        </section>
-        <section className="layer-stack" aria-label="Adjustment layers">
+        </section>}
+        {tool === 'masks' && <section className="layer-stack" aria-label="Adjustment layers">
           <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>
           {selected.layers.length === 0 ? <small>No local adjustment layers</small> : selected.layers.map((layer, index) => <div className={selectedLayerId === layer.id ? 'layer-row selected' : 'layer-row'} key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>
             <input aria-label={`Enable ${layer.name}`} type="checkbox" checked={layer.enabled} onChange={(event) => updateLayer(layer.id, (current) => ({ ...current, enabled: event.target.checked }))} />
@@ -2271,8 +2329,8 @@ export function App() {
               {'type' in layer.mask && <LayerMaskControls mask={layer.mask} onChange={(mask) => updateLayer(layer.id, (current) => ({ ...current, mask }))} />}
             </>}
           </div>)}
-        </section>
-        <section className="layer-stack" aria-label="Reference and look workflows">
+        </section>}
+        {tool === 'looks' && <section className="layer-stack" aria-label="Reference and look workflows">
           <div className="layer-stack-head"><strong>Reference / Looks</strong><small>Native</small></div>
           <small>Perceptual reference analysis and .srlook interpolation run in Rust; no creative image math runs in React.</small>
           <div className="portrait-regions">
@@ -2302,12 +2360,6 @@ export function App() {
             onChange={(event) => setLookAWeight(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
           <label>Look B weight <input aria-label="Look B weight" type="number" min="0" max="100" value={lookBWeight}
             onChange={(event) => setLookBWeight(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} />%</label>
-        </section>
-        {view !== 'library' && selected.libraryAsset && <section className="history-panel" aria-label="Edit history and snapshots">
-          <div className="layer-stack-head"><strong>History / Snapshots</strong><small>{nativeHistory?.stateVersion.slice(0, 8) ?? 'opening'}</small></div>
-          <div className="snapshot-create"><input aria-label="Snapshot name" value={snapshotName} onChange={(event) => setSnapshotName(event.target.value)} /><button onClick={createSnapshot}>Save snapshot</button></div>
-          <div className="history-list">{nativeHistory?.snapshots.map((snapshot) => <div className="snapshot-row" key={snapshot.id}><button onClick={() => restoreSnapshot(snapshot.id)}><strong>{snapshot.name}</strong><small>Restore</small></button><button onClick={() => { setSnapshotCompareId(snapshot.id); setView('compare') }}>Compare</button><button onClick={() => renameSnapshot(snapshot.id, snapshot.name)}>Rename</button><button onClick={() => deleteSnapshot(snapshot.id)}>Delete</button></div>)}</div>
-          <div className="history-list">{nativeHistory?.entries.slice(-8).reverse().map((entry) => <div key={entry.sequence}><span>{entry.sequence}</span><strong>{entry.description}</strong><small>{entry.affectedStage}</small></div>)}</div>
         </section>}
         <div className="tool-layout">
           <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}

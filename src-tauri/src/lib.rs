@@ -168,9 +168,10 @@ async fn library_import_folder(
 ) -> Result<ImportResult, String> {
     let runtime = runtime.inner().clone();
     runtime.cancel_import.store(false, Ordering::Relaxed);
-    tauri::async_runtime::spawn_blocking(move || {
+    let worker = runtime.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let paths = Library::recursive_paths(&root).map_err(|error| error.to_string())?;
-        let mut guard = runtime
+        let mut guard = worker
             .library
             .lock()
             .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
@@ -178,11 +179,36 @@ async fn library_import_folder(
             .as_mut()
             .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
         library
-            .import_paths(&paths, &runtime.cancel_import)
+            .import_paths(&paths, &worker.cancel_import)
             .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| format!("ImportCancelled: worker failed: {error}"))?
+    .map_err(|error| format!("ImportCancelled: worker failed: {error}"))??;
+    // Stage B never delays registration. Decode metadata without the SQLite mutex, then keep
+    // each update transaction short so search/rating/selection remain usable.
+    let ids = result.imported.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        for id in ids {
+            if runtime.cancel_import.load(Ordering::Relaxed) {
+                break;
+            }
+            let asset = runtime.library.lock().ok().and_then(|guard| {
+                guard
+                    .as_ref()
+                    .and_then(|library| library.asset(id).ok().flatten())
+            });
+            let Some(asset) = asset else { continue };
+            let Ok(metadata) = Library::extract_metadata(&asset.source_path) else {
+                continue;
+            };
+            if let Ok(guard) = runtime.library.lock()
+                && let Some(library) = guard.as_ref()
+            {
+                let _ = library.update_metadata(id, &metadata);
+            }
+        }
+    });
+    Ok(result)
 }
 
 #[tauri::command]
@@ -204,6 +230,21 @@ fn library_query(
         .as_ref()
         .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
         .query(&query)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn library_query_ids(
+    runtime: State<'_, NativeLibraryRuntime>,
+    query: LibraryQuery,
+) -> Result<Vec<i64>, String> {
+    runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+        .query_ids(&query)
         .map_err(|error| error.to_string())
 }
 
@@ -3060,6 +3101,7 @@ pub fn run() {
             library_import_folder,
             library_cancel_import,
             library_query,
+            library_query_ids,
             library_set_workflow,
             library_add_keywords,
             library_remove_keywords,

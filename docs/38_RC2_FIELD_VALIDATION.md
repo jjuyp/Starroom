@@ -23,14 +23,14 @@ The remaining core AI and optional-pack requirements still need production valid
 | Area | State | Evidence / remaining acceptance |
 | --- | --- | --- |
 | Invisible thumbnails | FIXED, verification pending | Generated file URL had no Tauri asset-scope grant. Grant only the exact returned cache file. Validate installed JPEG/RAW WebView display and restart/corruption handling. |
-| Library registration/import latency | OPEN | Import metadata currently decodes pixels while holding the catalog mutex. Staged registration and measured 200-asset timings remain required. |
+| Library registration/import latency | FIXED, verification pending | Phase A registers from file identity/header metadata in one bounded transaction; Phase B enriches full metadata on a background worker without holding SQLite during decode. Deterministic 200-asset release timing and installed progressive-use validation remain required. |
 | Progressive thumbnail display | FIXED, verification pending | Remove Promise.all display barrier; bounded 3-worker queue publishes each result; cache raster work no longer holds SQLite lock. |
 | Removed assets resurrect | FIXED, verification pending | One Native transaction deletes catalog membership, cascades keyword/collection membership, never source files. Retired-ID high-water prevents new imports from inheriting old history sidecars. |
-| Selection / rating / recent imports | OPEN | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift range helper and bulk UI added; filtered Ctrl-A and deterministic import batches still required. Rating 0 command added. |
+| Selection / rating / recent imports | FIXED, verification pending | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift selection, full native filtered Ctrl-A, one-transaction bulk removal, schema-v2 deterministic latest import batches, shortcuts 0-5 and thumbnail 0-5 rating controls are implemented. Installed workflow validation remains required. |
 | Preview latency / latest-wins | FIXED, verification pending | Heavy work now runs on a blocking worker, per-surface latest-wins keeps one pending state, Native cancellation checkpoints reject stale publish, decoded source tiers and the GPU device are reused. Release-mode latency evidence remains required. |
 | True 1:1 viewport tiles | OPEN | Validate production tile transport and source-resolution coordinates, not scaled preview. |
 | AI availability | OPEN with Face/Skin exception | User-approved local-only BiSeNet policy above; remaining availability UI/runtime/packaging gates pending. |
-| Final workspace / snapshots / control layout | OPEN | Real installed workflow and 1280/1920/2560 layout acceptance required. |
+| Final workspace / snapshots / control layout | FIXED, verification pending | Develop now owns Navigator plus Presets/Layers/History; full Snapshot create/rename/delete/restore/compare is exposed there. Export is a floating context panel and Portrait/Layers/Looks use progressive disclosure. Real installed 1280/1920/2560 layout acceptance remains required. |
 | Export performance | OPEN | Preserve precision/color/source invariants; require measured release-mode baseline comparison. |
 | RC2 release | OPEN | No acceptance tag/artifact claim until same-SHA final gates pass. |
 
@@ -48,6 +48,19 @@ The remaining core AI and optional-pack requirements still need production valid
   passing native result; Windows validation is required. No test/coverage requirement is waived.
 
 No performance improvement percentage has been claimed from these unit tests.
+
+## Staged Library/query batch
+
+- Catalog schema v2 adds a monotonic import-batch identity. Recent Imports selects exactly the
+  newest batch; it does not infer a session from a timestamp window.
+- Phase A performs registration and inexpensive header dimensions only. Phase B reads full EXIF/RAW
+  metadata on a blocking worker without holding the catalog mutex, then commits short per-asset
+  updates. Thumbnail workers remain separately bounded and progressively publish results.
+- Ctrl/Cmd+A requests the complete active native query identity set rather than the current 200-row
+  page. Five Stars uses a native minimum-rating query; thumbnail stars apply 0-5 immediately and
+  persist through the same bulk workflow command.
+- The left Develop sidebar no longer duplicates the Library tree. Snapshot lifecycle actions are
+  visible under History; optional heavy panels only appear for their selected tool.
 
 ## Preview scheduling batch
 

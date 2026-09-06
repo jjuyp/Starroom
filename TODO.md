@@ -4,6 +4,14 @@
 
 - [ ] Complete and verify the Library/render/high-resolution/AI/UI/export fixes and immutable
   same-SHA release gates in `docs/38_RC2_FIELD_VALIDATION.md`.
+- [x] Repair exact-file thumbnail scope, progressive delivery, persistent transactional removal,
+  stable range selection and bulk removal.
+- [x] Add schema-v2 deterministic import batches, staged non-blocking metadata enrichment, native
+  filtered Ctrl/Cmd+A and visible 0-5 rating workflow.
+- [x] Make Native Preview latest-wins and WebView-nonblocking with cooperative shared-graph
+  cancellation, stale-result rejection, bounded decoded-source tiers and GPU device reuse.
+- [x] Expose Develop Navigator/Presets/Layers/History, full Snapshot actions and context-disclosed
+  Export/Portrait/Layer/Look panels. Installed multi-resolution layout verification remains open.
 - [ ] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
   Show the actual model-installation state, never claim clean-install Face/Skin readiness.
 - [ ] Publish rc.2 only after all applicable release gates pass; keep PR #2 Open/Draft.
