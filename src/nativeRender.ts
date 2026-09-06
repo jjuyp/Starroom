@@ -79,6 +79,9 @@ export interface NativePortraitFailure { code: string; message: string }
 export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; executionProvider: 'cpu' | 'directMl'; error: NativePortraitFailure | null }
 export type NativeAiMaskSemantic = 'subject' | 'background' | 'person' | 'sky' | 'skin' | 'hair'
 export interface NativeAiMaskResult { status: 'ready' | 'cached'; providerId: string; modelId: string; modelVersion: string; modelHash: string; semanticClass: NativeAiMaskSemantic; cacheIdentity: string; executionProvider: 'cpu' | 'directMl' }
+export type NativeAiAvailabilityState = 'ready' | 'modelNotInstalled' | 'invalid' | 'error'
+export interface NativeAiFeatureAvailability { state: NativeAiAvailabilityState; detail: string }
+export interface NativeAiAvailability { faceSkin: NativeAiFeatureAvailability; subjectBackground: NativeAiFeatureAvailability; sky: NativeAiFeatureAvailability; denoise: NativeAiFeatureAvailability }
 export type NativeMaskDefinition =
   | { type: 'none' }
   | { type: 'radial'; x: number; y: number; width: number; height: number; rotation: number; feather: number; invert: boolean }
@@ -408,10 +411,24 @@ export async function cancelNativeAiDenoise(requestId: string): Promise<boolean>
   return invoke<boolean>('ai_denoise_cancel', { requestId })
 }
 
+export async function queryNativeAiAvailability(): Promise<NativeAiAvailability> {
+  return invoke<NativeAiAvailability>('ai_availability_status')
+}
+
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
 
 const previewQueues = new WeakMap<object, LatestPreviewQueue<ArrayBuffer | Uint8Array>>()
 const defaultPreviewSurface = {}
+
+export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: number, sourceWidth = 0, sourceHeight = 0) {
+  const safeScale = Number.isFinite(zoomScale) ? Math.max(.25, Math.min(6, zoomScale)) : 1
+  const sourceEdge = Math.max(0, Math.trunc(sourceWidth), Math.trunc(sourceHeight))
+  const highResolution = zoom === '100' || safeScale > 1
+  return {
+    resolutionMode: highResolution ? 'highResolution' as const : 'fit' as const,
+    maxEdge: highResolution && sourceEdge ? sourceEdge : Math.max(512, Math.ceil(1800 * Math.max(1, safeScale))),
+  }
+}
 
 export async function renderNativePreview(
   sourcePath: string,
@@ -428,13 +445,14 @@ export async function renderNativePreview(
   healingOperations: NativeHealingOperation[] = [],
   interactionPhase: NativePreviewInteractionPhase = 'final',
   surface: object = defaultPreviewSurface,
+  resolutionMode: 'fit' | 'highResolution' = 'fit',
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
   const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, interactionPhase, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)

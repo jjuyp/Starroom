@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { assertNativeSupported, parseNativePreviewFrame, toNativeSettings } from './nativeRender'
+import { assertNativeSupported, nativePreviewViewportContract, parseNativePreviewFrame, toNativeSettings } from './nativeRender'
 import { defaultAdjustments } from './editorState'
 
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
 describe('native preview contract', () => {
+  it('requests full source resolution for 1:1/high zoom while retaining a bounded Fit tier', () => {
+    expect(nativePreviewViewportContract('fit', 1, 6000, 4000)).toEqual({ resolutionMode: 'fit', maxEdge: 1800 })
+    expect(nativePreviewViewportContract('fit', 2, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000 })
+    expect(nativePreviewViewportContract('100', 1, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000 })
+  })
   it('parses the versioned binary frame without JSON pixel arrays', () => {
     const payload = new Uint8Array([0xff, 0xd8, 0xff])
     const profile = new TextEncoder().encode('dng-forward-matrix:test:camera')

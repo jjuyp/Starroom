@@ -26,6 +26,27 @@ pub const TILE_STRIDE: usize = TILE_EDGE - TILE_OVERLAP;
 /// tile tensor separately, so the estimate intentionally includes one extra 512 RGB tile pair.
 pub const MAX_WORKING_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+pub fn verify_model(path: impl AsRef<Path>) -> Result<(), AiDenoiseError> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return Err(AiDenoiseError::ModelMissing(path.into()));
+    }
+    let actual = format!(
+        "{:x}",
+        Sha256::digest(
+            std::fs::read(path)
+                .map_err(|error| AiDenoiseError::RuntimeUnavailable(error.to_string()))?
+        )
+    );
+    if actual != MODEL_SHA256 {
+        return Err(AiDenoiseError::HashMismatch {
+            expected: MODEL_SHA256.into(),
+            actual,
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExecutionProvider {
@@ -477,22 +498,7 @@ impl NafNetOnnxProvider {
         requested: ExecutionProvider,
     ) -> Result<Self, AiDenoiseError> {
         let path = path.as_ref();
-        if !path.exists() {
-            return Err(AiDenoiseError::ModelMissing(path.into()));
-        }
-        let actual = format!(
-            "{:x}",
-            Sha256::digest(
-                std::fs::read(path)
-                    .map_err(|e| AiDenoiseError::RuntimeUnavailable(e.to_string()))?
-            )
-        );
-        if actual != MODEL_SHA256 {
-            return Err(AiDenoiseError::HashMismatch {
-                expected: MODEL_SHA256.into(),
-                actual,
-            });
-        }
+        verify_model(path)?;
         let ep = match requested {
             ExecutionProvider::Cpu => CPUExecutionProvider::default().build(),
             ExecutionProvider::DirectMl => DirectMLExecutionProvider::default().build(),

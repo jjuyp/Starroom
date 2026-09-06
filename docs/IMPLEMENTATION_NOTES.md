@@ -21,6 +21,16 @@
 - Per the explicit user decision, BiSeNet remains an ignored local-only model and is not included in
   public rc.2 packaging. A clean install must state Model not installed for Face/Skin; no download,
   cloud, API or synthetic provider is permitted.
+- Native model availability is now queried before tool activation and verifies both file presence
+  and the pinned hash for Face/Skin, Subject/Background, Sky and AI Denoise. The four UI states are
+  Ready, Model not installed, Invalid and Error; model paths are not exposed in the normal status UI.
+- Fit and high-resolution preview requests have distinct contracts. Slider interaction always uses
+  the bounded tier; the settled 1:1/high-zoom request decodes/render the immutable source at its real
+  dimensions, so it cannot publish an enlarged 1800/4096 frame. Viewport-only rendering/caching is
+  still required before the rc.2 high-resolution latency gate can be accepted.
+- Professional batch preparation no longer decodes the source when AI Denoise is disabled. The
+  FullResolutionRenderer performs the single required decode. AI Denoise still performs its model
+  residual preparation and final graph decode, preserving existing output semantics.
 
 ## 2026-08-26 M30 release-candidate qualification
 

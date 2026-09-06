@@ -1330,7 +1330,7 @@ pub struct AiMaskModelDescriptor {
 }
 
 impl AiMaskModelDescriptor {
-    fn verify(&self) -> Result<(), AiMaskError> {
+    pub fn verify(&self) -> Result<(), AiMaskError> {
         if !self.path.is_file() {
             return Err(AiMaskError::ModelMissing {
                 path: self.path.clone(),
@@ -1376,6 +1376,14 @@ impl AiMaskModelRegistry {
             },
             execution_provider: ExecutionProvider::DirectMl,
         }
+    }
+
+    pub fn verify_foreground(&self) -> Result<(), AiMaskError> {
+        self.foreground.verify()
+    }
+
+    pub fn verify_scene(&self) -> Result<(), AiMaskError> {
+        self.scene.verify()
     }
 }
 

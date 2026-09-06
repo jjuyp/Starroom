@@ -12,6 +12,11 @@
   cancellation, stale-result rejection, bounded decoded-source tiers and GPU device reuse.
 - [x] Expose Develop Navigator/Presets/Layers/History, full Snapshot actions and context-disclosed
   Export/Portrait/Layer/Look panels. Installed multi-resolution layout verification remains open.
+- [x] Show verified local AI availability before tool activation; keep unbundled models explicit.
+- [ ] Finish viewport-only high-resolution tile transport/cache. Settled 1:1/high zoom now uses real
+  source resolution and never enlarges the bounded Fit frame, but full-frame processing is interim.
+- [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; collect the
+  final 24 MP release-mode comparison on the rc.2 candidate.
 - [ ] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
   Show the actual model-installation state, never claim clean-install Face/Skin readiness.
 - [ ] Publish rc.2 only after all applicable release gates pass; keep PR #2 Open/Draft.

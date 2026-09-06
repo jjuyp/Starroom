@@ -4,10 +4,11 @@ use starroom_advisor::{
     AdvisorResult, AnalysisStats, Suggestion, advise, advise_detailed, analyze_detailed,
 };
 use starroom_ai_denoise::{
-    AiDenoiseParameters, AiDenoiseResidual, ExecutionProvider as DenoiseExecutionProvider,
-    MODEL_ID as NAFNET_MODEL_ID, MODEL_SHA256 as NAFNET_MODEL_SHA256,
-    MODEL_VERSION as NAFNET_MODEL_VERSION, NafNetOnnxProvider,
+    AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual,
+    ExecutionProvider as DenoiseExecutionProvider, MODEL_ID as NAFNET_MODEL_ID,
+    MODEL_SHA256 as NAFNET_MODEL_SHA256, MODEL_VERSION as NAFNET_MODEL_VERSION, NafNetOnnxProvider,
     directml_failure_allows_cpu_fallback, infer_tiled, inference_cache_key,
+    verify_model as verify_ai_denoise_model,
 };
 use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
@@ -726,6 +727,101 @@ fn ai_denoise_status(runtime: State<'_, NativeAiDenoiseRuntime>) -> AiDenoiseMod
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiFeatureAvailability {
+    state: &'static str,
+    detail: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiAvailabilityStatus {
+    face_skin: AiFeatureAvailability,
+    subject_background: AiFeatureAvailability,
+    sky: AiFeatureAvailability,
+    denoise: AiFeatureAvailability,
+}
+
+fn portrait_availability() -> AiFeatureAvailability {
+    match local_portrait_models().verify() {
+        Ok(()) => AiFeatureAvailability {
+            state: "ready",
+            detail: "Local YuNet and BiSeNet models verified",
+        },
+        Err(
+            PortraitError::DetectorModelMissing { .. } | PortraitError::ParserModelMissing { .. },
+        ) => AiFeatureAvailability {
+            state: "modelNotInstalled",
+            detail: "Model not installed. BiSeNet remains a local-only option.",
+        },
+        Err(PortraitError::ModelHashMismatch { .. }) => AiFeatureAvailability {
+            state: "invalid",
+            detail: "Installed portrait model failed hash verification",
+        },
+        Err(_) => AiFeatureAvailability {
+            state: "error",
+            detail: "Portrait model verification failed",
+        },
+    }
+}
+
+fn ai_mask_availability(
+    result: Result<(), AiMaskError>,
+    label: &'static str,
+) -> AiFeatureAvailability {
+    match result {
+        Ok(()) => AiFeatureAvailability {
+            state: "ready",
+            detail: label,
+        },
+        Err(AiMaskError::ModelMissing { .. }) => AiFeatureAvailability {
+            state: "modelNotInstalled",
+            detail: "Model not installed",
+        },
+        Err(AiMaskError::ModelHashMismatch { .. }) => AiFeatureAvailability {
+            state: "invalid",
+            detail: "Installed model failed hash verification",
+        },
+        Err(_) => AiFeatureAvailability {
+            state: "error",
+            detail: "Local model verification failed",
+        },
+    }
+}
+
+#[tauri::command]
+fn ai_availability_status() -> AiAvailabilityStatus {
+    let masks = local_ai_mask_models();
+    let denoise = match verify_ai_denoise_model(local_nafnet_model()) {
+        Ok(()) => AiFeatureAvailability {
+            state: "ready",
+            detail: "Local NAFNet model verified",
+        },
+        Err(AiDenoiseError::ModelMissing(_)) => AiFeatureAvailability {
+            state: "modelNotInstalled",
+            detail: "AI Denoise model not installed",
+        },
+        Err(AiDenoiseError::HashMismatch { .. }) => AiFeatureAvailability {
+            state: "invalid",
+            detail: "Installed AI Denoise model failed hash verification",
+        },
+        Err(_) => AiFeatureAvailability {
+            state: "error",
+            detail: "AI Denoise model verification failed",
+        },
+    };
+    AiAvailabilityStatus {
+        face_skin: portrait_availability(),
+        subject_background: ai_mask_availability(
+            masks.verify_foreground(),
+            "Local Subject/Background model verified",
+        ),
+        sky: ai_mask_availability(masks.verify_scene(), "Local Sky model verified"),
+        denoise,
+    }
+}
+
 /// UI-visible M12 backend state. This intentionally reports the fallback reason instead of
 /// silently treating unavailable DX12/device resources as a browser-rendering failure.
 #[tauri::command]
@@ -1077,6 +1173,8 @@ struct NativePreviewRequest {
     prefer_gpu: bool,
     #[serde(default)]
     interaction_phase: PreviewInteractionPhase,
+    #[serde(default)]
+    resolution_mode: PreviewResolutionMode,
     settings: NativeEditSettings,
 }
 
@@ -1088,12 +1186,24 @@ enum PreviewInteractionPhase {
     Final,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum PreviewResolutionMode {
+    #[default]
+    Fit,
+    HighResolution,
+}
+
 fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 {
     match phase {
         PreviewInteractionPhase::Interactive => max_edge.min(1024),
         PreviewInteractionPhase::Final => max_edge,
     }
     .clamp(256, 4096)
+}
+
+fn wants_high_resolution(mode: PreviewResolutionMode, phase: PreviewInteractionPhase) -> bool {
+    mode == PreviewResolutionMode::HighResolution && phase == PreviewInteractionPhase::Final
 }
 
 /// Process-wide M13 scheduler state. It holds only derived preview/cache bytes and request
@@ -2455,8 +2565,11 @@ fn native_preview_inner(
     attach_portrait_masks(&mut settings, portrait_runtime)?;
     attach_generated_masks(&mut settings, ai_mask_runtime)?;
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
+    let high_resolution = wants_high_resolution(request.resolution_mode, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
-    let cached = {
+    let cached = if high_resolution {
+        None
+    } else {
         let mut cache = scheduler
             .decoded
             .lock()
@@ -2475,6 +2588,13 @@ fn native_preview_inner(
     };
     let decoded = if let Some(image) = cached {
         image
+    } else if high_resolution {
+        Arc::new(
+            profiling::measure(ProfileStage::RawDecode, 0, || {
+                decode_source(&request.source_path)
+            })
+            .map_err(|error| format!("native high-resolution preview decode failed: {error}"))?,
+        )
     } else {
         let image = Arc::new(
             profiling::measure(ProfileStage::RawDecode, 0, || {
@@ -2533,13 +2653,15 @@ fn native_preview_inner(
             RenderGraph::default().maximum_halo(),
         );
     let frame_tile = job.full_frame_tile();
-    if let Some(frame) = scheduler
-        .scheduler
-        .lock()
-        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
-        .cached_tile(&frame_tile.identity)
-    {
-        return Ok(Response::new(frame));
+    if !high_resolution {
+        if let Some(frame) = scheduler
+            .scheduler
+            .lock()
+            .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
+            .cached_tile(&frame_tile.identity)
+        {
+            return Ok(Response::new(frame));
+        }
     }
     let (rendered, backend_flags) = if request.prefer_gpu {
         let mut gpu = scheduler
@@ -2585,13 +2707,15 @@ fn native_preview_inner(
     .map_err(|error| format!("native preview encode failed: {error}"))?;
     let frame = preview_frame(rendered.width, rendered.height, flags, profile_id, jpeg)?;
     let estimated_vram_bytes = rendered.width as usize * rendered.height as usize * 8;
-    let completion = scheduler
-        .scheduler
-        .lock()
-        .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
-        .complete_tile(&frame_tile, frame.clone(), estimated_vram_bytes);
-    if completion == Completion::Stale {
-        return Err("native preview was superseded by a newer render request".into());
+    if !high_resolution {
+        let completion = scheduler
+            .scheduler
+            .lock()
+            .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
+            .complete_tile(&frame_tile, frame.clone(), estimated_vram_bytes);
+        if completion == Completion::Stale {
+            return Err("native preview was superseded by a newer render request".into());
+        }
     }
     Ok(Response::new(frame))
 }
@@ -2755,17 +2879,23 @@ async fn native_export_batch(
             let mut settings = item.edit_settings.validated()?;
             attach_portrait_masks(&mut settings, &portrait_runtime)?;
             attach_generated_masks(&mut settings, &ai_mask_runtime)?;
-            let decoded = decode_source(&item.source_path).map_err(|error| {
-                format!("SourceMissing: {}: {error}", item.source_path.display())
-            })?;
-            attach_ai_denoise(
-                &decoded,
-                &item.source_path,
-                &mut settings,
-                requested_provider,
-                &format!("export-{}-{}", item.asset_id, item.sequence),
-                &ai_denoise_runtime,
-            )?;
+            // The production FullResolutionRenderer owns the one normal source decode. The M26
+            // adapter previously decoded every item here as well even when AI Denoise was off,
+            // doubling RAW/raster open work and peak buffer churn. Only model inference needs a
+            // prepared decoded image before the shared export graph.
+            if settings.ai_denoise.enabled {
+                let decoded = decode_source(&item.source_path).map_err(|error| {
+                    format!("SourceMissing: {}: {error}", item.source_path.display())
+                })?;
+                attach_ai_denoise(
+                    &decoded,
+                    &item.source_path,
+                    &mut settings,
+                    requested_provider,
+                    &format!("export-{}-{}", item.asset_id, item.sequence),
+                    &ai_denoise_runtime,
+                )?;
+            }
             Ok(settings)
         })();
         let settings = match prepared {
@@ -3079,6 +3209,7 @@ pub fn run() {
             engine_status,
             engine_capabilities,
             ai_denoise_status,
+            ai_availability_status,
             gpu_preview_status,
             advise_image,
             advise_native_image,
@@ -3245,6 +3376,14 @@ mod tests {
             preview_requested_edge(1, PreviewInteractionPhase::Interactive),
             256
         );
+        assert!(!wants_high_resolution(
+            PreviewResolutionMode::HighResolution,
+            PreviewInteractionPhase::Interactive
+        ));
+        assert!(wants_high_resolution(
+            PreviewResolutionMode::HighResolution,
+            PreviewInteractionPhase::Final
+        ));
     }
 
     #[test]

@@ -21,9 +21,11 @@ import {
   nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
+  queryNativeAiAvailability, type NativeAiAvailability,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
   openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
+  nativePreviewViewportContract,
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeLibraryQuery, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
@@ -553,8 +555,9 @@ function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 'final', maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, onDisplayScale, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
+  zoomScale?: number
   interactionPhase?: 'interactive' | 'final'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
   healActive?: boolean; onHealingStroke?: (points: Array<{ x: number; y: number }>) => void
@@ -565,6 +568,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
   onHistogram: (values: number[]) => void
   onStatus: (status: string) => void
   onDimensions: (dimensions: string) => void
+  onDisplayScale?: (scale: number) => void
   metric?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -597,10 +601,12 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
             { ...defaultLayer(), id: '__mask-preview-dim__', name: 'Mask preview outside', opacity: .72, mask: { operation: 'invert' as const, children: [structuredClone(maskPreview)] }, adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: -1.35 } } },
             { ...defaultLayer(), id: '__mask-preview-inside__', name: 'Mask preview inside', opacity: .38, mask: structuredClone(maskPreview), adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: .55 } } },
           ] : photo.layers
+          const viewport = nativePreviewViewportContract(zoom, zoomScale, photo.libraryAsset?.metadata.width ?? 0, photo.libraryAsset?.metadata.height ?? 0)
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current)
+            before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
+            viewport.resolutionMode)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -642,6 +648,8 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
           if (!canvasRef.current) return
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
             width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight })
+          const sourceWidth = photo.libraryAsset?.metadata.width ?? renderedWidth
+          if (sourceWidth > 0) onDisplayScale?.(canvasRef.current.clientWidth / sourceWidth)
         })
         if (metric) {
           onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
@@ -660,7 +668,9 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src, maskPreview, interactionPhase])
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src,
+    photo.libraryAsset?.metadata.width, photo.libraryAsset?.metadata.height,
+    maskPreview, interactionPhase, zoom, zoomScale, onDisplayScale])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -921,6 +931,7 @@ export function App() {
   const [before, setBefore] = useState(false)
   const [zoom, setZoom] = useState<'fit' | '100'>('fit')
   const [zoomScale, setZoomScale] = useState(1)
+  const [displayScale, setDisplayScale] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const panStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const [histogram, setHistogram] = useState(() => Array.from({ length: 48 }, () => 0))
@@ -948,6 +959,7 @@ export function App() {
   const [advisorPreview, setAdvisorPreview] = useState<EditSnapshot | null>(null)
   const [aiMaskResult, setAiMaskResult] = useState<NativeAiMaskResult | null>(null)
   const [aiMaskRequestId, setAiMaskRequestId] = useState<string | null>(null)
+  const [aiAvailability, setAiAvailability] = useState<NativeAiAvailability | null>(null)
   const [maskOverlayVisible, setMaskOverlayVisible] = useState(false)
   const [lookAmount, setLookAmount] = usePersistedValue('starroom-look-amount', 100)
   const [referencePath, setReferencePath] = useState<string | null>(null)
@@ -981,6 +993,18 @@ export function App() {
   const [previewInteraction, setPreviewInteraction] = useState<'interactive' | 'final'>('final')
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    void queryNativeAiAvailability()
+      .then(setAiAvailability)
+      .catch(() => setAiAvailability({
+        faceSkin: { state: 'error', detail: 'Availability check failed' },
+        subjectBackground: { state: 'error', detail: 'Availability check failed' },
+        sky: { state: 'error', detail: 'Availability check failed' },
+        denoise: { state: 'error', detail: 'Availability check failed' },
+      }))
+  }, [])
 
   const restoreSession = useCallback((state: NativeSessionState) => {
     const workspaces: WorkspaceView[] = ['library', 'edit', 'compare']
@@ -2175,6 +2199,7 @@ export function App() {
             <button className="remove-selected" disabled={photos.length <= 1} onClick={() => removePhoto(selected.id)} title="Remove from Starroom; does not delete source"><Trash2 size={12} /> Remove</button>
             <button className={zoom === 'fit' && zoomScale === 1 ? 'active' : ''} onClick={() => { setZoom('fit'); setZoomScale(1); setPan({ x: 0, y: 0 }) }}>Fit</button>
             <button className={zoom === '100' ? 'active' : ''} onClick={() => { setZoom('100'); setZoomScale(1); setPan({ x: 0, y: 0 }) }}>100%</button>
+            <span className="zoom-percentage" aria-live="polite">{Math.round(displayScale * zoomScale * 100)}%</span>
           </div></div>
           {view === 'compare' ? <div className="compare-stage">
             <div className="compare-pane"><PreviewCanvas photo={snapshotComparePhoto ?? selected} before={!snapshotComparePhoto} zoom={zoom} metric={false} onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} /><span>{comparedSnapshot?.name ?? 'Original'}</span></div>
@@ -2197,14 +2222,14 @@ export function App() {
             }}
             onPointerUp={(event) => { panStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
-              <PreviewCanvas photo={selected} before={before} zoom={zoom} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
+              <PreviewCanvas photo={selected} before={before} zoom={zoom} zoomScale={zoomScale} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
                 brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}
                 maskPreview={!before && maskOverlayVisible && activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'generated' ? activeLayer.mask : null}
                 onWhiteBalancePick={(sample) => updateWhiteBalance('neutralPicker', sample)}
                 onColorSample={tool === 'color' && mixerPicking ? pickMixerBand : undefined}
-                onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} />
+                onHistogram={setHistogram} onStatus={setRenderStatus} onDimensions={setDimensions} onDisplayScale={setDisplayScale} />
               {tool === 'geometry' && !before && <div className="geometry-overlay" aria-label="Crop and geometry guides"
                 style={{ left: `${selected.adjustments.cropLeft}%`, top: `${selected.adjustments.cropTop}%`,
                   width: `${selected.adjustments.cropRight - selected.adjustments.cropLeft}%`,
@@ -2221,7 +2246,7 @@ export function App() {
               <span className="preview-badge">{selected.renderBackend === 'native' ? 'Native CPU' : 'Browser fallback'} · {before ? 'Original' : hasPhotoEdits(selected) ? `${countPhotoEdits(selected)} edits` : 'Original'}</span>
             </div>
           </div>}
-          <div className="canvas-footer"><span>{zoomScale !== 1 ? `${Math.round(zoomScale * 100)}%` : zoom === 'fit' ? 'Fit' : '100%'}</span><span className="status-dot" /><span>{renderStatus}</span><span>· {dimensions}</span>
+          <div className="canvas-footer"><span>{zoom === 'fit' && zoomScale === 1 ? 'Fit · ' : ''}{Math.round(displayScale * zoomScale * 100)}%</span><span className="status-dot" /><span>{renderStatus}</span><span>· {dimensions}</span>
             <span className="zoom-help"><Move size={12} /> Wheel to zoom · drag to pan</span>
             <button aria-label="Toggle filmstrip" onClick={() => setFilmstripOpen(!filmstripOpen)}>{filmstripOpen ? <PanelBottomClose size={16} /> : <PanelBottomOpen size={16} />}</button></div>
           <div className="filmstrip" aria-label="Filmstrip">
@@ -2244,7 +2269,8 @@ export function App() {
           selectedCount={selectedLibraryIds.length} onWorkflow={(values) => void updateLibraryWorkflow(values)} onAddKeyword={(keyword) => void addLibraryKeyword(keyword)} onRemoveKeyword={(keyword) => void removeLibraryKeyword(keyword)} />}
         <div className="histogram-wrap"><Histogram values={histogram} /><div><span>LIVE</span><span>{dimensions}</span><span>CPU</span></div></div>
         {(tool === 'masks' || tool === 'heal') && <section className="portrait-panel" aria-label="Portrait masks">
-          <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native'}>Detect faces</button></div>
+          <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native' || aiAvailability?.faceSkin.state !== 'ready'}>Detect faces</button></div>
+          <div className={`ai-availability state-${aiAvailability?.faceSkin.state ?? 'checking'}`}><strong>Face / Skin · {aiAvailability?.faceSkin.state === 'ready' ? 'Ready' : aiAvailability?.faceSkin.state === 'modelNotInstalled' ? 'Model not installed' : aiAvailability?.faceSkin.state ?? 'Checking'}</strong><small>{aiAvailability?.faceSkin.detail ?? 'Checking local model files…'}</small></div>
           {selected.renderBackend !== 'native' && <small>Native image required. Browser fallback is intentionally unavailable.</small>}
           {portraitDetection && <div className={`portrait-status status-${portraitDetection.status}`}>
             <strong>{portraitDetection.status === 'ready' ? `${portraitDetection.faces.length} face(s)` : portraitDetection.status}</strong>
@@ -2264,7 +2290,7 @@ export function App() {
             <div className="layer-stack-head"><strong>AI Mask</strong>{aiMaskRequestId && <button onClick={cancelAiMask}>Cancel</button>}</div>
             <small>Local ONNX only · editable M15 MaskTree leaf · no pixels cross IPC</small>
             <div className="portrait-regions">
-              {(['subject', 'background', 'sky'] as const).map((semantic) => <button key={semantic} disabled={selected.renderBackend !== 'native' || aiMaskRequestId !== null} onClick={() => generateAiMask(semantic)}>{semantic}</button>)}
+              {(['subject', 'background', 'sky'] as const).map((semantic) => { const availability = semantic === 'sky' ? aiAvailability?.sky : aiAvailability?.subjectBackground; return <button key={semantic} title={availability?.detail} disabled={selected.renderBackend !== 'native' || aiMaskRequestId !== null || availability?.state !== 'ready'} onClick={() => generateAiMask(semantic)}>{semantic}</button> })}
               <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('face')}>person</button>
               <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('skin')}>skin</button>
               <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('hair')}>hair</button>
@@ -2316,6 +2342,7 @@ export function App() {
               {advisorResult.suggestions.map((suggestion) => <div key={suggestion.id} className="portrait-face"><strong>{suggestion.what}</strong><small>{suggestion.why} · {suggestion.confidence}</small><span>{suggestion.control} {suggestion.amount > 0 ? '+' : ''}{suggestion.amount.toFixed(suggestion.control === 'exposure' ? 2 : 0)}</span><button onClick={() => previewAdvisorSuggestion(suggestion)}>Preview</button><button onClick={() => { applyAdvisorSuggestions([suggestion]); setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current) }}>Apply</button><button onClick={() => setAdvisorResult((current) => current ? { ...current, suggestions: current.suggestions.filter((item) => item.id !== suggestion.id) } : current)}>Ignore</button></div>)}</div>}
           </div>
         </section>}
+        {tool === 'detail' && <section className={`ai-availability detail-availability state-${aiAvailability?.denoise.state ?? 'checking'}`} aria-label="AI Denoise availability"><strong>AI Denoise · {aiAvailability?.denoise.state === 'ready' ? 'Ready' : aiAvailability?.denoise.state === 'modelNotInstalled' ? 'Model not installed' : aiAvailability?.denoise.state ?? 'Checking'}</strong><small>{aiAvailability?.denoise.detail ?? 'Checking local model file…'}</small></section>}
         {tool === 'masks' && <section className="layer-stack" aria-label="Adjustment layers">
           <div className="layer-stack-head"><strong>Layers</strong><button onClick={addLayer}>+ Add</button></div>
           {selected.layers.length === 0 ? <small>No local adjustment layers</small> : selected.layers.map((layer, index) => <div className={selectedLayerId === layer.id ? 'layer-row selected' : 'layer-row'} key={layer.id} onClick={() => setSelectedLayerId(layer.id)}>
