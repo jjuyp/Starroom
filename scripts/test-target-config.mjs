@@ -7,7 +7,7 @@ export const goldenTags = [
 export const targets = {
   library: {
     rust: [['test', '--locked', '-p', 'starroom-library']],
-    web: ['src/nativeRender.test.ts'],
+    web: ['src/nativeRender.test.ts', 'src/librarySelection.test.ts', 'src/progressiveThumbnails.test.ts'],
     golden: [],
   },
   history: {

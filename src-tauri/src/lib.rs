@@ -64,8 +64,8 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use tauri::State;
 use tauri::ipc::Response;
+use tauri::{Manager, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -217,6 +217,26 @@ struct LibraryWorkflowRequest {
 }
 
 #[tauri::command]
+async fn library_remove_assets(
+    runtime: State<'_, NativeLibraryRuntime>,
+    asset_ids: Vec<i64>,
+) -> Result<usize, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?
+            .as_mut()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+            .remove_assets(&asset_ids)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("LibraryRemoveFailed: {error}"))?
+}
+
+#[tauri::command]
 fn library_set_workflow(
     runtime: State<'_, NativeLibraryRuntime>,
     request: LibraryWorkflowRequest,
@@ -352,6 +372,7 @@ fn library_collection_assets(
 
 #[tauri::command]
 async fn library_thumbnail(
+    app: tauri::AppHandle,
     runtime: State<'_, NativeLibraryRuntime>,
     asset_id: i64,
     size: ThumbnailSize,
@@ -367,11 +388,21 @@ async fn library_thumbnail(
             .library
             .lock()
             .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
-        guard
+        let asset = guard
             .as_ref()
             .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
-            .generate_thumbnail(asset_id, root, size)
-            .map_err(|error| error.to_string())
+            .asset(asset_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("MissingSource: {asset_id}"))?;
+        drop(guard);
+        let path = Library::generate_asset_thumbnail(&asset, root, size)
+            .map_err(|error| error.to_string())?;
+        // Grant only the generated cache file, never the source directory or a wildcard.
+        // convertFileSrc does not grant WebView access by itself.
+        app.asset_protocol_scope()
+            .allow_file(&path)
+            .map_err(|error| format!("ThumbnailFailed: cache access denied: {error}"))?;
+        Ok(path)
     })
     .await
     .map_err(|error| format!("ThumbnailFailed: worker failed: {error}"))?
@@ -2917,6 +2948,7 @@ pub fn run() {
             library_set_workflow,
             library_add_keywords,
             library_remove_keywords,
+            library_remove_assets,
             library_collections,
             library_collection_create,
             library_collection_add_assets,

@@ -496,6 +496,9 @@ export async function updateNativeLibraryWorkflow(assetIds: number[], values: { 
 export async function addNativeLibraryKeywords(assetIds: number[], names: string[]) {
   return invoke<void>('library_add_keywords', { request: { assetIds, names } })
 }
+export async function removeNativeLibraryAssets(assetIds: number[]) {
+  return invoke<number>('library_remove_assets', { assetIds })
+}
 export async function removeNativeLibraryKeywords(assetIds: number[], names: string[]) { return invoke<void>('library_remove_keywords', { request: { assetIds, names } }) }
 export async function nativeLibraryCollections() { return invoke<NativeLibraryCollection[]>('library_collections') }
 export async function createNativeLibraryCollection(name: string, kind: 'normal' | 'smart', rule: { all: NativeSmartPredicate[] } | null = null) { return invoke<number>('library_collection_create', { request: { name, kind, rule } }) }

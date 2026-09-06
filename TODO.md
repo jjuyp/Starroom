@@ -1,5 +1,13 @@
 # Complete Internal Build Plan
 
+## RC2 field validation (2026-09-06, in progress)
+
+- [ ] Complete and verify the Library/render/high-resolution/AI/UI/export fixes and immutable
+  same-SHA release gates in `docs/38_RC2_FIELD_VALIDATION.md`.
+- [ ] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
+  Show the actual model-installation state, never claim clean-install Face/Skin readiness.
+- [ ] Publish rc.2 only after all applicable release gates pass; keep PR #2 Open/Draft.
+
 ## M30 Starroom v1.0 Release Candidate (feature freeze, in progress 2026-08-26)
 
 - [x] Move the engineering task to M30 feature freeze and pin official Tauri CLI 2.11.4.

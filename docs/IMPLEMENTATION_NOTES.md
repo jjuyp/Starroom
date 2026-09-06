@@ -260,6 +260,20 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - Edit history snapshots now include adjustments, freeform curve points and mask geometry. Source files remain untouched.
 - Playwright validated numeric input, 9,000 K, curve add/drag/right-click-delete, on-photo mask placement/resize/rotation, 33.5-degree rotation, 47%/212% wheel zoom and drag pan. The final browser console check reported zero errors and zero warnings.
 - Remaining production gaps are unchanged: no RAW decoding, ICC display/output management, wgpu path, multi-mask stack/brush masks, lens-profile correction, crop or perspective correction.
+# RC2 Field Validation (2026-09-06, in progress)
+
+- Diagnosed missing Tauri asset-protocol permission for generated Library thumbnails. Grant
+  the exact cache file only; do not expose original directories or broaden wildcard scope.
+- Removed the frontend all-thumbnail display barrier. Thumbnail work is bounded/progressive
+  and native raster generation runs outside the Library mutex. Concurrent cache writes use
+  unique temporary paths and atomic replacement; a corrupt cache stays in place until replaced.
+- Added catalog-only transactional bulk removal and retired-ID allocation protection so a newly
+  imported photo cannot reuse a removed photo's history sidecar identity. Original images are untouched.
+- Added stable-ID range selection, bulk removal UI, and clear-rating keyboard command with regressions.
+- The user chose to retain BiSeNet local-only and not publicly bundle Face/Skin in rc.2.
+  This exception is a release limitation, not a claim of clean-install offline readiness.
+- Actual acceptance and remaining blockers are tracked in `docs/38_RC2_FIELD_VALIDATION.md`.
+
 # M27 Professional Export Completion (2026-08-25)
 
 - Added an `f32` encoded-output surface to the existing Native shared graph. LittleCMS still owns

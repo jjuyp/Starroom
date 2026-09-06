@@ -14,6 +14,7 @@ describe('production command architecture', () => {
   })
 
   it('maps Windows and macOS shortcuts to the same command ids', () => {
+    for (let rating = 0; rating <= 5; rating++) expect(resolveCommandShortcut(key(String(rating)))).toBe(`rate${rating}`)
     expect(resolveCommandShortcut(key('z', { ctrlKey: true }))).toBe('undo')
     expect(resolveCommandShortcut(key('z', { metaKey: true, shiftKey: true }))).toBe('redo')
     expect(resolveCommandShortcut(key('c', { ctrlKey: true, shiftKey: true }))).toBe('copySettings')

@@ -1,5 +1,5 @@
 export type CommandId = 'undo' | 'redo' | 'copySettings' | 'pasteSettings' | 'before' | 'mask' | 'healing' | 'crop'
-  | 'rate1' | 'rate2' | 'rate3' | 'rate4' | 'rate5' | 'pick' | 'reject' | 'fit' | 'oneToOne'
+  | 'rate0' | 'rate1' | 'rate2' | 'rate3' | 'rate4' | 'rate5' | 'pick' | 'reject' | 'fit' | 'oneToOne'
   | 'filmstrip' | 'panels' | 'export'
 
 export interface StarroomCommand { id: CommandId; label: string; shortcut: string; keywords: string }
@@ -13,7 +13,7 @@ export const commandCatalog: StarroomCommand[] = [
   { id: 'mask', label: 'Open Masks', shortcut: 'M', keywords: 'local adjustment' },
   { id: 'healing', label: 'Open Healing', shortcut: 'H', keywords: 'retouch remove' },
   { id: 'crop', label: 'Open Crop / Geometry', shortcut: 'C', keywords: 'rotate transform' },
-  ...([1, 2, 3, 4, 5] as const).map((rating) => ({ id: `rate${rating}` as CommandId, label: `Rate ${rating} star${rating === 1 ? '' : 's'}`, shortcut: String(rating), keywords: 'rating library' })),
+  ...([0, 1, 2, 3, 4, 5] as const).map((rating) => ({ id: `rate${rating}` as CommandId, label: rating === 0 ? 'Clear rating' : `Rate ${rating} star${rating === 1 ? '' : 's'}`, shortcut: String(rating), keywords: 'rating library' })),
   { id: 'pick', label: 'Flag as Pick', shortcut: 'P', keywords: 'library flag' },
   { id: 'reject', label: 'Flag as Reject', shortcut: 'X', keywords: 'library flag' },
   { id: 'fit', label: 'Zoom to Fit', shortcut: 'F', keywords: 'canvas view' },
@@ -41,7 +41,7 @@ export function resolveCommandShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlK
   if (key === 'm') return 'mask'
   if (key === 'h') return 'healing'
   if (key === 'c') return 'crop'
-  if (/^[1-5]$/.test(key)) return `rate${key}` as CommandId
+  if (/^[0-5]$/.test(key)) return `rate${key}` as CommandId
   if (key === 'p') return 'pick'
   if (key === 'x') return 'reject'
   if (key === 'f') return event.shiftKey ? 'filmstrip' : 'fit'

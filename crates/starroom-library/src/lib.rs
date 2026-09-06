@@ -13,7 +13,7 @@ use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -21,6 +21,7 @@ use thiserror::Error;
 pub const SCHEMA_VERSION: i64 = 1;
 pub const FINGERPRINT_VERSION: &str = "StarroomAssetFingerprintV1";
 const SAMPLE_BYTES: u64 = 64 * 1024;
+static THUMBNAIL_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum LibraryError {
@@ -432,6 +433,27 @@ impl Library {
             transaction.commit().map_err(sql_error)?;
         }
         Ok(result)
+    }
+
+    /// Remove catalog membership only. Source files and sidecars are never touched.
+    /// Reserve retired IDs so a later import cannot inherit an orphaned history file.
+    pub fn remove_assets(&mut self, asset_ids: &[i64]) -> Result<usize, LibraryError> {
+        let transaction = self.connection.transaction().map_err(sql_error)?;
+        transaction.execute(
+            "INSERT INTO library_settings(key,value) VALUES('retired_asset_high_water', CAST((SELECT COALESCE(MAX(id),0) FROM assets) AS TEXT)) ON CONFLICT(key) DO UPDATE SET value=CAST(MAX(CAST(value AS INTEGER),CAST(excluded.value AS INTEGER)) AS TEXT)",
+            [],
+        ).map_err(sql_error)?;
+        let mut removed = 0;
+        {
+            let mut statement = transaction
+                .prepare("DELETE FROM assets WHERE id=?")
+                .map_err(sql_error)?;
+            for id in asset_ids.iter().copied().collect::<BTreeSet<_>>() {
+                removed += statement.execute([id]).map_err(sql_error)?;
+            }
+        }
+        transaction.commit().map_err(sql_error)?;
+        Ok(removed)
     }
 
     pub fn recursive_paths(root: impl AsRef<Path>) -> Result<Vec<PathBuf>, LibraryError> {
@@ -852,10 +874,19 @@ impl Library {
         let asset = self
             .asset(asset_id)?
             .ok_or(LibraryError::MissingSource(asset_id))?;
+        Self::generate_asset_thumbnail(&asset, cache_root, size)
+    }
+
+    /// Cache work operates on an immutable metadata snapshot, outside the SQLite mutex.
+    pub fn generate_asset_thumbnail(
+        asset: &AssetRecord,
+        cache_root: impl AsRef<Path>,
+        size: ThumbnailSize,
+    ) -> Result<PathBuf, LibraryError> {
         if asset.missing || !asset.source_path.is_file() {
-            return Err(LibraryError::MissingSource(asset_id));
+            return Err(LibraryError::MissingSource(asset.id));
         }
-        let identity = Self::thumbnail_identity(&asset, size);
+        let identity = Self::thumbnail_identity(asset, size);
         let directory = cache_root.as_ref().join(size.pixels().to_string());
         fs::create_dir_all(&directory)
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
@@ -864,11 +895,6 @@ impl Library {
             if image::open(&destination).is_ok() {
                 return Ok(destination);
             }
-            fs::remove_file(&destination).map_err(|error| {
-                LibraryError::ThumbnailFailed(format!(
-                    "damaged thumbnail cache could not be replaced: {error}"
-                ))
-            })?;
         }
         let decoded = decode_source_preview(&asset.source_path, size.pixels())
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
@@ -876,7 +902,11 @@ impl Library {
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
         let jpeg = encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 88, None)
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
-        let temporary = destination.with_extension(format!("{}.tmp", std::process::id()));
+        let temporary = destination.with_extension(format!(
+            "{}-{}.tmp",
+            std::process::id(),
+            THUMBNAIL_WRITE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::write(&temporary, jpeg)
             .map_err(|error| LibraryError::ThumbnailFailed(error.to_string()))?;
         fs::rename(&temporary, &destination).map_err(|error| {
@@ -927,7 +957,11 @@ fn import_one(
     let modified = file_modified(path)?;
     let timestamp = now();
     let identity = format!("v1:{}:{}", fingerprint.byte_length, fingerprint.digest);
-    transaction.execute("INSERT INTO assets(source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'unflagged','none',0,?,?)", params![path.to_string_lossy(),normalized,identity,FINGERPRINT_VERSION,fingerprint.digest,fingerprint.byte_length,modified,metadata.file_type,metadata.width,metadata.height,metadata.orientation,metadata.capture_time,timestamp,metadata.camera_make,metadata.camera_model,metadata.lens_make,metadata.lens_model,metadata.focal_length,metadata.aperture,metadata.shutter_speed,metadata.iso,timestamp,timestamp]).map_err(sql_error)?;
+    let id: i64 = transaction.query_row(
+        "SELECT MAX(COALESCE((SELECT MAX(id) FROM assets),0),COALESCE((SELECT CAST(value AS INTEGER) FROM library_settings WHERE key='retired_asset_high_water'),0))+1",
+        [], |row| row.get(0),
+    ).map_err(sql_error)?;
+    transaction.execute("INSERT INTO assets(id,source_path,source_path_normalized,source_identity,fingerprint_version,content_fingerprint,file_size,modified_time,file_type,width,height,orientation,capture_time,import_time,camera_make,camera_model,lens_make,lens_model,focal_length,aperture,shutter_speed,iso,rating,flag,color_label,missing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'unflagged','none',0,?,?)", params![id,path.to_string_lossy(),normalized,identity,FINGERPRINT_VERSION,fingerprint.digest,fingerprint.byte_length,modified,metadata.file_type,metadata.width,metadata.height,metadata.orientation,metadata.capture_time,timestamp,metadata.camera_make,metadata.camera_model,metadata.lens_make,metadata.lens_model,metadata.focal_length,metadata.aperture,metadata.shutter_speed,metadata.iso,timestamp,timestamp]).map_err(sql_error)?;
     Ok(ImportDisposition::Imported(transaction.last_insert_rowid()))
 }
 
@@ -1429,6 +1463,71 @@ mod tests {
         assert_eq!(library.collection_assets(smart, 10, 0).unwrap().len(), 1);
         library.set_workflow(&[id], Some(2), None, None).unwrap();
         assert!(library.collection_assets(smart, 10, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn bulk_remove_persists_without_touching_sources_or_reusing_history_ids() {
+        let root = temp("rc2-remove");
+        let paths: Vec<_> = (0..50)
+            .map(|index| {
+                let path = root.join(format!("photo-{index}.png"));
+                png(&path, [index, 20, 30]);
+                path
+            })
+            .collect();
+        let originals: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+        let database = root.join("db.sqlite");
+        let mut library = Library::open(&database).unwrap();
+        let ids = library
+            .import_paths(&paths, &AtomicBool::new(false))
+            .unwrap()
+            .imported;
+        assert_eq!(ids.len(), 50);
+        let collection = library
+            .create_collection("kept collection", CollectionKind::Normal, None)
+            .unwrap();
+        library.add_collection_assets(collection, &ids).unwrap();
+        library.add_keywords(&ids, &["retired".into()]).unwrap();
+        assert_eq!(library.remove_assets(&ids[..20]).unwrap(), 20);
+        assert_eq!(library.remove_assets(&ids[..20]).unwrap(), 0);
+        assert_eq!(library.remove_assets(&ids[20..]).unwrap(), 30);
+        drop(library);
+        let mut library = Library::open(&database).unwrap();
+        assert!(library.query(&LibraryQuery::default()).unwrap().is_empty());
+        assert!(
+            library
+                .collection_assets(collection, 200, 0)
+                .unwrap()
+                .is_empty()
+        );
+        for (path, original) in paths.iter().zip(originals) {
+            assert_eq!(fs::read(path).unwrap(), original);
+        }
+        let fresh = library
+            .import_paths(&paths[..1], &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        assert!(
+            fresh > *ids.last().unwrap(),
+            "an orphaned history must not attach to a new asset"
+        );
+    }
+
+    #[test]
+    fn failed_bulk_remove_rolls_back_every_membership() {
+        let mut library = Library::open_in_memory().unwrap();
+        let root = temp("rc2-remove-rollback");
+        let a = root.join("a.png");
+        let b = root.join("b.png");
+        png(&a, [1, 2, 3]);
+        png(&b, [4, 5, 6]);
+        let ids = library
+            .import_paths(&[a, b], &AtomicBool::new(false))
+            .unwrap()
+            .imported;
+        library.connection.execute_batch(&format!("CREATE TRIGGER reject_delete BEFORE DELETE ON assets WHEN OLD.id={} BEGIN SELECT RAISE(ABORT,'forced transaction failure'); END;", ids[1])).unwrap();
+        assert!(library.remove_assets(&ids).is_err());
+        assert_eq!(library.query(&LibraryQuery::default()).unwrap().len(), 2);
     }
 
     #[test]

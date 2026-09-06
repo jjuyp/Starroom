@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
+import { selectLibraryRange } from './librarySelection'
+import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -21,7 +23,7 @@ import {
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
-  openNativeLibrary, queryNativeLibrary, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
+  openNativeLibrary, queryNativeLibrary, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
@@ -960,6 +962,7 @@ export function App() {
   const [libraryBusy, setLibraryBusy] = useState(false)
   const [libraryPage, setLibraryPage] = useState(0)
   const libraryAnchor = useRef<number | null>(null)
+  const thumbnailEpoch = useRef(0)
   const [nativeHistory, setNativeHistory] = useState<NativeHistoryResult | null>(null)
   const [snapshotName, setSnapshotName] = useState('Version 1')
   const [snapshotCompareId, setSnapshotCompareId] = useState<string | null>(null)
@@ -989,7 +992,14 @@ export function App() {
     pendingSession.current = state
   }, [setFilmstripOpen, setLeftOpen])
 
-  useEffect(() => () => objectUrls.current.forEach((url) => URL.revokeObjectURL(url)), [])
+  useEffect(() => () => { thumbnailEpoch.current++; objectUrls.current.forEach((url) => URL.revokeObjectURL(url)) }, [])
+  const loadLibraryThumbnails = useCallback((assets: NativeLibraryAsset[]) => {
+    const epoch = ++thumbnailEpoch.current
+    void loadProgressiveThumbnails(assets.map((asset) => asset.id), nativeLibraryThumbnail,
+      (id, src) => setPhotos((current) => current.map((photo) => photo.libraryAsset?.id === id ? { ...photo, src } : photo)),
+      (_id, error) => setNotice(formatUserError(error, 'Thumbnail could not be loaded')),
+      () => thumbnailEpoch.current === epoch)
+  }, [])
   useEffect(() => {
     if (!nativeRuntimeAvailable()) return
     void openNativeSession().then((result) => {
@@ -1016,23 +1026,21 @@ export function App() {
         await openNativeLibrary()
         const assets = await queryNativeLibrary({ limit: 200 })
         const collections = await nativeLibraryCollections()
-        const thumbnails = await Promise.all(assets.map(async (asset) => {
-          try { return await nativeLibraryThumbnail(asset.id) } catch { return '' }
-        }))
         if (!active) return
         setLibraryAssets(assets)
         setLibraryCollections(collections)
-        const libraryPhotos = assets.map((asset, index) => libraryPhoto(asset, thumbnails[index]))
+        const libraryPhotos = assets.map((asset) => libraryPhoto(asset, ''))
         if (libraryPhotos.length) {
           setPhotos((current) => [...libraryPhotos, ...current.filter((photo) => !photo.libraryAsset)])
           setSelectedLibraryIds([assets[0].id])
+          loadLibraryThumbnails(assets)
         }
       } catch (error) {
         if (active) setNotice(formatUserError(error, 'Library initialization failed'))
       }
     })()
     return () => { active = false }
-  }, [])
+  }, [loadLibraryThumbnails])
   useEffect(() => {
     if (!notice) return
     const timeout = window.setTimeout(() => setNotice(''), 3500)
@@ -1234,15 +1242,15 @@ export function App() {
     try {
       const assets = await queryNativeLibrary({ text: queryText.trim() || null, limit: 200, offset: page * 200, sort: 'importTime', direction: 'descending' })
       const existing = new Map(photos.filter((photo) => photo.libraryAsset).map((photo) => [photo.libraryAsset!.id, photo]))
-      const rows = await Promise.all(assets.map(async (asset) => {
+      const rows = assets.map((asset) => {
         const current = existing.get(asset.id)
         if (current) return { ...current, name: asset.sourcePath.split(/[\\/]/).pop() ?? asset.sourcePath, sourcePath: asset.sourcePath, rating: asset.rating, libraryAsset: asset }
-        const thumbnail = await nativeLibraryThumbnail(asset.id).catch(() => '')
-        return libraryPhoto(asset, thumbnail)
-      }))
+        return libraryPhoto(asset, '')
+      })
       setLibraryAssets(assets)
       setLibraryPage(page)
       setPhotos((current) => [...rows, ...current.filter((photo) => !photo.libraryAsset)])
+      loadLibraryThumbnails(assets.filter((asset) => !existing.get(asset.id)?.src))
       setSelectedLibraryIds((current) => current.filter((id) => assets.some((asset) => asset.id === id)))
     } finally { setLibraryBusy(false) }
   }
@@ -1259,15 +1267,26 @@ export function App() {
     finally { setLibraryBusy(false) }
   }
 
-  function selectLibraryAsset(event: MouseEvent, index: number, asset: NativeLibraryAsset) {
-    if (event.shiftKey && libraryAnchor.current !== null) {
-      const start = Math.min(libraryAnchor.current, index); const end = Math.max(libraryAnchor.current, index)
-      setSelectedLibraryIds(libraryAssets.slice(start, end + 1).map((value) => value.id))
-    } else if (event.ctrlKey || event.metaKey) {
-      setSelectedLibraryIds((current) => current.includes(asset.id) ? current.filter((id) => id !== asset.id) : [...current, asset.id])
-      libraryAnchor.current = index
-    } else { setSelectedLibraryIds([asset.id]); libraryAnchor.current = index }
+  function selectLibraryAsset(event: MouseEvent, asset: NativeLibraryAsset) {
+    const next = selectLibraryRange({ ids: selectedLibraryIds, anchor: libraryAnchor.current }, libraryAssets.map((value) => value.id), asset.id, event)
+    libraryAnchor.current = next.anchor
+    setSelectedLibraryIds(next.ids)
     setSelectedId(`library-${asset.id}`)
+  }
+
+  async function removeLibraryAssets(ids: number[]) {
+    if (!ids.length || !window.confirm(`Remove ${ids.length} photo(s) from Library? Original files remain on disk.`)) return
+    setLibraryBusy(true)
+    try {
+      const count = await removeNativeLibraryAssets(ids)
+      setSelectedLibraryIds((current) => current.filter((id) => !ids.includes(id)))
+      const remaining = photos.filter((photo) => !photo.libraryAsset || !ids.includes(photo.libraryAsset.id))
+      setPhotos(remaining)
+      setLibraryAssets((current) => current.filter((asset) => !ids.includes(asset.id)))
+      if (!remaining.some((photo) => photo.id === selectedId) && remaining.length) selectPhoto(remaining[0].id)
+      setNotice(`${count} photos removed from Library · original files unchanged`)
+    } catch (error) { setNotice(formatUserError(error, 'Library removal failed')) }
+    finally { setLibraryBusy(false) }
   }
 
   async function updateLibraryWorkflow(values: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) {
@@ -1305,9 +1324,9 @@ export function App() {
 
   async function openLibraryCollection(collection: NativeLibraryCollection) {
     const assets = await nativeLibraryCollectionAssets(collection.id, 200, 0)
-    const thumbnails = await Promise.all(assets.map((asset) => nativeLibraryThumbnail(asset.id).catch(() => '')))
     setLibraryAssets(assets)
-    setPhotos((current) => [...assets.map((asset, index) => libraryPhoto(asset, thumbnails[index])), ...current.filter((photo) => !photo.libraryAsset)])
+    setPhotos((current) => [...assets.map((asset) => libraryPhoto(asset, '')), ...current.filter((photo) => !photo.libraryAsset)])
+    loadLibraryThumbnails(assets)
     setSelectedLibraryIds(assets.length ? [assets[0].id] : [])
     setView('library')
     setNotice(`${collection.name} · ${assets.length} asset${assets.length === 1 ? '' : 's'}`)
@@ -1341,6 +1360,8 @@ export function App() {
   }
 
   function removePhoto(id: string) {
+    const nativeAsset = photos.find((photo) => photo.id === id)?.libraryAsset
+    if (nativeAsset) { void removeLibraryAssets([nativeAsset.id]); return }
     if (photos.length <= 1) {
       setNotice('Keep at least one photo in the workspace')
       return
@@ -1944,7 +1965,7 @@ export function App() {
       }
       default: {
         const rating = Number(id.slice(4))
-        if (!Number.isInteger(rating) || rating < 1 || rating > 5) return
+        if (!Number.isInteger(rating) || rating < 0 || rating > 5) return
         updateSelected((photo) => ({ ...photo, rating }))
         if (selected.libraryAsset) void updateLibraryWorkflow({ rating })
       }
@@ -2029,7 +2050,11 @@ export function App() {
       if (command) {
         event.preventDefault()
         executeCommand(command)
-      } else if (event.key === 'Delete') removePhoto(selectedId)
+      } else if (event.key === 'Delete') {
+        event.preventDefault()
+        if (view === 'library') void removeLibraryAssets(selectedLibraryIds)
+        else removePhoto(selectedId)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -2075,12 +2100,13 @@ export function App() {
             <button disabled={libraryBusy} onClick={() => void refreshLibrary(librarySearch, 0)}>{libraryBusy ? 'Working…' : 'Search'}</button>
             <button disabled={libraryBusy || libraryPage === 0} onClick={() => void refreshLibrary(librarySearch, libraryPage - 1)}>Previous</button><button disabled={libraryBusy || libraryAssets.length < 200} onClick={() => void refreshLibrary(librarySearch, libraryPage + 1)}>Next</button>
             <button className="import-button compact" disabled={libraryBusy} onClick={() => void importLibraryFolder()}><ImagePlus size={16} /> Import folder</button></div></div>
-        <div className="photo-grid virtual-grid" role="grid" aria-rowcount={libraryAssets.length}>{libraryAssets.map((asset, index) => {
+        <button disabled={libraryBusy || !selectedLibraryIds.length} onClick={() => void removeLibraryAssets(selectedLibraryIds)}>Remove {selectedLibraryIds.length} selected from Library</button>
+        <div className="photo-grid virtual-grid" role="grid" aria-rowcount={libraryAssets.length}>{libraryAssets.map((asset) => {
           const photo = photos.find((value) => value.libraryAsset?.id === asset.id)
           if (!photo) return null
           const selectedAsset = selectedLibraryIds.includes(asset.id)
           return <article key={asset.id} role="gridcell" className={selectedAsset ? 'photo-card selected' : 'photo-card'}>
-            <button className="photo-card-preview" onClick={(event) => selectLibraryAsset(event, index, asset)} onDoubleClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Select ${photo.name}; double-click to edit`}>
+            <button className="photo-card-preview" onClick={(event) => selectLibraryAsset(event, asset)} onDoubleClick={() => { selectPhoto(photo.id); setView('edit'); setBefore(false) }} title={`Select ${photo.name}; double-click to edit`}>
               {photo.src ? <img loading="lazy" src={photo.src} alt={photo.name} /> : <span className="missing-thumbnail">Thumbnail unavailable</span>}
             </button>
             <div><span title={photo.name}>{photo.name}</span><small>{asset.missing ? 'Missing' : `${asset.metadata.fileType.toUpperCase()} · ${asset.rating}★`} · {asset.keywords.join(', ') || 'No keywords'}</small></div>
