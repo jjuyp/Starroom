@@ -568,6 +568,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
   metric?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewSurface = useRef({})
   const [canvasBounds, setCanvasBounds] = useState({ left: 0, top: 0, width: 0, height: 0 })
   const healingStroke = useRef<Array<{ x: number; y: number }> | null>(null)
   const maskBrushStroke = useRef<Array<{ x: number; y: number }> | null>(null)
@@ -599,7 +600,7 @@ function PreviewCanvas({ photo, before, zoom, interactionPhase = 'final', maskAc
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase)
+            before ? [] : previewLayers, 1800, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current)
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,

@@ -27,7 +27,7 @@ The remaining core AI and optional-pack requirements still need production valid
 | Progressive thumbnail display | FIXED, verification pending | Remove Promise.all display barrier; bounded 3-worker queue publishes each result; cache raster work no longer holds SQLite lock. |
 | Removed assets resurrect | FIXED, verification pending | One Native transaction deletes catalog membership, cascades keyword/collection membership, never source files. Retired-ID high-water prevents new imports from inheriting old history sidecars. |
 | Selection / rating / recent imports | OPEN | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift range helper and bulk UI added; filtered Ctrl-A and deterministic import batches still required. Rating 0 command added. |
-| Preview latency / latest-wins | OPEN | Native command is synchronous; source decoding precedes cache lookup. Need cooperative cancellation, upstream reuse, nonblocking delivery and measured response. |
+| Preview latency / latest-wins | FIXED, verification pending | Heavy work now runs on a blocking worker, per-surface latest-wins keeps one pending state, Native cancellation checkpoints reject stale publish, decoded source tiers and the GPU device are reused. Release-mode latency evidence remains required. |
 | True 1:1 viewport tiles | OPEN | Validate production tile transport and source-resolution coordinates, not scaled preview. |
 | AI availability | OPEN with Face/Skin exception | User-approved local-only BiSeNet policy above; remaining availability UI/runtime/packaging gates pending. |
 | Final workspace / snapshots / control layout | OPEN | Real installed workflow and 1280/1920/2560 layout acceptance required. |
@@ -48,3 +48,20 @@ The remaining core AI and optional-pack requirements still need production valid
   passing native result; Windows validation is required. No test/coverage requirement is waived.
 
 No performance improvement percentage has been claimed from these unit tests.
+
+## Preview scheduling batch
+
+- The Tauri command is asynchronous and dispatches CPU/GPU work through `spawn_blocking`; the
+  WebView/event loop is no longer occupied by synchronous Native rendering.
+- Each visible PreviewCanvas owns a latest-wins queue. One request may execute and only the newest
+  pending state is retained. Superseded native work receives a request-scoped cancellation token,
+  and stale output is rejected on both sides of IPC.
+- The shared Rust graph checks cancellation before/among camera/WB, Tone, Curve, Mixer, Grading,
+  Mask blocks, Skin, Healing, Detail, Geometry and output transform. Export executes the identical
+  graph with no cancellation token and retains deterministic parity.
+- A bounded 128 MiB decoded-source cache is keyed by immutable source identity plus preview level;
+  it reuses RAW decode/camera input for slider changes and A -> B -> A without caching creative output.
+  A process-wide GPU renderer is initialized once and reused.
+- Frontend regression proves intermediate state suppression even when native cancellation arrives
+  late, one-active/one-latest behavior, separate Before/After surfaces and recovery after failure.
+  Rust regression proves a cancelled preview cannot leak cancellation into later Preview/Export.

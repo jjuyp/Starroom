@@ -273,6 +273,11 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - The user chose to retain BiSeNet local-only and not publicly bundle Face/Skin in rc.2.
   This exception is a release limitation, not a claim of clean-install offline readiness.
 - Actual acceptance and remaining blockers are tracked in `docs/38_RC2_FIELD_VALIDATION.md`.
+- Replaced synchronous preview IPC with background Native execution, a one-active/one-latest
+  per-surface queue, request-scoped shared-graph checkpoints, a bounded decoded-source cache and
+  reusable GPU device. Stale completion is rejected before it can update the WebView.
+- Added a dedicated Desktop Native targeted CI job because the earlier `src-tauri` path classifier
+  only ran Web tests and could let IPC compilation errors escape a targeted push.
 
 # M27 Professional Export Completion (2026-08-25)
 

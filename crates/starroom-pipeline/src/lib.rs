@@ -2,6 +2,8 @@
 //! This is the executable reference graph for JPEG/PNG/TIFF editing. Future wgpu stages must
 //! match this pipeline within documented tolerances before replacing the CPU reference.
 
+pub mod cancellation;
+use cancellation::checkpoint;
 use serde::{Deserialize, Serialize};
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
@@ -333,6 +335,8 @@ impl Default for RenderSettings {
 
 #[derive(Debug, Error)]
 pub enum PipelineError {
+    #[error("PreviewCancelled: request was superseded")]
+    Cancelled,
     #[error("decoded RGBA buffer length does not match dimensions")]
     InvalidDecodedBuffer,
     #[error("detail image buffer is invalid")]
@@ -1041,6 +1045,7 @@ fn apply_healing_stage(
     let mut image =
         LinearImage::new(width, height, data).map_err(|_| PipelineError::DetailBuffer)?;
     for operation in &settings.healing_operations {
+        checkpoint()?;
         image = apply_operation(&image, operation).map_err(|error| {
             PipelineError::InvalidMask(match error {
                 starroom_heal::HealError::InvalidOperation => "M18 healing operation is invalid",
@@ -1065,6 +1070,7 @@ fn apply_creative_graph(
     // the established CPU reference math until each earns its own parity gate; this avoids a
     // second color-science implementation.
     let pixel_count = pixels.len();
+    checkpoint()?;
     let working_bytes = (pixel_count as u64).saturating_mul(3 * F32_BYTES);
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         pixels
@@ -1109,28 +1115,36 @@ fn apply_creative_graph(
         (prepared, settings.tone)
     };
     let mut prepared = prepared;
+    checkpoint()?;
     profiling::measure(ProfileStage::Tone, working_bytes, || {
         prepared
             .iter_mut()
             .for_each(|rgb| *rgb = apply_tone(*rgb, tone_parameters));
     });
+    checkpoint()?;
     profiling::measure(ProfileStage::Curve, working_bytes, || {
         prepared
             .iter_mut()
             .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
     });
+    checkpoint()?;
     profiling::measure(ProfileStage::ColorMixer, working_bytes, || {
         prepared
             .iter_mut()
             .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
     });
+    checkpoint()?;
     profiling::measure(ProfileStage::ColorGrading, working_bytes, || {
         prepared
             .iter_mut()
             .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
     });
+    checkpoint()?;
     profiling::measure(ProfileStage::Mask, working_bytes, || {
         for (index, rgb) in prepared.iter_mut().enumerate() {
+            if index % 4096 == 0 {
+                checkpoint()?;
+            }
             let x = (index % width) as f32 / width.max(1) as f32;
             let y = (index / width) as f32 / height.max(1) as f32;
             *rgb = apply_layers(
@@ -1151,9 +1165,11 @@ fn apply_creative_graph(
         }
         data.extend_from_slice(&[rgb.r, rgb.g, rgb.b]);
     }
+    checkpoint()?;
     let data = profiling::measure(ProfileStage::Skin, working_bytes, || {
         apply_skin_retouch_stage(data, width, height, settings)
     })?;
+    checkpoint()?;
     profiling::measure(ProfileStage::Healing, working_bytes, || {
         apply_healing_stage(data, width, height, settings)
     })
@@ -1163,6 +1179,7 @@ fn to_working_image(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<(LinearImage, InputProfileSource), PipelineError> {
+    checkpoint()?;
     let expected = decoded.width as usize * decoded.height as usize * 4;
     if decoded.rgba.len() != expected {
         return Err(PipelineError::InvalidDecodedBuffer);
@@ -1290,6 +1307,7 @@ fn apply_precreative_geometry(
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
 ) -> Result<LinearImage, PipelineError> {
+    checkpoint()?;
     let working_bytes = (working.data.len() as u64).saturating_mul(F32_BYTES);
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
@@ -1313,6 +1331,7 @@ fn apply_precreative_geometry(
     } else {
         working
     };
+    checkpoint()?;
     let geometry_parameters = if settings.geometry.upright_mode != UprightMode::Off {
         let analysis = analyze_upright(
             optically_corrected.width,
@@ -1356,6 +1375,7 @@ fn render_prepared_working_graph(
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgbF32, PipelineError> {
+    checkpoint()?;
     // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
     // caches are separate; an enabled request without its native residual is a typed failure.
     let working_bytes = (geometry_image.data.len() as u64).saturating_mul(F32_BYTES);
@@ -1401,6 +1421,7 @@ fn render_prepared_working_graph(
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
+    checkpoint()?;
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
         apply_detail_stage(creative, settings)
     })?;
@@ -1413,6 +1434,7 @@ fn render_prepared_working_graph(
         });
         pixels.push([working_rgb.r, working_rgb.g, working_rgb.b]);
     }
+    checkpoint()?;
     let output_source = profiling::measure(ProfileStage::ColorTransform, working_bytes, || {
         LittleCmsProvider.working_to_output(
             &mut pixels,

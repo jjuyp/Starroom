@@ -5,6 +5,11 @@ export const goldenTags = [
 ]
 
 export const targets = {
+  desktop: {
+    rust: [['clippy', '--locked', '-p', 'starroom-desktop', '--all-targets', '--', '-D', 'warnings'], ['test', '--locked', '-p', 'starroom-desktop']],
+    web: ['src/nativeRender.test.ts', 'src/latestPreviewQueue.test.ts'],
+    golden: [],
+  },
   library: {
     rust: [['test', '--locked', '-p', 'starroom-library']],
     web: ['src/nativeRender.test.ts', 'src/librarySelection.test.ts', 'src/progressiveThumbnails.test.ts'],

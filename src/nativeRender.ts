@@ -1,5 +1,6 @@
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { LatestPreviewQueue } from './latestPreviewQueue'
 import type { Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './imagePipeline'
 
@@ -408,7 +409,8 @@ export async function cancelNativeAiDenoise(requestId: string): Promise<boolean>
 
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
 
-let activeDenoisePreviewRequestId: string | null = null
+const previewQueues = new WeakMap<object, LatestPreviewQueue<ArrayBuffer | Uint8Array>>()
+const defaultPreviewSurface = {}
 
 export async function renderNativePreview(
   sourcePath: string,
@@ -424,20 +426,19 @@ export async function renderNativePreview(
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
   healingOperations: NativeHealingOperation[] = [],
   interactionPhase: NativePreviewInteractionPhase = 'final',
+  surface: object = defaultPreviewSurface,
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
-  const superseded = activeDenoisePreviewRequestId
-  activeDenoisePreviewRequestId = requestId
-  if (superseded) void cancelNativeAiDenoise(superseded)
-  try {
-    const frame = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
+  let queue = previewQueues.get(surface)
+  if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
+  const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
       request: { requestId, sourcePath, maxEdge, interactionPhase, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+    }), () => {
+      void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
+      void cancelNativeAiDenoise(requestId).catch(() => undefined)
     })
-    return parseNativePreviewFrame(frame)
-  } finally {
-    if (activeDenoisePreviewRequestId === requestId) activeDenoisePreviewRequestId = null
-  }
+  return parseNativePreviewFrame(frame)
 }
 
 export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,

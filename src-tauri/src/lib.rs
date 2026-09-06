@@ -58,7 +58,7 @@ use starroom_render::{
 use starroom_session::{SessionOpen, SessionState};
 use std::path::{Path, PathBuf};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -1060,6 +1060,10 @@ fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 
 struct NativePreviewScheduler {
     scheduler: Mutex<RenderScheduler>,
     last_profile: Mutex<Option<RenderProfile>>,
+    cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
+    render_lock: Mutex<()>,
+    decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
+    gpu: Mutex<Option<Result<GpuRenderer, String>>>,
 }
 
 /// Process-local M16 model/session and soft-mask cache. It never crosses the Tauri boundary:
@@ -1212,6 +1216,10 @@ impl Default for NativePreviewScheduler {
         Self {
             scheduler: Mutex::new(RenderScheduler::default()),
             last_profile: Mutex::new(None),
+            cancellations: Mutex::new(BTreeMap::new()),
+            render_lock: Mutex::new(()),
+            decoded: Mutex::new(VecDeque::new()),
+            gpu: Mutex::new(None),
         }
     }
 }
@@ -2300,27 +2308,77 @@ fn native_preview_profile(
 }
 
 #[tauri::command]
-fn native_preview(
+fn native_preview_cancel(
     scheduler: State<'_, NativePreviewScheduler>,
-    portrait_runtime: State<'_, NativePortraitRuntime>,
-    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
-    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
+    request_id: String,
+) -> Result<bool, String> {
+    let mut tokens = scheduler
+        .cancellations
+        .lock()
+        .map_err(|_| "PreviewCancelled: poisoned registry".to_owned())?;
+    // Preserve an early cancellation if its IPC arrives before the render command.
+    if tokens.len() >= 128 && !tokens.contains_key(&request_id) {
+        tokens.retain(|_, token| Arc::strong_count(token) > 1);
+    }
+    tokens
+        .entry(request_id)
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .store(true, Ordering::Release);
+    Ok(true)
+}
+
+#[tauri::command]
+async fn native_preview(
+    app: tauri::AppHandle,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
-    let (result, profile) = profiling::capture(|| {
-        native_preview_inner(
-            scheduler.inner(),
-            portrait_runtime.inner(),
-            ai_mask_runtime.inner(),
-            ai_denoise_runtime.inner(),
-            request,
-        )
-    });
-    *scheduler
-        .last_profile
+    let request_id = request.request_id.clone();
+    let token = app
+        .state::<NativePreviewScheduler>()
+        .cancellations
         .lock()
-        .map_err(|_| "native preview profile lock was poisoned".to_owned())? = Some(profile);
-    result
+        .map_err(|_| "PreviewCancelled: poisoned registry".to_owned())?
+        .entry(request_id.clone())
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let scheduler = app.state::<NativePreviewScheduler>();
+        // Bound Native preview memory/GPU work across Before/After surfaces. The lock is held
+        // only by a background worker; cancellation commands and the WebView remain responsive.
+        let _render = scheduler
+            .render_lock
+            .lock()
+            .map_err(|_| "PreviewWorkerFailed: poisoned render lock".to_owned())?;
+        let (result, profile) = profiling::capture(|| {
+            starroom_pipeline::cancellation::with_cancellation(token.clone(), || {
+                starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+                let result = native_preview_inner(
+                    &scheduler,
+                    &app.state::<NativePortraitRuntime>(),
+                    &app.state::<NativeAiMaskRuntime>(),
+                    &app.state::<NativeAiDenoiseRuntime>(),
+                    request,
+                )?;
+                starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+                Ok(result)
+            })
+        });
+        scheduler
+            .cancellations
+            .lock()
+            .map_err(|_| "PreviewCancelled: poisoned registry".to_owned())?
+            .remove(&request_id);
+        if !token.load(Ordering::Acquire) {
+            *scheduler
+                .last_profile
+                .lock()
+                .map_err(|_| "native preview profile lock was poisoned".to_owned())? =
+                Some(profile);
+        }
+        result
+    })
+    .await
+    .map_err(|error| format!("PreviewWorkerFailed: {error}"))?
 }
 
 fn native_preview_inner(
@@ -2357,10 +2415,59 @@ fn native_preview_inner(
     attach_generated_masks(&mut settings, ai_mask_runtime)?;
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
-    let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
-        decode_source_preview(&request.source_path, level.max_edge())
-    })
-    .map_err(|error| format!("native preview decode failed: {error}"))?;
+    let cached = {
+        let mut cache = scheduler
+            .decoded
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+        cache
+            .iter()
+            .position(|(identity, edge, _)| {
+                identity == &source_identity && *edge == level.max_edge()
+            })
+            .and_then(|index| cache.remove(index))
+            .map(|entry| {
+                let image = entry.2.clone();
+                cache.push_back(entry);
+                image
+            })
+    };
+    let decoded = if let Some(image) = cached {
+        image
+    } else {
+        let image = Arc::new(
+            profiling::measure(ProfileStage::RawDecode, 0, || {
+                decode_source_preview(&request.source_path, level.max_edge())
+            })
+            .map_err(|error| format!("native preview decode failed: {error}"))?,
+        );
+        // Keep a bounded source-resolution-tier cache, not an edit-state cache. Exposure changes
+        // reuse immutable decoded sensor data; a source identity/preview-tier change cannot hit.
+        let bytes = u64::from(image.width()) * u64::from(image.height()) * 16;
+        const BUDGET: u64 = 128 * 1024 * 1024;
+        if bytes <= BUDGET {
+            let mut cache = scheduler
+                .decoded
+                .lock()
+                .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+            while !cache.is_empty()
+                && (cache.len() >= 4
+                    || cache
+                        .iter()
+                        .map(|(_, _, value)| {
+                            u64::from(value.width()) * u64::from(value.height()) * 16
+                        })
+                        .sum::<u64>()
+                        + bytes
+                        > BUDGET)
+            {
+                cache.pop_front();
+            }
+            cache.push_back((source_identity.clone(), level.max_edge(), image.clone()));
+        }
+        image
+    };
+    starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
     attach_ai_denoise(
         &decoded,
         &request.source_path,
@@ -2394,9 +2501,15 @@ fn native_preview_inner(
         return Ok(Response::new(frame));
     }
     let (rendered, backend_flags) = if request.prefer_gpu {
-        match GpuRenderer::try_new() {
+        let mut gpu = scheduler
+            .gpu
+            .lock()
+            .map_err(|_| "PreviewGpuFailed: poisoned device cache".to_owned())?;
+        let renderer =
+            gpu.get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()));
+        match renderer {
             Ok(renderer) => {
-                match render_source_preview_with_gpu_to_srgb8(&decoded, &settings, &renderer) {
+                match render_source_preview_with_gpu_to_srgb8(&decoded, &settings, renderer) {
                     Ok(rendered) => {
                         let flag = match renderer.status().backend {
                             GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
@@ -2422,6 +2535,7 @@ fn native_preview_inner(
             .map_err(|error| format!("native CPU preview graph failed: {error}"))?;
         (rendered, 0x0010)
     };
+    starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
     let flags = profile_flag(rendered.color.input) | backend_flags;
     let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
     let jpeg = profiling::measure(ProfileStage::Encode, 0, || {
@@ -2928,6 +3042,7 @@ pub fn run() {
             advise_image,
             advise_native_image,
             native_preview,
+            native_preview_cancel,
             native_preview_scheduler_status,
             native_preview_profile,
             native_export_jpeg,
