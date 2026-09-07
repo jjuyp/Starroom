@@ -22,7 +22,8 @@ use starroom_grading::GradingParameters;
 use starroom_heal::HealingOperation;
 use starroom_history::{EditCommand, EditHistory, HistoryEntry, NamedSnapshot};
 use starroom_imageio::{
-    DecodedSourceImage, decode_source, decode_source_preview, encode_jpeg_rgb8,
+    DecodedSourceImage, decode_source, decode_source_preview, decode_source_region,
+    encode_jpeg_rgb8,
 };
 use starroom_library::{
     AssetFlag, AssetRecord, CollectionKind, CollectionRecord, ColorLabel, ImportResult, Library,
@@ -1183,6 +1184,8 @@ struct NativePreviewRequest {
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PreviewViewportRequest {
+    source_width: u32,
+    source_height: u32,
     x: u32,
     y: u32,
     width: u32,
@@ -1562,7 +1565,8 @@ fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
     }
 }
 
-fn preview_frame(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PreviewFrameHeader {
     width: u32,
     height: u32,
     source_width: u32,
@@ -1570,6 +1574,10 @@ fn preview_frame(
     tile_x: u32,
     tile_y: u32,
     flags: u16,
+}
+
+fn preview_frame(
+    header: PreviewFrameHeader,
     profile_id: &str,
     jpeg: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
@@ -1578,13 +1586,13 @@ fn preview_frame(
     let mut frame = Vec::with_capacity(40 + profile_id.len() + jpeg.len());
     frame.extend_from_slice(b"SRP3");
     frame.extend_from_slice(&3_u16.to_le_bytes());
-    frame.extend_from_slice(&flags.to_le_bytes());
-    frame.extend_from_slice(&width.to_le_bytes());
-    frame.extend_from_slice(&height.to_le_bytes());
-    frame.extend_from_slice(&source_width.to_le_bytes());
-    frame.extend_from_slice(&source_height.to_le_bytes());
-    frame.extend_from_slice(&tile_x.to_le_bytes());
-    frame.extend_from_slice(&tile_y.to_le_bytes());
+    frame.extend_from_slice(&header.flags.to_le_bytes());
+    frame.extend_from_slice(&header.width.to_le_bytes());
+    frame.extend_from_slice(&header.height.to_le_bytes());
+    frame.extend_from_slice(&header.source_width.to_le_bytes());
+    frame.extend_from_slice(&header.source_height.to_le_bytes());
+    frame.extend_from_slice(&header.tile_x.to_le_bytes());
+    frame.extend_from_slice(&header.tile_y.to_le_bytes());
     frame.extend_from_slice(&profile_len.to_le_bytes());
     frame.extend_from_slice(&0_u16.to_le_bytes());
     frame.extend_from_slice(&payload_len.to_le_bytes());
@@ -1599,12 +1607,16 @@ fn validated_viewport(
     height: u32,
 ) -> Result<PreviewViewportRequest, String> {
     let viewport = requested.unwrap_or(PreviewViewportRequest {
+        source_width: width,
+        source_height: height,
         x: 0,
         y: 0,
         width,
         height,
     });
-    if viewport.width == 0
+    if viewport.source_width != width
+        || viewport.source_height != height
+        || viewport.width == 0
         || viewport.height == 0
         || viewport
             .x
@@ -1639,6 +1651,8 @@ fn expand_viewport(
         .saturating_add(halo)
         .min(height);
     PreviewViewportRequest {
+        source_width: width,
+        source_height: height,
         x,
         y,
         width: right - x,
@@ -2687,7 +2701,50 @@ fn native_preview_inner(
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let high_resolution = wants_high_resolution(request.resolution_mode, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
-    let cached = if high_resolution {
+    let declared_tile = if high_resolution && viewport_graph_is_tile_safe(&settings) {
+        request
+            .viewport
+            .map(|viewport| {
+                validated_viewport(
+                    Some(viewport),
+                    viewport.source_width,
+                    viewport.source_height,
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let region = if let Some(viewport) = declared_tile {
+        let expanded = expand_viewport(
+            viewport,
+            viewport.source_width,
+            viewport.source_height,
+            RenderGraph::default().maximum_halo(),
+        );
+        let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
+            decode_source_region(
+                &request.source_path,
+                expanded.x,
+                expanded.y,
+                expanded.width,
+                expanded.height,
+            )
+        })
+        .map_err(|error| format!("native high-resolution region decode failed: {error}"))?;
+        if decoded.source_width != viewport.source_width
+            || decoded.source_height != viewport.source_height
+        {
+            return Err(
+                "PreviewViewportInvalid: source dimensions changed since Library registration"
+                    .into(),
+            );
+        }
+        Some((viewport, expanded, Arc::new(decoded.image)))
+    } else {
+        None
+    };
+    let cached = if high_resolution || region.is_some() {
         None
     } else {
         let mut cache = scheduler
@@ -2706,7 +2763,9 @@ fn native_preview_inner(
                 image
             })
     };
-    let decoded = if let Some(image) = cached {
+    let decoded = if let Some((_, _, image)) = &region {
+        image.clone()
+    } else if let Some(image) = cached {
         image
     } else if high_resolution {
         Arc::new(
@@ -2748,38 +2807,38 @@ fn native_preview_inner(
         }
         image
     };
-    let (source_width, source_height) = source_dimensions(&decoded);
-    let viewport = validated_viewport(
-        high_resolution.then_some(request.viewport).flatten(),
-        source_width,
-        source_height,
-    )?;
+    let (source_width, source_height) = region
+        .as_ref()
+        .map(|(viewport, _, _)| (viewport.source_width, viewport.source_height))
+        .unwrap_or_else(|| source_dimensions(&decoded));
+    let viewport = region
+        .as_ref()
+        .map(|(viewport, _, _)| *viewport)
+        .unwrap_or(validated_viewport(
+            high_resolution.then_some(request.viewport).flatten(),
+            source_width,
+            source_height,
+        )?);
     let tile_requested = high_resolution
         && (viewport.x != 0
             || viewport.y != 0
             || viewport.width != source_width
             || viewport.height != source_height);
-    let tile_optimized = tile_requested && viewport_graph_is_tile_safe(&settings);
+    let tile_optimized = tile_requested && region.is_some();
     let halo = RenderGraph::default().maximum_halo();
     let expanded = if tile_optimized {
         expand_viewport(viewport, source_width, source_height, halo)
     } else {
         PreviewViewportRequest {
+            source_width,
+            source_height,
             x: 0,
             y: 0,
             width: source_width,
             height: source_height,
         }
     };
-    let render_decoded = if tile_optimized {
-        Arc::new(
-            decoded
-                .crop(expanded.x, expanded.y, expanded.width, expanded.height)
-                .map_err(|error| format!("native viewport crop failed: {error}"))?,
-        )
-    } else {
-        decoded.clone()
-    };
+    let render_decoded = decoded.clone();
     let viewport_cache_key = format!(
         "{source_identity}:{graph_identity}:{}:{}:{}:{}:{tile_optimized}",
         viewport.x, viewport.y, viewport.width, viewport.height
@@ -2895,13 +2954,15 @@ fn native_preview_inner(
     })
     .map_err(|error| format!("native preview encode failed: {error}"))?;
     let frame = preview_frame(
-        tile_width,
-        tile_height,
-        source_width,
-        source_height,
-        if tile_requested { viewport.x } else { 0 },
-        if tile_requested { viewport.y } else { 0 },
-        flags,
+        PreviewFrameHeader {
+            width: tile_width,
+            height: tile_height,
+            source_width,
+            source_height,
+            tile_x: if tile_requested { viewport.x } else { 0 },
+            tile_y: if tile_requested { viewport.y } else { 0 },
+            flags,
+        },
         profile_id,
         jpeg,
     )?;
@@ -3222,9 +3283,19 @@ pub struct ReleaseSelfTestReport {
     native_export: &'static str,
     deterministic_export: bool,
     source_immutable: bool,
-    portrait_models: &'static str,
-    ai_mask_models: &'static str,
-    ai_denoise_model: &'static str,
+    face_skin: &'static str,
+    subject_background: &'static str,
+    sky: &'static str,
+    ai_denoise: &'static str,
+}
+
+fn release_ai_state(feature: AiFeatureAvailability) -> Result<&'static str, String> {
+    match feature.state {
+        "ready" => Ok("available"),
+        "modelNotInstalled" => Ok("typed-unavailable"),
+        "invalid" => Err(format!("installed AI model is invalid: {}", feature.detail)),
+        _ => Err(format!("AI availability check failed: {}", feature.detail)),
+    }
 }
 
 /// Executes a bounded, offline production-API workflow from the packaged executable.
@@ -3372,40 +3443,24 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         return Err("release workflow modified source pixels".into());
     }
 
-    let portrait_models = match local_portrait_models().verify() {
-        Err(PortraitError::DetectorModelMissing { .. })
-        | Err(PortraitError::ParserModelMissing { .. }) => "typed-unavailable",
-        Err(error) => {
-            return Err(format!(
-                "unexpected portrait model discovery state: {error}"
-            ));
-        }
-        Ok(()) => "available",
-    };
-    let ai_mask_registry = local_ai_mask_models();
-    let ai_mask_models =
-        if !ai_mask_registry.foreground.path.is_file() && !ai_mask_registry.scene.path.is_file() {
-            "typed-unavailable"
-        } else {
-            "available"
-        };
-    let ai_denoise_model = if local_nafnet_model().is_file() {
-        "available"
-    } else {
-        "typed-unavailable"
-    };
+    let availability = ai_availability_status();
+    let face_skin = release_ai_state(availability.face_skin)?;
+    let subject_background = release_ai_state(availability.subject_background)?;
+    let sky = release_ai_state(availability.sky)?;
+    let ai_denoise = release_ai_state(availability.denoise)?;
 
     Ok(ReleaseSelfTestReport {
-        schema_version: 1,
+        schema_version: 2,
         library: "ok",
         history: "ok",
         session: "ok",
         native_export: "ok",
         deterministic_export,
         source_immutable,
-        portrait_models,
-        ai_mask_models,
-        ai_denoise_model,
+        face_skin,
+        subject_background,
+        sky,
+        ai_denoise,
     })
 }
 
@@ -3527,12 +3582,21 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         let report = release_self_test(&root).unwrap();
+        assert_eq!(report.schema_version, 2);
         assert_eq!(report.library, "ok");
         assert_eq!(report.history, "ok");
         assert_eq!(report.session, "ok");
         assert_eq!(report.native_export, "ok");
         assert!(report.deterministic_export);
         assert!(report.source_immutable);
+        for state in [
+            report.face_skin,
+            report.subject_background,
+            report.sky,
+            report.ai_denoise,
+        ] {
+            assert!(matches!(state, "available" | "typed-unavailable"));
+        }
         std::fs::write(root.join("keep"), b"user state").unwrap();
         assert!(release_self_test(&root).is_err());
     }
@@ -3554,13 +3618,15 @@ mod tests {
     fn binary_preview_contract_has_fixed_header_and_payload_length() {
         let profile = "dng-forward-matrix:test:camera";
         let frame = preview_frame(
-            640,
-            480,
-            6000,
-            4000,
-            512,
-            256,
-            2 | 0x20 | 0x40,
+            PreviewFrameHeader {
+                width: 640,
+                height: 480,
+                source_width: 6000,
+                source_height: 4000,
+                tile_x: 512,
+                tile_y: 256,
+                flags: 2 | 0x20 | 0x40,
+            },
             profile,
             vec![0xff, 0xd8, 0xff],
         )
@@ -3585,6 +3651,8 @@ mod tests {
     fn preview_viewport_validates_and_expands_at_source_edges() {
         let viewport = validated_viewport(
             Some(PreviewViewportRequest {
+                source_width: 1000,
+                source_height: 800,
                 x: 100,
                 y: 50,
                 width: 512,
@@ -3597,6 +3665,8 @@ mod tests {
         assert_eq!(
             expand_viewport(viewport, 1000, 800, 32),
             PreviewViewportRequest {
+                source_width: 1000,
+                source_height: 800,
                 x: 68,
                 y: 18,
                 width: 576,
@@ -3606,6 +3676,8 @@ mod tests {
         assert!(
             validated_viewport(
                 Some(PreviewViewportRequest {
+                    source_width: 1000,
+                    source_height: 800,
                     x: 900,
                     y: 0,
                     width: 200,

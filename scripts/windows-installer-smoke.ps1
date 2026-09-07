@@ -44,10 +44,14 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
       $report.nativeExport -ne 'ok' -or -not $report.deterministicExport -or -not $report.sourceImmutable) {
     throw "Packaged release self-test returned an invalid core report: $output"
   }
-  foreach ($model in @('portraitModels', 'aiMaskModels', 'aiDenoiseModel')) {
+  if ($report.schemaVersion -ne 2) { throw "Packaged release self-test schema is not rc.2: $($report.schemaVersion)" }
+  foreach ($model in @('faceSkin', 'subjectBackground', 'sky', 'aiDenoise')) {
     if ($report.$model -notin @('available', 'typed-unavailable')) {
       throw "Packaged release self-test returned an invalid $model state: $($report.$model)"
     }
+  }
+  if ($report.faceSkin -ne 'typed-unavailable') {
+    throw "Public rc.2 must keep local-only BiSeNet out of the installer: $($report.faceSkin)"
   }
   Write-Output "M30_RELEASE_SELF_TEST $output"
 }

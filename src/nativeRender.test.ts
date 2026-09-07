@@ -10,7 +10,7 @@ describe('native preview contract', () => {
     expect(nativePreviewViewportContract('fit', 2, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: null })
     expect(nativePreviewViewportContract('100', 1, 6000, 4000, {
       centerX: .5, centerY: .5, widthFraction: .2, heightFraction: .25,
-    })).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: { x: 2250, y: 1375, width: 1500, height: 1250 } })
+    })).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: { sourceWidth: 6000, sourceHeight: 4000, x: 2250, y: 1375, width: 1500, height: 1250 } })
   })
   it('parses the versioned binary frame without JSON pixel arrays', () => {
     const payload = new Uint8Array([0xff, 0xd8, 0xff])

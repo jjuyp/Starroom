@@ -4,7 +4,7 @@ use starroom_export::{
     export_one_profiled,
 };
 use starroom_heal::{HealMode, HealPoint, HealingOperation, SourceMode};
-use starroom_imageio::decode_source_preview;
+use starroom_imageio::{decode_source_preview, decode_source_region};
 use starroom_pipeline::{
     LayerAdjustments, LayerBlendMode, NativeAdjustmentLayer, RenderSettings,
     render_source_preview_to_srgb8,
@@ -121,6 +121,23 @@ fn m30_real_24_45_60_100mp_open_preview_mask_heal_and_export() {
         let preview_time = preview_started.elapsed();
         assert!(preview.width <= 1024 && preview.height <= 1024);
 
+        let tile_width = width.min(1536);
+        let tile_height = height.min(1024);
+        let tile_x = (width - tile_width) / 2;
+        let tile_y = (height - tile_height) / 2;
+        let tile_started = Instant::now();
+        let region = decode_source_region(&source, tile_x, tile_y, tile_width, tile_height)
+            .expect("source-resolution viewport decode");
+        assert_eq!((region.source_width, region.source_height), (width, height));
+        assert_eq!(
+            (region.image.width(), region.image.height()),
+            (tile_width, tile_height)
+        );
+        let tile = render_source_preview_to_srgb8(&region.image, &RenderSettings::default())
+            .expect("source-resolution viewport render");
+        let tile_time = tile_started.elapsed();
+        assert_eq!((tile.width, tile.height), (tile_width, tile_height));
+
         let request = ExportRequest {
             asset_id: 1,
             source_path: source.clone(),
@@ -160,10 +177,12 @@ fn m30_real_24_45_60_100mp_open_preview_mask_heal_and_export() {
         assert_eq!(dimensions, (width, height));
         assert_eq!(fs::read(&source).unwrap(), source_bytes);
         eprintln!(
-            "M30_LARGE_IMAGE label={label} pixels={} generate_ms={:.2} preview_ms={:.2} export_ms={:.2} process_peak_bytes={}",
+            "M30_LARGE_IMAGE label={label} pixels={} generate_ms={:.2} preview_ms={:.2} viewport_tile_ms={:.2} viewport_bytes={} export_ms={:.2} process_peak_bytes={}",
             u64::from(width) * u64::from(height),
             generate_time.as_secs_f64() * 1000.0,
             preview_time.as_secs_f64() * 1000.0,
+            tile_time.as_secs_f64() * 1000.0,
+            tile.data.len(),
             export_time.as_secs_f64() * 1000.0,
             profile.process_peak_working_set_bytes.unwrap_or(0),
         );

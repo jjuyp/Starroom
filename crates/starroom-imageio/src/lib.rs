@@ -131,6 +131,15 @@ pub struct DecodedRenderedImage {
     pub exif: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecodedSourceRegion {
+    pub source_width: u32,
+    pub source_height: u32,
+    pub x: u32,
+    pub y: u32,
+    pub image: DecodedSourceImage,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LensMetadata {
@@ -282,6 +291,65 @@ pub fn decode_source_preview(
     Ok(DecodedSourceImage::Rendered(decode_rendered_preview(
         path, max_edge,
     )?))
+}
+
+/// Decodes only the requested high-precision working region where the encoded codec permits it.
+/// Rendered files are cropped before conversion to RGBA f32, avoiding a full-frame float buffer.
+/// LibRaw currently owns full sensor development, so RAW uses its authoritative full decode and
+/// releases that buffer immediately after the region copy; this limitation remains explicit.
+pub fn decode_source_region(
+    path: impl AsRef<Path>,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<DecodedSourceRegion, ImageIoError> {
+    let path = path.as_ref();
+    if raw_format(path) {
+        let source = DecodedSourceImage::Raw(Box::new(decode_raw(path)?));
+        let source_width = source.width();
+        let source_height = source.height();
+        let image = source.crop(x, y, width, height)?;
+        return Ok(DecodedSourceRegion {
+            source_width,
+            source_height,
+            x,
+            y,
+            image,
+        });
+    }
+
+    let reader = ImageReader::open(path)?.with_guessed_format()?;
+    let format = reader.format().ok_or(ImageIoError::UnknownFormat)?;
+    let rendered_format = RenderedFormat::try_from(format)?;
+    let mut decoder = reader.into_decoder()?;
+    let (source_width, source_height) = decoder.dimensions();
+    if width == 0
+        || height == 0
+        || x.checked_add(width)
+            .is_none_or(|right| right > source_width)
+        || y.checked_add(height)
+            .is_none_or(|bottom| bottom > source_height)
+    {
+        return Err(ImageIoError::InvalidCrop);
+    }
+    let embedded_icc = decoder.icc_profile()?;
+    let exif = decoder.exif_metadata()?;
+    let image = DynamicImage::from_decoder(decoder)?.crop_imm(x, y, width, height);
+    Ok(DecodedSourceRegion {
+        source_width,
+        source_height,
+        x,
+        y,
+        image: DecodedSourceImage::Rendered(DecodedRenderedImage {
+            width,
+            height,
+            format: rendered_format,
+            rgba: dynamic_to_rgba_f32(image),
+            embedded_icc,
+            exif,
+        }),
+    })
 }
 
 /// Encodes an already output-transformed RGB8 buffer. The caller owns gamut mapping and output
@@ -623,6 +691,24 @@ mod tests {
         let decoded = reader.decode().expect("decode");
         assert_eq!(decoded.width(), 2);
         assert_eq!(decoded.height(), 2);
+    }
+
+    #[test]
+    fn rendered_region_reports_original_dimensions_without_full_float_output() {
+        let rgb = [
+            255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 30, 40, 50, 60, 70, 80,
+        ];
+        let bytes = encode_png_rgb8_with_metadata(&rgb, 3, 2, None, None, None).expect("png");
+        let path = std::env::temp_dir().join(format!(
+            "starroom-imageio-region-{}.png",
+            std::process::id()
+        ));
+        std::fs::write(&path, bytes).expect("fixture");
+        let region = decode_source_region(&path, 1, 1, 2, 1).expect("region");
+        let _ = std::fs::remove_file(path);
+        assert_eq!((region.source_width, region.source_height), (3, 2));
+        assert_eq!((region.x, region.y), (1, 1));
+        assert_eq!((region.image.width(), region.image.height()), (2, 1));
     }
 
     #[test]

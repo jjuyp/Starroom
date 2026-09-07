@@ -439,7 +439,7 @@ const previewQueues = new WeakMap<object, LatestPreviewQueue<ArrayBuffer | Uint8
 const defaultPreviewSurface = {}
 
 export interface NativePreviewViewport {
-  x: number; y: number; width: number; height: number
+  sourceWidth: number; sourceHeight: number; x: number; y: number; width: number; height: number
 }
 
 export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: number, sourceWidth = 0, sourceHeight = 0,
@@ -455,7 +455,7 @@ export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: nu
     const centerY = Math.max(0, Math.min(1, visible.centerY)) * sourceHeight
     const x = Math.max(0, Math.min(sourceWidth - width, Math.round(centerX - width / 2)))
     const y = Math.max(0, Math.min(sourceHeight - height, Math.round(centerY - height / 2)))
-    viewport = { x, y, width, height }
+    viewport = { sourceWidth, sourceHeight, x, y, width, height }
   }
   return {
     resolutionMode: highResolution ? 'highResolution' as const : 'fit' as const,
