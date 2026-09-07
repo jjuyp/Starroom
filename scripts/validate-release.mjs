@@ -1,14 +1,20 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 
 const root = new URL('../', import.meta.url)
 const read = (path) => readFileSync(new URL(path, root), 'utf8')
 const pkg = JSON.parse(read('package.json'))
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json'))
+const rc2Tauri = JSON.parse(read('src-tauri/tauri.rc2.conf.json'))
 const cargo = read('Cargo.toml')
 const cargoLock = read('Cargo.lock')
 const expectedArg = process.argv.find((arg) => arg.startsWith('--expected-version='))
 const expected = expectedArg?.split('=', 2)[1] ?? pkg.version
+const requireReleaseModels = process.argv.includes('--require-release-models')
+const releaseModelPath = 'release-models/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx'
+const releaseModelHash = '5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333'
+const releaseModelSize = 224005088
 
 if (pkg.version !== expected || tauri.version !== expected) {
   throw new Error(`Release versions differ: expected=${expected} package=${pkg.version} tauri=${tauri.version}`)
@@ -20,6 +26,18 @@ if (!starroomLockVersions.length || starroomLockVersions.some(([, , version]) =>
 }
 if (!tauri.bundle?.active || !tauri.bundle?.icon?.includes('icons/icon.ico')) throw new Error('Windows bundle or release icon is not configured')
 if (tauri.bundle?.licenseFile !== '../LICENSE') throw new Error('Windows bundle license file is not configured')
+if (rc2Tauri.bundle?.resources?.[`../${releaseModelPath}`] !== 'models/local/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx') {
+  throw new Error('RC2 BiRefNet bundle mapping is missing or incorrect')
+}
+if (requireReleaseModels) {
+  const modelUrl = new URL(releaseModelPath, root)
+  if (!existsSync(modelUrl)) throw new Error(`Required RC2 release model is missing: ${releaseModelPath}`)
+  const model = readFileSync(modelUrl)
+  const digest = createHash('sha256').update(model).digest('hex')
+  if (model.byteLength !== releaseModelSize || digest !== releaseModelHash) {
+    throw new Error(`RC2 BiRefNet identity mismatch: size=${model.byteLength} sha256=${digest}`)
+  }
+}
 
 for (const path of [
   'LICENSE',
@@ -27,6 +45,7 @@ for (const path of [
   'THIRD_PARTY_LICENSES.txt',
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
+  'licenses/models/BiRefNet-LICENSE.txt',
   'docs/17_THIRD_PARTY_PROVENANCE.md',
   'docs/36_M30_DEPENDENCY_LICENSE_REPORT.json',
   'src-tauri/icons/icon.ico',
@@ -42,6 +61,7 @@ for (const destination of [
   'THIRD_PARTY_LICENSES.txt',
   'NOTICE.md',
   'MODEL_PROVENANCE.md',
+  'licenses/models/BiRefNet-LICENSE.txt',
   'docs/17_THIRD_PARTY_PROVENANCE.md',
   'docs/36_M30_DEPENDENCY_LICENSE_REPORT.json',
 ]) {

@@ -29,7 +29,7 @@ The remaining core AI and optional-pack requirements still need production valid
 | Selection / rating / recent imports | FIXED, verification pending | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift selection, full native filtered Ctrl-A, one-transaction bulk removal, schema-v2 deterministic latest import batches, shortcuts 0-5 and thumbnail 0-5 rating controls are implemented. Installed workflow validation remains required. |
 | Preview latency / latest-wins | FIXED, verification pending | Heavy work now runs on a blocking worker, per-surface latest-wins keeps one pending state, Native cancellation checkpoints reject stale publish, decoded source tiers and the GPU device are reused. Release-mode latency evidence remains required. |
 | True 1:1 viewport tiles | FIXED, verification pending | SRP3 transports only a source-positioned viewport JPEG; a bounded edit/source/viewport-keyed cache serves revisits. Tile-safe color/tone/detail graphs render only the requested region plus declared halo. Global coordinate stages use an explicit `full-frame compatibility` state before the correct viewport is cropped. Installed 1:1 latency, seam and 100 MP memory acceptance remain open. |
-| AI availability | FIXED, verification pending with Face/Skin exception | Native startup verifies model presence/hash before use and UI shows Ready / Model not installed / Invalid / Error. User-approved local-only BiSeNet policy remains. Installed packaging/offline validation pending. |
+| AI availability | FIXED, verification pending with Face/Skin exception | Native startup verifies model presence/hash before use and UI shows Ready / Model not installed / Invalid / Error. User-approved local-only BiSeNet policy remains. The exact MIT BiRefNet asset is acquired and hash-verified only at release-build time, then bundled for offline Subject/Background; installed packaging/offline validation remains pending. |
 | Final workspace / snapshots / control layout | FIXED, verification pending | Develop now owns Navigator plus Presets/Layers/History; full Snapshot create/rename/delete/restore/compare is exposed there. Export is a floating context panel and Portrait/Layers/Looks use progressive disclosure. Real installed 1280/1920/2560 layout acceptance remains required. |
 | Export performance | FIXED, measurement pending | Normal Professional batch no longer performs an unused full source decode before the FullResolutionRenderer decodes the same asset. AI Denoise retains its required residual prepass. Release-mode 24 MP comparison remains required. |
 | RC2 release | OPEN | No acceptance tag/artifact claim until same-SHA final gates pass. |
@@ -67,6 +67,12 @@ No performance improvement percentage has been claimed from these unit tests.
 - One Native availability command verifies the pinned portrait, Subject/Background, Sky and AI
   Denoise model files and hashes before a tool is clicked. The UI uses four non-ambiguous states:
   Ready, Model not installed, Invalid and Error. It never downloads a model or selects cloud/API.
+- The public installer does not contain BiSeNet. It does contain only the approved BiRefNet v1
+  Subject/Background model, obtained by the release runner from asset id `186739942` and rejected
+  unless its 224,005,088-byte size and pinned SHA-256 both match. Runtime first resolves bundled
+  `models/local`, with an explicit environment override reserved for reviewed local model packs.
+  The installed executable must also initialize the CPU ONNX provider and return a finite real
+  Subject mask from a deterministic offline fixture; hash-only discovery is not sufficient.
 - Fit continues to request a bounded Native preview. 1:1 and zoom above Fit carry an explicit
   `highResolution` contract; interactive drag stays on the low-cost tier and final refinement uses
   an SRP3 source-positioned viewport payload instead of enlarging the Fit frame. The Native path

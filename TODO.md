@@ -18,8 +18,10 @@
   full-frame compatibility. Installed seam/latency/100 MP verification remains in the rc.2 gate.
 - [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; collect the
   final 24 MP release-mode comparison on the rc.2 candidate.
-- [ ] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
+- [x] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
   Show the actual model-installation state, never claim clean-install Face/Skin readiness.
+- [x] Package the exact hash-verified MIT BiRefNet release asset for offline Subject/Background;
+  retain its license and require the installed production self-test to report it Ready.
 - [ ] Publish rc.2 only after all applicable release gates pass; keep PR #2 Open/Draft.
 
 ## M30 Starroom v1.0 Release Candidate (feature freeze, in progress 2026-08-26)

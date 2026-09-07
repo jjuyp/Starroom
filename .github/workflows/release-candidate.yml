@@ -55,8 +55,10 @@ jobs:
       - run: npm ci
       - run: npm run test:infra
       - run: npm run test:licenses
-      - run: node scripts/validate-release.mjs
-      - run: npm run build:desktop
+      - shell: pwsh
+        run: ./scripts/prepare-release-models.ps1 -RepositoryRoot $PWD
+      - run: node scripts/validate-release.mjs --require-release-models
+      - run: npm run build:desktop:rc2
       - shell: pwsh
         run: ./scripts/windows-installer-smoke.ps1 -RepositoryRoot $PWD
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -9,6 +9,7 @@ vite.config.d.ts
 models/weights/
 # M16: licensed local-only model binaries. Public source stores only provenance and SHA pins.
 models/local/
+release-models/
 fixtures/private/
 .env
 output/playwright/

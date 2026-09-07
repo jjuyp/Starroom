@@ -1413,8 +1413,8 @@ pub trait AiMaskProvider {
 }
 
 pub struct AiMaskOnnxProvider {
-    foreground: Session,
-    scene: Session,
+    foreground: Option<Session>,
+    scene: Option<Session>,
     pub registry: AiMaskModelRegistry,
     pub execution_provider: ExecutionProvider,
 }
@@ -1455,11 +1455,71 @@ impl AiMaskOnnxProvider {
             },
         };
         Ok(Self {
-            foreground: sessions.0,
-            scene: sessions.1,
+            foreground: Some(sessions.0),
+            scene: Some(sessions.1),
             registry,
             execution_provider: sessions.2,
         })
+    }
+
+    /// Opens only the model required for one semantic. This is the production path for release
+    /// packages that intentionally bundle Subject/Background without the separately licensed Sky
+    /// model; absence of an unrelated optional model must not disable a verified local capability.
+    pub fn initialize_for(
+        registry: AiMaskModelRegistry,
+        semantic: AiMaskSemantic,
+    ) -> Result<Self, AiMaskError> {
+        let descriptor = match semantic {
+            AiMaskSemantic::Subject | AiMaskSemantic::Background => &registry.foreground,
+            AiMaskSemantic::Sky => &registry.scene,
+            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair => {
+                return Err(AiMaskError::PortraitProviderRequired(semantic));
+            }
+        };
+        descriptor.verify()?;
+        let open = |provider| {
+            let ep = match provider {
+                ExecutionProvider::Cpu => CPUExecutionProvider::default().build(),
+                ExecutionProvider::DirectMl => DirectMLExecutionProvider::default().build(),
+            };
+            Session::builder()
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))?
+                .with_execution_providers([ep])
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))?
+                .commit_from_file(&descriptor.path)
+                .map_err(|error| AiMaskError::ProviderInitializationFailed(error.to_string()))
+        };
+        let requested = registry.execution_provider;
+        let (session, execution_provider) = match requested {
+            ExecutionProvider::Cpu => (open(requested)?, requested),
+            ExecutionProvider::DirectMl => match open(requested) {
+                Ok(session) => (session, requested),
+                Err(_) => (open(ExecutionProvider::Cpu)?, ExecutionProvider::Cpu),
+            },
+        };
+        let foreground_semantic = matches!(
+            semantic,
+            AiMaskSemantic::Subject | AiMaskSemantic::Background
+        );
+        let (foreground, scene) = if foreground_semantic {
+            (Some(session), None)
+        } else {
+            (None, Some(session))
+        };
+        Ok(Self {
+            foreground,
+            scene,
+            registry,
+            execution_provider,
+        })
+    }
+
+    pub fn supports(&self, semantic: AiMaskSemantic) -> bool {
+        match semantic {
+            AiMaskSemantic::Subject | AiMaskSemantic::Background => self.foreground.is_some(),
+            AiMaskSemantic::Sky => self.scene.is_some(),
+            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair => false,
+        }
     }
 
     fn cache_identity(source_hash: &str, semantic: AiMaskSemantic, model_hash: &str) -> String {
@@ -1539,11 +1599,23 @@ impl AiMaskProvider for AiMaskOnnxProvider {
         .map_err(|error| AiMaskError::InvalidTensor(error.to_string()))?;
         let outputs = if provider_id == "foreground" {
             self.foreground
+                .as_mut()
+                .ok_or_else(|| {
+                    AiMaskError::ProviderInitializationFailed(
+                        "Subject/Background session is not initialized".into(),
+                    )
+                })?
                 .run(ort::inputs![TensorRef::from_array_view(&tensor).map_err(
                     |error| AiMaskError::InvalidTensor(error.to_string())
                 )?])
         } else {
             self.scene
+                .as_mut()
+                .ok_or_else(|| {
+                    AiMaskError::ProviderInitializationFailed(
+                        "Sky session is not initialized".into(),
+                    )
+                })?
                 .run(ort::inputs![TensorRef::from_array_view(&tensor).map_err(
                     |error| AiMaskError::InvalidTensor(error.to_string())
                 )?])
@@ -1864,6 +1936,22 @@ mod tests {
         assert!(matches!(
             registry.foreground.verify(),
             Err(AiMaskError::ModelMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn rc2_subject_provider_does_not_require_the_optional_sky_model() {
+        let registry = AiMaskModelRegistry::local_default("definitely-missing-model-root");
+        let expected = registry.foreground.path.clone();
+        assert!(matches!(
+            AiMaskOnnxProvider::initialize_for(registry.clone(), AiMaskSemantic::Subject),
+            Err(AiMaskError::ModelMissing { path }) if path == expected
+        ));
+        assert!(matches!(
+            AiMaskOnnxProvider::initialize_for(registry, AiMaskSemantic::Person),
+            Err(AiMaskError::PortraitProviderRequired(
+                AiMaskSemantic::Person
+            ))
         ));
     }
 

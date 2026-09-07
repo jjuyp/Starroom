@@ -53,7 +53,22 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
   if ($report.faceSkin -ne 'typed-unavailable') {
     throw "Public rc.2 must keep local-only BiSeNet out of the installer: $($report.faceSkin)"
   }
+  if ($report.subjectBackground -ne 'available') {
+    throw "Public rc.2 must provide the verified bundled Subject/Background model: $($report.subjectBackground)"
+  }
   Write-Output "M30_RELEASE_SELF_TEST $output"
+}
+
+function Assert-ReleaseAiSelfTest([string]$Executable) {
+  $output = & $Executable '--release-ai-self-test'
+  if ($LASTEXITCODE -ne 0) { throw "Packaged release AI self-test failed with code $LASTEXITCODE" }
+  $report = $output | ConvertFrom-Json
+  if ($report.schemaVersion -ne 1 -or $report.subjectBackground -ne 'ok' -or
+      $report.modelHash -ne '5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333' -or
+      -not $report.finite -or $report.outputWidth -lt 1 -or $report.outputHeight -lt 1) {
+    throw "Packaged release AI self-test returned an invalid report: $output"
+  }
+  Write-Output "M30_RELEASE_AI_SELF_TEST $output"
 }
 
 $runnerTemp = (Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path
@@ -88,11 +103,14 @@ $installedResources = @(
   Assert-BundledResource 'THIRD_PARTY_LICENSES.txt'
   Assert-BundledResource 'NOTICE.md'
   Assert-BundledResource 'MODEL_PROVENANCE.md'
+  Assert-BundledResource 'licenses\models\BiRefNet-LICENSE.txt'
   Assert-BundledResource 'docs\17_THIRD_PARTY_PROVENANCE.md'
   Assert-BundledResource 'docs\36_M30_DEPENDENCY_LICENSE_REPORT.json'
+  Assert-BundledResource 'release-models\BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx'
 )
 Assert-Launch $installedExe.FullName 'clean-installed executable' (Join-Path $runnerTemp 'starroom-rc-installed-profile')
 Assert-ReleaseSelfTest $installedExe.FullName (Join-Path $runnerTemp 'starroom-rc-production-self-test')
+Assert-ReleaseAiSelfTest $installedExe.FullName
 
 $uninstaller = Get-ChildItem -LiteralPath $installRoot -Filter 'uninstall*.exe' -File -Recurse | Select-Object -First 1
 if (-not $uninstaller) { throw "Uninstaller missing below: $installRoot" }

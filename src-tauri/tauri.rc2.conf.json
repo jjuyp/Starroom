@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../release-models/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx": "models/local/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"
+    }
+  }
+}

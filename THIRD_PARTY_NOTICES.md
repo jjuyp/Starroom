@@ -21,10 +21,11 @@ modifications are recorded in the provenance inventory and `NOTICE.md`. Distribu
 GPL corresponding-source obligations for the complete covered work. The DNG notice required by the
 Adobe patent license is retained in `NOTICE.md`.
 
-Neural weights under `models/local/` are intentionally untracked and unbundled. In particular,
-BiSeNet, SegFormer and NAFNet checkpoint redistribution has not been cleared for this public binary.
-An installer without those exact local weights must report the corresponding AI capability as
-unavailable and must not download or substitute a model silently.
+Neural weights remain untracked. The Windows rc.2 installer includes only the fixed BiRefNet
+Subject/Background model whose MIT redistribution review, source, size and SHA-256 are recorded in
+`MODEL_PROVENANCE.md`; its exact MIT text is bundled at `licenses/models/BiRefNet-LICENSE.txt`.
+BiSeNet, SegFormer and NAFNet redistribution has not been cleared for this public binary and those
+capabilities must report Model not installed. No runtime model download or substitution is allowed.
 
 Source and CI distributions include five M30 photographic Golden fixtures. The Eileen Collins
 portrait is NASA public-domain material redistributed through scikit-image. Night-city and neon

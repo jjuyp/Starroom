@@ -21,6 +21,16 @@
 - Per the explicit user decision, BiSeNet remains an ignored local-only model and is not included in
   public rc.2 packaging. A clean install must state Model not installed for Face/Skin; no download,
   cloud, API or synthetic provider is permitted.
+- Subject/Background is the one bundled rc.2 AI capability. The release job downloads the exact
+  official BiRefNet v1 asset (id `186739942`, 224,005,088 bytes), verifies SHA-256 before Tauri
+  packaging, and retains the upstream MIT license. Installed discovery prefers the executable's
+  `models/local` resource directory while an explicit `STARROOM_LOCAL_MODELS` override remains
+  authoritative. The production self-test requires Subject/Background Ready and Face/Skin Model not
+  installed; a second installed-binary self-test initializes the CPU ONNX provider and executes a
+  real finite Subject mask inference. Sky and AI Denoise remain explicit optional local states.
+- AI mask sessions are now capability-scoped. A missing optional SegFormer Sky model can no longer
+  prevent the independently verified BiRefNet Subject/Background provider from initializing; when
+  all reviewed local models exist the combined provider path remains available.
 - Native model availability is now queried before tool activation and verifies both file presence
   and the pinned hash for Face/Skin, Subject/Background, Sky and AI Denoise. The four UI states are
   Ready, Model not installed, Invalid and Error; model paths are not exposed in the normal status UI.

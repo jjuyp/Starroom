@@ -1705,25 +1705,41 @@ fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
     }
 }
 
+fn resolve_local_model_root(
+    configured: Option<std::ffi::OsString>,
+    executable: Option<&Path>,
+    working_directory: &Path,
+) -> PathBuf {
+    if let Some(configured) = configured {
+        return PathBuf::from(configured);
+    }
+    if let Some(executable) = executable.and_then(Path::parent) {
+        let bundled = executable.join("models").join("local");
+        if bundled.is_dir() {
+            return bundled;
+        }
+    }
+    working_directory.join("models").join("local")
+}
+
+fn local_model_root() -> PathBuf {
+    resolve_local_model_root(
+        std::env::var_os("STARROOM_LOCAL_MODELS"),
+        std::env::current_exe().ok().as_deref(),
+        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    )
+}
+
 fn local_portrait_models() -> PortraitModelRegistry {
-    let root = std::env::var_os("STARROOM_LOCAL_MODELS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("models").join("local"));
-    PortraitModelRegistry::local_default(root)
+    PortraitModelRegistry::local_default(local_model_root())
 }
 
 fn local_ai_mask_models() -> AiMaskModelRegistry {
-    let root = std::env::var_os("STARROOM_LOCAL_MODELS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("models").join("local"));
-    AiMaskModelRegistry::local_default(root)
+    AiMaskModelRegistry::local_default(local_model_root())
 }
 
 fn local_nafnet_model() -> PathBuf {
-    std::env::var_os("STARROOM_LOCAL_MODELS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("models").join("local"))
-        .join("nafnet-sidd-width32-512-opset20.onnx")
+    local_model_root().join("nafnet-sidd-width32-512-opset20.onnx")
 }
 
 fn infer_ai_denoise_with_fallback(
@@ -2504,9 +2520,13 @@ fn ai_mask_generate(
             "provider lock poisoned".into(),
         ))
     })?;
-    if provider_guard.is_none() {
+    if provider_guard
+        .as_ref()
+        .is_none_or(|provider| !provider.supports(request.semantic))
+    {
         *provider_guard = Some(
-            AiMaskOnnxProvider::initialize(local_ai_mask_models()).map_err(AiMaskFailure::from)?,
+            AiMaskOnnxProvider::initialize_for(local_ai_mask_models(), request.semantic)
+                .map_err(AiMaskFailure::from)?,
         );
     }
     let token = cancellation_token();
@@ -3289,6 +3309,18 @@ pub struct ReleaseSelfTestReport {
     ai_denoise: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseAiSelfTestReport {
+    schema_version: u32,
+    subject_background: &'static str,
+    model_hash: String,
+    execution_provider: starroom_portrait::ExecutionProvider,
+    output_width: u32,
+    output_height: u32,
+    finite: bool,
+}
+
 fn release_ai_state(feature: AiFeatureAvailability) -> Result<&'static str, String> {
     match feature.state {
         "ready" => Ok("available"),
@@ -3296,6 +3328,59 @@ fn release_ai_state(feature: AiFeatureAvailability) -> Result<&'static str, Stri
         "invalid" => Err(format!("installed AI model is invalid: {}", feature.detail)),
         _ => Err(format!("AI availability check failed: {}", feature.detail)),
     }
+}
+
+/// Runs one real, offline Subject inference through the packaged ONNX Runtime provider. The
+/// release installer invokes this in addition to the cheap availability report so a copied weight
+/// file cannot be mistaken for a usable clean-install capability.
+pub fn release_ai_self_test() -> Result<ReleaseAiSelfTestReport, String> {
+    let mut registry = local_ai_mask_models();
+    registry.execution_provider = starroom_portrait::ExecutionProvider::Cpu;
+    let mut provider = AiMaskOnnxProvider::initialize_for(registry, AiMaskSemantic::Subject)
+        .map_err(|error| format!("release Subject provider initialization failed: {error}"))?;
+    let width = 16_u32;
+    let height = 16_u32;
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            rgba.extend_from_slice(&[
+                ((x * 255) / (width - 1)) as u8,
+                ((y * 255) / (height - 1)) as u8,
+                96,
+                255,
+            ]);
+        }
+    }
+    let token = AtomicBool::new(false);
+    let result = provider
+        .generate(
+            width,
+            height,
+            &rgba,
+            "release-ai-self-test-fixture-v1",
+            AiMaskSemantic::Subject,
+            &token,
+        )
+        .map_err(|error| format!("release Subject inference failed: {error}"))?;
+    let finite = !result.mask.values.is_empty()
+        && result.mask.values.iter().all(|value| value.is_finite())
+        && result
+            .mask
+            .values
+            .iter()
+            .any(|value| *value > 0.0 && *value < 1.0);
+    if !finite {
+        return Err("release Subject inference returned an invalid probability mask".into());
+    }
+    Ok(ReleaseAiSelfTestReport {
+        schema_version: 1,
+        subject_background: "ok",
+        model_hash: result.model_hash,
+        execution_provider: result.execution_provider,
+        output_width: result.mask.width,
+        output_height: result.mask.height,
+        finite,
+    })
 }
 
 /// Executes a bounded, offline production-API workflow from the packaged executable.
@@ -3535,6 +3620,32 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_root_prefers_explicit_then_bundled_then_development_location() {
+        let base = std::env::temp_dir().join(format!("starroom-model-root-{}", std::process::id()));
+        let executable = base.join("installed").join("Starroom.exe");
+        let bundled = executable.parent().unwrap().join("models").join("local");
+        std::fs::create_dir_all(&bundled).unwrap();
+        assert_eq!(
+            resolve_local_model_root(None, Some(&executable), &base.join("working")),
+            bundled
+        );
+        assert_eq!(
+            resolve_local_model_root(
+                Some(std::ffi::OsString::from("D:\\reviewed-models")),
+                Some(&executable),
+                &base,
+            ),
+            PathBuf::from("D:\\reviewed-models")
+        );
+        std::fs::remove_dir_all(executable.parent().unwrap()).unwrap();
+        assert_eq!(
+            resolve_local_model_root(None, Some(&executable), &base.join("working")),
+            base.join("working").join("models").join("local")
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     fn settings() -> NativeEditSettings {
         NativeEditSettings {
