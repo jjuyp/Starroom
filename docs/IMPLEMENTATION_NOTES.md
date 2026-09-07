@@ -15,6 +15,9 @@
   one newest pending request, cooperatively cancels superseded work between shared-graph stages and
   rejects stale results before publish. A bounded source/tier decode cache and process-wide GPU
   device reuse accelerate repeated sliders and A-B-A switching without caching creative output.
+- Asset switching now paints the already generated Native Library thumbnail immediately and labels
+  it as a refining state. The authoritative Native Fit or high-resolution tile replaces it when
+  ready; the thumbnail is never treated as final 1:1 data or passed through Browser color math.
 - The field UI uses Library/Develop/Retouch/Compare navigation. Develop owns Navigator plus
   Presets/Layers/History, including full Snapshot lifecycle; Export is a floating glass panel and
   Portrait/Layers/Looks are context-disclosed. Image math remains entirely in the Rust graph.
@@ -47,6 +50,10 @@
 - Professional batch preparation no longer decodes the source when AI Denoise is disabled. The
   FullResolutionRenderer performs the single required decode. AI Denoise still performs its model
   residual preparation and final graph decode, preserving existing output semantics.
+- The manual rc.2 Release Gate records a deterministic 200-image Library registration, first
+  thumbnail and cached-restart corpus plus 24 MP cold Fit, cached reopen, interactive Exposure,
+  final refine and 100%/200% viewport timings. These runner values become the RC1-vs-RC2 report;
+  ordinary source commits do not run the heavy corpus.
 
 ## 2026-08-26 M30 release-candidate qualification
 

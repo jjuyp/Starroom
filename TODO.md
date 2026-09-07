@@ -18,6 +18,10 @@
   full-frame compatibility. Installed seam/latency/100 MP verification remains in the rc.2 gate.
 - [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; collect the
   final 24 MP release-mode comparison on the rc.2 candidate.
+- [x] Publish the cached Native Library thumbnail immediately on asset switch while the bounded Fit
+  render refines in the background; final/1:1 output still comes only from the Native graph.
+- [x] Add release-only measured gates for 200-asset registration/first thumbnails/cached restart and
+  24 MP cold Fit/cached reopen/interactive/refine/100%/200% viewport timing.
 - [x] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.
   Show the actual model-installation state, never claim clean-install Face/Skin readiness.
 - [x] Package the exact hash-verified MIT BiRefNet release asset for offline Subject/Background;

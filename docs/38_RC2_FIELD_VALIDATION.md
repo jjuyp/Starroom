@@ -84,6 +84,13 @@ No performance improvement percentage has been claimed from these unit tests.
 - Professional batch previously decoded every source during preparation even when AI Denoise was
   disabled and then decoded it again in `FullResolutionRenderer`. The unused first decode is gone;
   shared graph, color precision, output bytes, atomic write and AI-enabled behavior are unchanged.
+- The center preview immediately publishes the current asset's Native-generated Library thumbnail
+  while the first Native Fit render is pending. This supplies usable asset-switch feedback without
+  blocking input; the state is explicitly labelled refining and cannot satisfy or replace 1:1.
+- The manual Release Gate now emits `RC2_LIBRARY_PERF` for 200 registrations, first thumbnails and
+  cached restart, and `RC2_PREVIEW_PERF` for a real 24 MP cold Fit, cached reopen, interactive
+  Exposure, final refine and 100%/200% source-positioned tiles. Final measured numbers belong in
+  the performance report only after the exact candidate SHA passes.
 
 ## Preview scheduling batch
 

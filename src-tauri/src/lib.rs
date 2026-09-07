@@ -3862,6 +3862,145 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release-only 24 MP RC2 performance gate"]
+    fn rc2_release_preview_cache_interaction_and_viewport_timings() {
+        if std::env::var_os("STARROOM_RC2_PERFORMANCE_GATE").is_none() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "starroom-rc2-preview-performance-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("24mp.png");
+        let (source_width, source_height) = (6000_u32, 4000_u32);
+        let mut rgb = Vec::with_capacity(source_width as usize * source_height as usize * 3);
+        for y in 0..source_height {
+            for x in 0..source_width {
+                rgb.extend_from_slice(&[
+                    ((x * 255) / (source_width - 1)) as u8,
+                    ((y * 255) / (source_height - 1)) as u8,
+                    (((x + y) * 255) / (source_width + source_height - 2)) as u8,
+                ]);
+            }
+        }
+        let encoded = starroom_imageio::encode_png_rgb8(&rgb, source_width, source_height)
+            .expect("24 MP fixture encode");
+        std::fs::write(&source, encoded).unwrap();
+        drop(rgb);
+
+        let scheduler = NativePreviewScheduler::default();
+        let portrait = NativePortraitRuntime::default();
+        let masks = NativeAiMaskRuntime::default();
+        let denoise = NativeAiDenoiseRuntime::default();
+        let render =
+            |request_id: &str, interaction_phase, resolution_mode, viewport, edit_settings| {
+                let started = std::time::Instant::now();
+                native_preview_inner(
+                    &scheduler,
+                    &portrait,
+                    &masks,
+                    &denoise,
+                    NativePreviewRequest {
+                        request_id: request_id.into(),
+                        source_path: source.clone(),
+                        max_edge: 1800,
+                        prefer_gpu: false,
+                        interaction_phase,
+                        resolution_mode,
+                        viewport,
+                        settings: edit_settings,
+                    },
+                )
+                .expect("native preview");
+                started.elapsed()
+            };
+
+        let first = render(
+            "first-fit",
+            PreviewInteractionPhase::Final,
+            PreviewResolutionMode::Fit,
+            None,
+            settings(),
+        );
+        let reopen = render(
+            "cached-reopen",
+            PreviewInteractionPhase::Final,
+            PreviewResolutionMode::Fit,
+            None,
+            settings(),
+        );
+        let _ = render(
+            "interactive-warm",
+            PreviewInteractionPhase::Interactive,
+            PreviewResolutionMode::Fit,
+            None,
+            settings(),
+        );
+        let mut dragged = settings();
+        dragged.exposure = 1.0;
+        let interactive = render(
+            "interactive-exposure",
+            PreviewInteractionPhase::Interactive,
+            PreviewResolutionMode::Fit,
+            None,
+            dragged.clone(),
+        );
+        let refine = render(
+            "final-exposure",
+            PreviewInteractionPhase::Final,
+            PreviewResolutionMode::Fit,
+            None,
+            dragged.clone(),
+        );
+        let tile_100 = render(
+            "tile-100",
+            PreviewInteractionPhase::Final,
+            PreviewResolutionMode::HighResolution,
+            Some(PreviewViewportRequest {
+                source_width,
+                source_height,
+                x: 2400,
+                y: 1600,
+                width: 1200,
+                height: 800,
+            }),
+            dragged.clone(),
+        );
+        let tile_200 = render(
+            "tile-200",
+            PreviewInteractionPhase::Final,
+            PreviewResolutionMode::HighResolution,
+            Some(PreviewViewportRequest {
+                source_width,
+                source_height,
+                x: 2700,
+                y: 1800,
+                width: 600,
+                height: 400,
+            }),
+            dragged,
+        );
+        assert_eq!(scheduler.decoded.lock().unwrap().len(), 2);
+        assert!(!scheduler.viewport_frames.lock().unwrap().is_empty());
+        assert!(
+            interactive < first,
+            "warmed interactive response {interactive:?} must beat cold open {first:?}"
+        );
+        eprintln!(
+            "RC2_PREVIEW_PERF first_fit_ms={:.3} cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
+            first.as_secs_f64() * 1000.0,
+            reopen.as_secs_f64() * 1000.0,
+            interactive.as_secs_f64() * 1000.0,
+            refine.as_secs_f64() * 1000.0,
+            tile_100.as_secs_f64() * 1000.0,
+            tile_200.as_secs_f64() * 1000.0,
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn layer_contract_rejects_duplicate_ids_before_native_rendering() {
         let mut settings = settings();
         settings.layers = vec![

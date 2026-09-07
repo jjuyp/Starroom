@@ -585,6 +585,23 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
 
   useEffect(() => {
     let cancelled = false
+    let finalPublished = false
+    if (photo.renderBackend === 'native' && photo.src) {
+      const cachedThumbnail = new Image()
+      cachedThumbnail.onload = () => {
+        if (cancelled || finalPublished || !canvasRef.current) return
+        const canvas = canvasRef.current
+        const context = canvas.getContext('2d')
+        if (!context) return
+        canvas.width = cachedThumbnail.naturalWidth
+        canvas.height = cachedThumbnail.naturalHeight
+        context.drawImage(cachedThumbnail, 0, 0)
+        setTileRegion(null)
+        onDimensions(`${photo.libraryAsset?.metadata.width ?? cachedThumbnail.naturalWidth} × ${photo.libraryAsset?.metadata.height ?? cachedThumbnail.naturalHeight}`)
+        onStatus('Native cached thumbnail · refining…')
+      }
+      cachedThumbnail.src = photo.src
+    }
     const timeout = window.setTimeout(async () => {
       onStatus('Rendering…')
       try {
@@ -649,6 +666,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           release?.()
           return
         }
+        finalPublished = true
         const canvas = canvasRef.current
         const context = canvas.getContext('2d', { willReadFrequently: true })
         if (!context) {

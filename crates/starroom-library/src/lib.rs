@@ -1542,6 +1542,62 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release-only RC2 200-thumbnail performance gate"]
+    fn rc2_two_hundred_asset_thumbnail_generation_and_cached_restart() {
+        if std::env::var_os("STARROOM_RC2_PERFORMANCE_GATE").is_none() {
+            return;
+        }
+        let root = temp("rc2-two-hundred-thumbnails");
+        let paths: Vec<_> = (0..200)
+            .map(|index| {
+                let path = root.join(format!("photo-{index:03}.png"));
+                png(&path, [index as u8, 40, 80]);
+                path
+            })
+            .collect();
+        let source_before = fs::read(&paths[0]).unwrap();
+        let database = root.join("db.sqlite");
+        let cache = root.join("cache");
+        let mut library = Library::open(&database).unwrap();
+        let registration_started = Instant::now();
+        let imported = library
+            .import_paths(&paths, &AtomicBool::new(false))
+            .unwrap()
+            .imported;
+        let registration = registration_started.elapsed();
+        let generation_started = Instant::now();
+        for asset_id in &imported {
+            let path = library
+                .generate_thumbnail(*asset_id, &cache, ThumbnailSize::Small256)
+                .unwrap();
+            assert!(path.is_file());
+        }
+        let generation = generation_started.elapsed();
+        drop(library);
+
+        let mut reopened = Library::open(&database).unwrap();
+        let cached_started = Instant::now();
+        for asset_id in &imported {
+            reopened
+                .generate_thumbnail(*asset_id, &cache, ThumbnailSize::Small256)
+                .unwrap();
+        }
+        let cached_restart = cached_started.elapsed();
+        assert_eq!(fs::read(&paths[0]).unwrap(), source_before);
+        assert!(registration.as_secs_f64() < 5.0);
+        assert!(generation.as_secs_f64() < 10.0);
+        assert!(cached_restart.as_secs_f64() < 2.0);
+        eprintln!(
+            "RC2_LIBRARY_PERF registration_200_ms={:.3} thumbnail_first_200_ms={:.3} thumbnail_cached_restart_200_ms={:.3}",
+            registration.as_secs_f64() * 1000.0,
+            generation.as_secs_f64() * 1000.0,
+            cached_restart.as_secs_f64() * 1000.0,
+        );
+        drop(reopened);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn future_database_schema_is_rejected_without_downgrade() {
         let root = temp("future-database");
         let database = root.join("library.sqlite");
