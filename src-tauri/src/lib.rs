@@ -1175,7 +1175,18 @@ struct NativePreviewRequest {
     interaction_phase: PreviewInteractionPhase,
     #[serde(default)]
     resolution_mode: PreviewResolutionMode,
+    #[serde(default)]
+    viewport: Option<PreviewViewportRequest>,
     settings: NativeEditSettings,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct PreviewViewportRequest {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -1206,6 +1217,26 @@ fn wants_high_resolution(mode: PreviewResolutionMode, phase: PreviewInteractionP
     mode == PreviewResolutionMode::HighResolution && phase == PreviewInteractionPhase::Final
 }
 
+fn viewport_graph_is_tile_safe(settings: &RenderSettings) -> bool {
+    !settings.ai_denoise.enabled
+        && settings.ai_denoise_residual.is_none()
+        && settings.white_balance.sample.is_none()
+        && !matches!(
+            settings.white_balance.mode,
+            WhiteBalanceMode::Auto | WhiteBalanceMode::NeutralPicker
+        )
+        && !settings.optics.parameters.enabled
+        && settings.geometry == GeometryParameters::default()
+        && settings.layers.is_empty()
+        && settings.portrait_masks.is_empty()
+        && settings.generated_masks.is_empty()
+        && settings.skin_retouch.parameters == Default::default()
+        && settings.skin_retouch.faces.is_empty()
+        && settings.healing_operations.is_empty()
+        && settings.grain.amount == 0.0
+        && settings.vignette.amount == 0.0
+}
+
 /// Process-wide M13 scheduler state. It holds only derived preview/cache bytes and request
 /// identities; the immutable source image remains on disk and full export never reads this cache.
 struct NativePreviewScheduler {
@@ -1214,6 +1245,7 @@ struct NativePreviewScheduler {
     cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
     render_lock: Mutex<()>,
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
+    viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<GpuRenderer, String>>>,
 }
 
@@ -1370,6 +1402,7 @@ impl Default for NativePreviewScheduler {
             cancellations: Mutex::new(BTreeMap::new()),
             render_lock: Mutex::new(()),
             decoded: Mutex::new(VecDeque::new()),
+            viewport_frames: Mutex::new(VecDeque::new()),
             gpu: Mutex::new(None),
         }
     }
@@ -1532,24 +1565,111 @@ fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
 fn preview_frame(
     width: u32,
     height: u32,
+    source_width: u32,
+    source_height: u32,
+    tile_x: u32,
+    tile_y: u32,
     flags: u16,
     profile_id: &str,
     jpeg: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     let profile_len = u16::try_from(profile_id.len()).map_err(|_| "profile ID is too long")?;
     let payload_len = u32::try_from(jpeg.len()).map_err(|_| "native preview is too large")?;
-    let mut frame = Vec::with_capacity(24 + profile_id.len() + jpeg.len());
-    frame.extend_from_slice(b"SRP2");
-    frame.extend_from_slice(&2_u16.to_le_bytes());
+    let mut frame = Vec::with_capacity(40 + profile_id.len() + jpeg.len());
+    frame.extend_from_slice(b"SRP3");
+    frame.extend_from_slice(&3_u16.to_le_bytes());
     frame.extend_from_slice(&flags.to_le_bytes());
     frame.extend_from_slice(&width.to_le_bytes());
     frame.extend_from_slice(&height.to_le_bytes());
+    frame.extend_from_slice(&source_width.to_le_bytes());
+    frame.extend_from_slice(&source_height.to_le_bytes());
+    frame.extend_from_slice(&tile_x.to_le_bytes());
+    frame.extend_from_slice(&tile_y.to_le_bytes());
     frame.extend_from_slice(&profile_len.to_le_bytes());
     frame.extend_from_slice(&0_u16.to_le_bytes());
     frame.extend_from_slice(&payload_len.to_le_bytes());
     frame.extend_from_slice(profile_id.as_bytes());
     frame.extend_from_slice(&jpeg);
     Ok(frame)
+}
+
+fn validated_viewport(
+    requested: Option<PreviewViewportRequest>,
+    width: u32,
+    height: u32,
+) -> Result<PreviewViewportRequest, String> {
+    let viewport = requested.unwrap_or(PreviewViewportRequest {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    });
+    if viewport.width == 0
+        || viewport.height == 0
+        || viewport
+            .x
+            .checked_add(viewport.width)
+            .is_none_or(|right| right > width)
+        || viewport
+            .y
+            .checked_add(viewport.height)
+            .is_none_or(|bottom| bottom > height)
+    {
+        return Err("PreviewViewportInvalid: requested tile is outside source bounds".into());
+    }
+    Ok(viewport)
+}
+
+fn expand_viewport(
+    viewport: PreviewViewportRequest,
+    width: u32,
+    height: u32,
+    halo: u32,
+) -> PreviewViewportRequest {
+    let x = viewport.x.saturating_sub(halo);
+    let y = viewport.y.saturating_sub(halo);
+    let right = viewport
+        .x
+        .saturating_add(viewport.width)
+        .saturating_add(halo)
+        .min(width);
+    let bottom = viewport
+        .y
+        .saturating_add(viewport.height)
+        .saturating_add(halo)
+        .min(height);
+    PreviewViewportRequest {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    }
+}
+
+fn crop_rgb8(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    crop_width: u32,
+    crop_height: u32,
+) -> Result<Vec<u8>, String> {
+    if data.len() != width as usize * height as usize * 3
+        || crop_width == 0
+        || crop_height == 0
+        || x.checked_add(crop_width).is_none_or(|right| right > width)
+        || y.checked_add(crop_height)
+            .is_none_or(|bottom| bottom > height)
+    {
+        return Err("PreviewTileInvalid: rendered tile crop is outside frame bounds".into());
+    }
+    let mut cropped = Vec::with_capacity(crop_width as usize * crop_height as usize * 3);
+    for row in y..y + crop_height {
+        let start = (row as usize * width as usize + x as usize) * 3;
+        cropped.extend_from_slice(&data[start..start + crop_width as usize * 3]);
+    }
+    Ok(cropped)
 }
 
 fn preview_source_identity(path: &Path) -> Result<String, String> {
@@ -2628,16 +2748,63 @@ fn native_preview_inner(
         }
         image
     };
+    let (source_width, source_height) = source_dimensions(&decoded);
+    let viewport = validated_viewport(
+        high_resolution.then_some(request.viewport).flatten(),
+        source_width,
+        source_height,
+    )?;
+    let tile_requested = high_resolution
+        && (viewport.x != 0
+            || viewport.y != 0
+            || viewport.width != source_width
+            || viewport.height != source_height);
+    let tile_optimized = tile_requested && viewport_graph_is_tile_safe(&settings);
+    let halo = RenderGraph::default().maximum_halo();
+    let expanded = if tile_optimized {
+        expand_viewport(viewport, source_width, source_height, halo)
+    } else {
+        PreviewViewportRequest {
+            x: 0,
+            y: 0,
+            width: source_width,
+            height: source_height,
+        }
+    };
+    let render_decoded = if tile_optimized {
+        Arc::new(
+            decoded
+                .crop(expanded.x, expanded.y, expanded.width, expanded.height)
+                .map_err(|error| format!("native viewport crop failed: {error}"))?,
+        )
+    } else {
+        decoded.clone()
+    };
+    let viewport_cache_key = format!(
+        "{source_identity}:{graph_identity}:{}:{}:{}:{}:{tile_optimized}",
+        viewport.x, viewport.y, viewport.width, viewport.height
+    );
+    if high_resolution {
+        let mut cache = scheduler
+            .viewport_frames
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned viewport cache".to_owned())?;
+        if let Some(index) = cache.iter().position(|(key, _)| key == &viewport_cache_key) {
+            let entry = cache.remove(index).expect("located viewport cache entry");
+            let frame = entry.1.clone();
+            cache.push_back(entry);
+            return Ok(Response::new(frame));
+        }
+    }
     starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
     attach_ai_denoise(
-        &decoded,
+        &render_decoded,
         &request.source_path,
         &mut settings,
         requested_denoise_provider,
         &request.request_id,
         ai_denoise_runtime,
     )?;
-    let (source_width, source_height) = source_dimensions(&decoded);
     let job = scheduler
         .scheduler
         .lock()
@@ -2653,15 +2820,14 @@ fn native_preview_inner(
             RenderGraph::default().maximum_halo(),
         );
     let frame_tile = job.full_frame_tile();
-    if !high_resolution {
-        if let Some(frame) = scheduler
+    if !high_resolution
+        && let Some(frame) = scheduler
             .scheduler
             .lock()
             .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
             .cached_tile(&frame_tile.identity)
-        {
-            return Ok(Response::new(frame));
-        }
+    {
+        return Ok(Response::new(frame));
     }
     let (rendered, backend_flags) = if request.prefer_gpu {
         let mut gpu = scheduler
@@ -2672,7 +2838,8 @@ fn native_preview_inner(
             gpu.get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()));
         match renderer {
             Ok(renderer) => {
-                match render_source_preview_with_gpu_to_srgb8(&decoded, &settings, renderer) {
+                match render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer)
+                {
                     Ok(rendered) => {
                         let flag = match renderer.status().backend {
                             GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
@@ -2681,32 +2848,64 @@ fn native_preview_inner(
                         (rendered, flag)
                     }
                     Err(error) => {
-                        let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+                        let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
                         .map_err(|fallback| format!("native GPU preview failed ({error}); CPU reference fallback also failed: {fallback}"))?;
                         (rendered, 0x0010)
                     }
                 }
             }
             Err(_) => {
-                let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+                let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
                     .map_err(|error| format!("native CPU preview graph failed after GPU initialization fallback: {error}"))?;
                 (rendered, 0x0010)
             }
         }
     } else {
-        let rendered = render_source_preview_to_srgb8(&decoded, &settings)
+        let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
             .map_err(|error| format!("native CPU preview graph failed: {error}"))?;
         (rendered, 0x0010)
     };
     starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
-    let flags = profile_flag(rendered.color.input) | backend_flags;
+    let flags = profile_flag(rendered.color.input)
+        | backend_flags
+        | if tile_requested { 0x0020 } else { 0 }
+        | if tile_optimized { 0x0040 } else { 0 };
     let profile_id = rendered.color.camera_profile_id.as_deref().unwrap_or("");
+    let (tile_data, tile_width, tile_height) = if tile_requested {
+        let crop_x = viewport.x - expanded.x;
+        let crop_y = viewport.y - expanded.y;
+        (
+            crop_rgb8(
+                &rendered.data,
+                rendered.width,
+                rendered.height,
+                crop_x,
+                crop_y,
+                viewport.width,
+                viewport.height,
+            )?,
+            viewport.width,
+            viewport.height,
+        )
+    } else {
+        (rendered.data, rendered.width, rendered.height)
+    };
     let jpeg = profiling::measure(ProfileStage::Encode, 0, || {
-        encode_jpeg_rgb8(&rendered.data, rendered.width, rendered.height, 91, None)
+        encode_jpeg_rgb8(&tile_data, tile_width, tile_height, 91, None)
     })
     .map_err(|error| format!("native preview encode failed: {error}"))?;
-    let frame = preview_frame(rendered.width, rendered.height, flags, profile_id, jpeg)?;
-    let estimated_vram_bytes = rendered.width as usize * rendered.height as usize * 8;
+    let frame = preview_frame(
+        tile_width,
+        tile_height,
+        source_width,
+        source_height,
+        if tile_requested { viewport.x } else { 0 },
+        if tile_requested { viewport.y } else { 0 },
+        flags,
+        profile_id,
+        jpeg,
+    )?;
+    let estimated_vram_bytes = tile_width as usize * tile_height as usize * 8;
     if !high_resolution {
         let completion = scheduler
             .scheduler
@@ -2715,6 +2914,22 @@ fn native_preview_inner(
             .complete_tile(&frame_tile, frame.clone(), estimated_vram_bytes);
         if completion == Completion::Stale {
             return Err("native preview was superseded by a newer render request".into());
+        }
+    } else {
+        const VIEWPORT_CACHE_BUDGET: usize = 64 * 1024 * 1024;
+        let mut cache = scheduler
+            .viewport_frames
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned viewport cache".to_owned())?;
+        while !cache.is_empty()
+            && (cache.len() >= 12
+                || cache.iter().map(|(_, bytes)| bytes.len()).sum::<usize>() + frame.len()
+                    > VIEWPORT_CACHE_BUDGET)
+        {
+            cache.pop_front();
+        }
+        if frame.len() <= VIEWPORT_CACHE_BUDGET {
+            cache.push_back((viewport_cache_key, frame.clone()));
         }
     }
     Ok(Response::new(frame))
@@ -3338,17 +3553,94 @@ mod tests {
     #[test]
     fn binary_preview_contract_has_fixed_header_and_payload_length() {
         let profile = "dng-forward-matrix:test:camera";
-        let frame = preview_frame(640, 480, 2, profile, vec![0xff, 0xd8, 0xff]).expect("frame");
-        assert_eq!(&frame[0..4], b"SRP2");
+        let frame = preview_frame(
+            640,
+            480,
+            6000,
+            4000,
+            512,
+            256,
+            2 | 0x20 | 0x40,
+            profile,
+            vec![0xff, 0xd8, 0xff],
+        )
+        .expect("frame");
+        assert_eq!(&frame[0..4], b"SRP3");
         assert_eq!(u32::from_le_bytes(frame[8..12].try_into().unwrap()), 640);
         assert_eq!(u32::from_le_bytes(frame[12..16].try_into().unwrap()), 480);
+        assert_eq!(u32::from_le_bytes(frame[16..20].try_into().unwrap()), 6000);
+        assert_eq!(u32::from_le_bytes(frame[20..24].try_into().unwrap()), 4000);
+        assert_eq!(u32::from_le_bytes(frame[24..28].try_into().unwrap()), 512);
+        assert_eq!(u32::from_le_bytes(frame[28..32].try_into().unwrap()), 256);
         assert_eq!(
-            u16::from_le_bytes(frame[16..18].try_into().unwrap()) as usize,
+            u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize,
             profile.len()
         );
-        assert_eq!(u32::from_le_bytes(frame[20..24].try_into().unwrap()), 3);
-        assert_eq!(&frame[24..24 + profile.len()], profile.as_bytes());
-        assert_eq!(&frame[24 + profile.len()..], &[0xff, 0xd8, 0xff]);
+        assert_eq!(u32::from_le_bytes(frame[36..40].try_into().unwrap()), 3);
+        assert_eq!(&frame[40..40 + profile.len()], profile.as_bytes());
+        assert_eq!(&frame[40 + profile.len()..], &[0xff, 0xd8, 0xff]);
+    }
+
+    #[test]
+    fn preview_viewport_validates_and_expands_at_source_edges() {
+        let viewport = validated_viewport(
+            Some(PreviewViewportRequest {
+                x: 100,
+                y: 50,
+                width: 512,
+                height: 400,
+            }),
+            1000,
+            800,
+        )
+        .expect("viewport");
+        assert_eq!(
+            expand_viewport(viewport, 1000, 800, 32),
+            PreviewViewportRequest {
+                x: 68,
+                y: 18,
+                width: 576,
+                height: 464
+            }
+        );
+        assert!(
+            validated_viewport(
+                Some(PreviewViewportRequest {
+                    x: 900,
+                    y: 0,
+                    width: 200,
+                    height: 100
+                }),
+                1000,
+                800,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rgb_tile_crop_is_exact_and_row_ordered() {
+        let data: Vec<u8> = (0..36).collect();
+        let tile = crop_rgb8(&data, 4, 3, 1, 1, 2, 2).expect("tile");
+        assert_eq!(tile, [15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 32]);
+    }
+
+    #[test]
+    fn viewport_optimization_rejects_global_coordinate_stages_explicitly() {
+        let base = settings().validated().expect("settings");
+        assert!(viewport_graph_is_tile_safe(&base));
+        let mut geometry = base.clone();
+        geometry.geometry.rotation_degrees = 1.0;
+        assert!(!viewport_graph_is_tile_safe(&geometry));
+        let mut picker = base.clone();
+        picker.white_balance.mode = WhiteBalanceMode::NeutralPicker;
+        picker.white_balance.sample = Some(WhiteBalanceSample {
+            x: 0.4,
+            y: 0.4,
+            width: 0.1,
+            height: 0.1,
+        });
+        assert!(!viewport_graph_is_tile_safe(&picker));
     }
 
     #[test]

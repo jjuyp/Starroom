@@ -28,7 +28,7 @@ The remaining core AI and optional-pack requirements still need production valid
 | Removed assets resurrect | FIXED, verification pending | One Native transaction deletes catalog membership, cascades keyword/collection membership, never source files. Retired-ID high-water prevents new imports from inheriting old history sidecars. |
 | Selection / rating / recent imports | FIXED, verification pending | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift selection, full native filtered Ctrl-A, one-transaction bulk removal, schema-v2 deterministic latest import batches, shortcuts 0-5 and thumbnail 0-5 rating controls are implemented. Installed workflow validation remains required. |
 | Preview latency / latest-wins | FIXED, verification pending | Heavy work now runs on a blocking worker, per-surface latest-wins keeps one pending state, Native cancellation checkpoints reject stale publish, decoded source tiers and the GPU device are reused. Release-mode latency evidence remains required. |
-| True 1:1 viewport tiles | IN PROGRESS | 1:1/high zoom now requests a separately identified full-source Native render and Fit remains bounded; final viewport tile transport/cache and installed latency acceptance remain open. |
+| True 1:1 viewport tiles | FIXED, verification pending | SRP3 transports only a source-positioned viewport JPEG; a bounded edit/source/viewport-keyed cache serves revisits. Tile-safe color/tone/detail graphs render only the requested region plus declared halo. Global coordinate stages use an explicit `full-frame compatibility` state before the correct viewport is cropped. Installed 1:1 latency, seam and 100 MP memory acceptance remain open. |
 | AI availability | FIXED, verification pending with Face/Skin exception | Native startup verifies model presence/hash before use and UI shows Ready / Model not installed / Invalid / Error. User-approved local-only BiSeNet policy remains. Installed packaging/offline validation pending. |
 | Final workspace / snapshots / control layout | FIXED, verification pending | Develop now owns Navigator plus Presets/Layers/History; full Snapshot create/rename/delete/restore/compare is exposed there. Export is a floating context panel and Portrait/Layers/Looks use progressive disclosure. Real installed 1280/1920/2560 layout acceptance remains required. |
 | Export performance | FIXED, measurement pending | Normal Professional batch no longer performs an unused full source decode before the FullResolutionRenderer decodes the same asset. AI Denoise retains its required residual prepass. Release-mode 24 MP comparison remains required. |
@@ -68,9 +68,13 @@ No performance improvement percentage has been claimed from these unit tests.
   Denoise model files and hashes before a tool is clicked. The UI uses four non-ambiguous states:
   Ready, Model not installed, Invalid and Error. It never downloads a model or selects cloud/API.
 - Fit continues to request a bounded Native preview. 1:1 and zoom above Fit carry an explicit
-  `highResolution` contract; interactive drag stays on the low-cost tier and final refine reopens
-  full source resolution rather than enlarging the 1800/4096 preview. Viewport-only tile transport
-  remains a release blocker until its production cache/latency gate passes.
+  `highResolution` contract; interactive drag stays on the low-cost tier and final refinement uses
+  an SRP3 source-positioned viewport payload instead of enlarging the Fit frame. The Native path
+  preserves f32/RAW metadata, expands tile-safe processing by the graph halo, crops only the halo
+  interior, and caches the encoded viewport under source/edit/region identity. Geometry, Lens,
+  Masks, Healing, Skin, finishing effects, AI and image-statistical WB are deliberately classified
+  as `full-frame compatibility`; correctness is preserved and the UI exposes that state instead of
+  silently claiming the local optimization. Installed latency/seam/100 MP validation is pending.
 - Professional batch previously decoded every source during preparation even when AI Denoise was
   disabled and then decoded it again in `FullResolutionRenderer`. The unused first decode is gone;
   shared graph, color precision, output bytes, atomic write and AI-enabled behavior are unchanged.

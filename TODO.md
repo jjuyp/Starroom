@@ -13,8 +13,9 @@
 - [x] Expose Develop Navigator/Presets/Layers/History, full Snapshot actions and context-disclosed
   Export/Portrait/Layer/Look panels. Installed multi-resolution layout verification remains open.
 - [x] Show verified local AI availability before tool activation; keep unbundled models explicit.
-- [ ] Finish viewport-only high-resolution tile transport/cache. Settled 1:1/high zoom now uses real
-  source resolution and never enlarges the bounded Fit frame, but full-frame processing is interim.
+- [x] Implement SRP3 viewport-only high-resolution transport/cache and source-positioned canvas
+  refinement. Tile-safe graphs process only viewport+halo; global-coordinate graphs clearly report
+  full-frame compatibility. Installed seam/latency/100 MP verification remains in the rc.2 gate.
 - [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; collect the
   final 24 MP release-mode comparison on the rc.2 candidate.
 - [ ] Keep BiSeNet local-only; per user decision rc.2 does not publicly bundle Face/Skin.

@@ -21,6 +21,8 @@ pub enum ImageIoError {
     UnknownFormat,
     #[error("RGB buffer length does not match dimensions")]
     InvalidBufferLength,
+    #[error("source crop is empty or outside decoded image bounds")]
+    InvalidCrop,
     #[error("TIFF metadata encoder failed: {0}")]
     TiffMetadata(String),
     #[error("container metadata encoder failed: {0}")]
@@ -48,6 +50,50 @@ impl DecodedSourceImage {
         match self {
             Self::Rendered(image) => image.height,
             Self::Raw(image) => image.height,
+        }
+    }
+
+    /// Copies a validated source-space region while preserving all color/profile metadata.
+    /// Native high-resolution viewport rendering uses this after the authoritative decoder has
+    /// produced high-precision pixels. It never converts through 8-bit or changes the source.
+    pub fn crop(&self, x: u32, y: u32, width: u32, height: u32) -> Result<Self, ImageIoError> {
+        if width == 0
+            || height == 0
+            || x.checked_add(width)
+                .is_none_or(|right| right > self.width())
+            || y.checked_add(height)
+                .is_none_or(|bottom| bottom > self.height())
+        {
+            return Err(ImageIoError::InvalidCrop);
+        }
+        match self {
+            Self::Rendered(image) => {
+                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+                for row in y..y + height {
+                    let start = (row as usize * image.width as usize + x as usize) * 4;
+                    rgba.extend_from_slice(&image.rgba[start..start + width as usize * 4]);
+                }
+                Ok(Self::Rendered(DecodedRenderedImage {
+                    width,
+                    height,
+                    format: image.format,
+                    rgba,
+                    embedded_icc: image.embedded_icc.clone(),
+                    exif: image.exif.clone(),
+                }))
+            }
+            Self::Raw(image) => {
+                let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+                for row in y..y + height {
+                    let start = (row as usize * image.width as usize + x as usize) * 3;
+                    rgb.extend_from_slice(&image.rgb[start..start + width as usize * 3]);
+                }
+                let mut cropped = (**image).clone();
+                cropped.width = width;
+                cropped.height = height;
+                cropped.rgb = rgb;
+                Ok(Self::Raw(Box::new(cropped)))
+            }
         }
     }
 }
@@ -529,6 +575,37 @@ fn insert_png_xmp(png: &mut Vec<u8>, xmp: &[u8]) -> Result<(), ImageIoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_crop_preserves_f32_samples_and_profile_metadata() {
+        let image = DecodedSourceImage::Rendered(DecodedRenderedImage {
+            width: 3,
+            height: 2,
+            format: RenderedFormat::Tiff,
+            rgba: (0..24).map(|value| value as f32 / 23.0).collect(),
+            embedded_icc: Some(vec![1, 2, 3]),
+            exif: Some(vec![4, 5]),
+        });
+        let DecodedSourceImage::Rendered(cropped) = image.crop(1, 0, 2, 2).expect("crop") else {
+            panic!("rendered crop changed source kind");
+        };
+        assert_eq!((cropped.width, cropped.height), (2, 2));
+        assert_eq!(cropped.embedded_icc, Some(vec![1, 2, 3]));
+        assert_eq!(cropped.exif, Some(vec![4, 5]));
+        assert_eq!(&cropped.rgba[..8], &image_rgba(&image)[4..12]);
+        assert_eq!(&cropped.rgba[8..], &image_rgba(&image)[16..24]);
+        assert!(matches!(
+            image.crop(2, 1, 2, 1),
+            Err(ImageIoError::InvalidCrop)
+        ));
+    }
+
+    fn image_rgba(image: &DecodedSourceImage) -> &[f32] {
+        match image {
+            DecodedSourceImage::Rendered(image) => &image.rgba,
+            DecodedSourceImage::Raw(_) => panic!("expected rendered test image"),
+        }
+    }
 
     #[test]
     fn jpeg_encoder_rejects_wrong_buffer_length() {

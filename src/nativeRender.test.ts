@@ -6,27 +6,39 @@ const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
 describe('native preview contract', () => {
   it('requests full source resolution for 1:1/high zoom while retaining a bounded Fit tier', () => {
-    expect(nativePreviewViewportContract('fit', 1, 6000, 4000)).toEqual({ resolutionMode: 'fit', maxEdge: 1800 })
-    expect(nativePreviewViewportContract('fit', 2, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000 })
-    expect(nativePreviewViewportContract('100', 1, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000 })
+    expect(nativePreviewViewportContract('fit', 1, 6000, 4000)).toEqual({ resolutionMode: 'fit', maxEdge: 1800, viewport: null })
+    expect(nativePreviewViewportContract('fit', 2, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: null })
+    expect(nativePreviewViewportContract('100', 1, 6000, 4000, {
+      centerX: .5, centerY: .5, widthFraction: .2, heightFraction: .25,
+    })).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: { x: 2250, y: 1375, width: 1500, height: 1250 } })
   })
   it('parses the versioned binary frame without JSON pixel arrays', () => {
     const payload = new Uint8Array([0xff, 0xd8, 0xff])
     const profile = new TextEncoder().encode('dng-forward-matrix:test:camera')
-    const frame = new Uint8Array(24 + profile.length + payload.length)
-    frame.set([83, 82, 80, 50])
+    const frame = new Uint8Array(40 + profile.length + payload.length)
+    frame.set([83, 82, 80, 51])
     const view = new DataView(frame.buffer)
-    view.setUint16(4, 2, true)
-    view.setUint16(6, 2, true)
+    view.setUint16(4, 3, true)
+    view.setUint16(6, 2 | 0x20 | 0x40, true)
     view.setUint32(8, 640, true)
     view.setUint32(12, 480, true)
-    view.setUint16(16, profile.length, true)
-    view.setUint32(20, payload.length, true)
-    frame.set(profile, 24)
-    frame.set(payload, 24 + profile.length)
+    view.setUint32(16, 6000, true)
+    view.setUint32(20, 4000, true)
+    view.setUint32(24, 512, true)
+    view.setUint32(28, 256, true)
+    view.setUint16(32, profile.length, true)
+    view.setUint32(36, payload.length, true)
+    frame.set(profile, 40)
+    frame.set(payload, 40 + profile.length)
     expect(parseNativePreviewFrame(frame)).toEqual({
       width: 640,
       height: 480,
+      sourceWidth: 6000,
+      sourceHeight: 4000,
+      tileX: 512,
+      tileY: 256,
+      isTile: true,
+      tileOptimized: true,
       acceleration: 'cpuFallback',
       inputProfile: 'resolved RAW camera profile',
       cameraProfileId: 'dng-forward-matrix:test:camera',

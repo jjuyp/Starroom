@@ -141,6 +141,12 @@ export interface NativeEditSettings {
 export interface NativePreviewResult {
   width: number
   height: number
+  sourceWidth: number
+  sourceHeight: number
+  tileX: number
+  tileY: number
+  isTile: boolean
+  tileOptimized: boolean
   /** M12 is explicit: native is the shared graph, and this reports whether its Exposure node
    * executed on wgpu or on the CPU reference fallback. */
   acceleration: 'gpu' | 'cpuFallback'
@@ -163,7 +169,7 @@ export interface NativeExportResult {
 }
 export interface NativeReferenceMatchResponse { settings: NativeEditSettings; recipe: { confidence: number; protectSkin: number }; sourceAnalysis: { fingerprint: string }; referenceAnalysis: { fingerprint: string } }
 
-const HEADER_BYTES = 24
+const HEADER_BYTES = 40
 
 export const nativeRuntimeAvailable = () => isTauri()
 
@@ -286,18 +292,24 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
 
 export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): NativePreviewResult {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
-  if (bytes.byteLength < HEADER_BYTES || String.fromCharCode(...bytes.subarray(0, 4)) !== 'SRP2') {
+  if (bytes.byteLength < HEADER_BYTES || String.fromCharCode(...bytes.subarray(0, 4)) !== 'SRP3') {
     throw new Error('Native preview returned an invalid binary frame.')
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const version = view.getUint16(4, true)
-  if (version !== 2) throw new Error(`Unsupported native preview contract version ${version}.`)
+  if (version !== 3) throw new Error(`Unsupported native preview contract version ${version}.`)
   const flags = view.getUint16(6, true)
   const width = view.getUint32(8, true)
   const height = view.getUint32(12, true)
-  const profileLength = view.getUint16(16, true)
-  const payloadLength = view.getUint32(20, true)
-  if (!width || !height || HEADER_BYTES + profileLength + payloadLength !== bytes.byteLength) {
+  const sourceWidth = view.getUint32(16, true)
+  const sourceHeight = view.getUint32(20, true)
+  const tileX = view.getUint32(24, true)
+  const tileY = view.getUint32(28, true)
+  const profileLength = view.getUint16(32, true)
+  const payloadLength = view.getUint32(36, true)
+  if (!width || !height || !sourceWidth || !sourceHeight
+    || tileX + width > sourceWidth || tileY + height > sourceHeight
+    || HEADER_BYTES + profileLength + payloadLength !== bytes.byteLength) {
     throw new Error('Native preview returned inconsistent dimensions or payload length.')
   }
   const profileStart = HEADER_BYTES
@@ -308,6 +320,12 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
   return {
     width,
     height,
+    sourceWidth,
+    sourceHeight,
+    tileX,
+    tileY,
+    isTile: Boolean(flags & 0x20),
+    tileOptimized: Boolean(flags & 0x40),
     acceleration: flags & 8 ? 'gpu' : 'cpuFallback',
     inputProfile: flags & 4 ? 'Generic RAW Profile'
       : flags & 2 ? 'resolved RAW camera profile'
@@ -420,13 +438,29 @@ export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
 const previewQueues = new WeakMap<object, LatestPreviewQueue<ArrayBuffer | Uint8Array>>()
 const defaultPreviewSurface = {}
 
-export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: number, sourceWidth = 0, sourceHeight = 0) {
+export interface NativePreviewViewport {
+  x: number; y: number; width: number; height: number
+}
+
+export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: number, sourceWidth = 0, sourceHeight = 0,
+  visible?: { centerX: number; centerY: number; widthFraction: number; heightFraction: number }) {
   const safeScale = Number.isFinite(zoomScale) ? Math.max(.25, Math.min(6, zoomScale)) : 1
   const sourceEdge = Math.max(0, Math.trunc(sourceWidth), Math.trunc(sourceHeight))
   const highResolution = zoom === '100' || safeScale > 1
+  let viewport: NativePreviewViewport | null = null
+  if (highResolution && sourceWidth > 0 && sourceHeight > 0 && visible) {
+    const width = Math.max(1, Math.min(sourceWidth, Math.ceil(sourceWidth * Math.max(0, Math.min(1, visible.widthFraction)) * 1.25)))
+    const height = Math.max(1, Math.min(sourceHeight, Math.ceil(sourceHeight * Math.max(0, Math.min(1, visible.heightFraction)) * 1.25)))
+    const centerX = Math.max(0, Math.min(1, visible.centerX)) * sourceWidth
+    const centerY = Math.max(0, Math.min(1, visible.centerY)) * sourceHeight
+    const x = Math.max(0, Math.min(sourceWidth - width, Math.round(centerX - width / 2)))
+    const y = Math.max(0, Math.min(sourceHeight - height, Math.round(centerY - height / 2)))
+    viewport = { x, y, width, height }
+  }
   return {
     resolutionMode: highResolution ? 'highResolution' as const : 'fit' as const,
     maxEdge: highResolution && sourceEdge ? sourceEdge : Math.max(512, Math.ceil(1800 * Math.max(1, safeScale))),
+    viewport,
   }
 }
 
@@ -446,13 +480,14 @@ export async function renderNativePreview(
   interactionPhase: NativePreviewInteractionPhase = 'final',
   surface: object = defaultPreviewSurface,
   resolutionMode: 'fit' | 'highResolution' = 'fit',
+  viewport: NativePreviewViewport | null = null,
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
   const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)

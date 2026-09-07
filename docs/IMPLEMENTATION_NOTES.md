@@ -27,7 +27,13 @@
 - Fit and high-resolution preview requests have distinct contracts. Slider interaction always uses
   the bounded tier; the settled 1:1/high-zoom request decodes/render the immutable source at its real
   dimensions, so it cannot publish an enlarged 1800/4096 frame. Viewport-only rendering/caching is
-  still required before the rc.2 high-resolution latency gate can be accepted.
+  now uses an SRP3 binary tile contract carrying source dimensions and tile origin. The WebView
+  keeps its bounded Fit canvas and overlays the high-resolution tile at source coordinates, so a
+  100 MP backing canvas and a whole-frame JPEG are avoided. Rust preserves f32/RAW profile metadata,
+  expands tile-safe graphs by the declared halo, and caches encoded tiles in a bounded 64 MiB LRU.
+  Global-coordinate stages are rendered through an explicit full-frame compatibility path and then
+  cropped for transport; no incorrect local result or silent optimization claim is allowed.
+  Installed seam, latency and peak-memory evidence is still required before the rc.2 gate is accepted.
 - Professional batch preparation no longer decodes the source when AI Denoise is disabled. The
   FullResolutionRenderer performs the single required decode. AI Denoise still performs its model
   residual preparation and final graph decode, preserving existing output semantics.

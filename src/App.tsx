@@ -18,7 +18,7 @@ import {
 } from './imagePipeline'
 import {
   adviseNativeImage, chooseNativePhotoPaths, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   queryNativeAiAvailability, type NativeAiAvailability,
@@ -555,9 +555,10 @@ function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   </svg>
 }
 
-function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 'final', maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, onDisplayScale, metric = true }: {
+function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 }, interactionPhase = 'final', maskActive = false, healActive = false, brushActive = false, maskPreview = null, onBeginMaskEdit, onMaskChange, onHealingStroke, onBrushStroke, onWhiteBalancePick, onColorSample, onHistogram, onStatus, onDimensions, onDisplayScale, metric = true }: {
   photo: PhotoItem; before: boolean; zoom: 'fit' | '100'
   zoomScale?: number
+  pan?: { x: number; y: number }
   interactionPhase?: 'interactive' | 'final'
   maskActive?: boolean; onBeginMaskEdit?: () => void; onMaskChange?: (mask: RadialMask) => void
   healActive?: boolean; onHealingStroke?: (points: Array<{ x: number; y: number }>) => void
@@ -572,8 +573,10 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
   metric?: boolean
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const tileCanvasRef = useRef<HTMLCanvasElement>(null)
   const previewSurface = useRef({})
   const [canvasBounds, setCanvasBounds] = useState({ left: 0, top: 0, width: 0, height: 0 })
+  const [tileRegion, setTileRegion] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const healingStroke = useRef<Array<{ x: number; y: number }> | null>(null)
   const maskBrushStroke = useRef<Array<{ x: number; y: number }> | null>(null)
   const healPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -593,6 +596,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
         let renderedHeight: number
         let nativeProfile = ''
         let nativeAcceleration: 'gpu' | 'cpuFallback' = 'cpuFallback'
+        let nativeResult: NativePreviewResult | null = null
         let release: (() => void) | undefined
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
@@ -601,12 +605,23 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
             { ...defaultLayer(), id: '__mask-preview-dim__', name: 'Mask preview outside', opacity: .72, mask: { operation: 'invert' as const, children: [structuredClone(maskPreview)] }, adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: -1.35 } } },
             { ...defaultLayer(), id: '__mask-preview-inside__', name: 'Mask preview inside', opacity: .38, mask: structuredClone(maskPreview), adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: .55 } } },
           ] : photo.layers
-          const viewport = nativePreviewViewportContract(zoom, zoomScale, photo.libraryAsset?.metadata.width ?? 0, photo.libraryAsset?.metadata.height ?? 0)
+          const sourceWidth = photo.libraryAsset?.metadata.width ?? 0
+          const sourceHeight = photo.libraryAsset?.metadata.height ?? 0
+          const baseRect = canvasRef.current?.getBoundingClientRect()
+          const stageRect = canvasRef.current?.closest('.photo-stage')?.getBoundingClientRect()
+          const visible = baseRect && stageRect && baseRect.width > 0 && baseRect.height > 0 ? {
+            centerX: Math.max(0, Math.min(1, (stageRect.left + stageRect.width / 2 - baseRect.left) / baseRect.width)),
+            centerY: Math.max(0, Math.min(1, (stageRect.top + stageRect.height / 2 - baseRect.top) / baseRect.height)),
+            widthFraction: Math.max(0, Math.min(1, stageRect.width / baseRect.width)),
+            heightFraction: Math.max(0, Math.min(1, stageRect.height / baseRect.height)),
+          } : undefined
+          const viewport = nativePreviewViewportContract(zoom, zoomScale, sourceWidth, sourceHeight, visible)
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
             before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
-            viewport.resolutionMode)
+            viewport.resolutionMode, viewport.viewport)
+          nativeResult = result
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -635,14 +650,30 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
           return
         }
         const canvas = canvasRef.current
-        canvas.width = renderedWidth
-        canvas.height = renderedHeight
         const context = canvas.getContext('2d', { willReadFrequently: true })
         if (!context) {
           release?.()
           throw new Error('Canvas 2D is unavailable.')
         }
-        context.drawImage(rendered, 0, 0)
+        if (nativeResult?.isTile) {
+          const tileCanvas = tileCanvasRef.current
+          const tileContext = tileCanvas?.getContext('2d')
+          if (!tileCanvas || !tileContext) throw new Error('Native viewport tile canvas is unavailable.')
+          tileCanvas.width = renderedWidth
+          tileCanvas.height = renderedHeight
+          tileContext.drawImage(rendered, 0, 0)
+          setTileRegion({
+            x: nativeResult.tileX / nativeResult.sourceWidth,
+            y: nativeResult.tileY / nativeResult.sourceHeight,
+            width: nativeResult.width / nativeResult.sourceWidth,
+            height: nativeResult.height / nativeResult.sourceHeight,
+          })
+        } else {
+          canvas.width = renderedWidth
+          canvas.height = renderedHeight
+          context.drawImage(rendered, 0, 0)
+          setTileRegion(null)
+        }
         release?.()
         window.requestAnimationFrame(() => {
           if (!canvasRef.current) return
@@ -652,10 +683,10 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
           if (sourceWidth > 0) onDisplayScale?.(canvasRef.current.clientWidth / sourceWidth)
         })
         if (metric) {
-          onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
-          onDimensions(`${renderedWidth} × ${renderedHeight}`)
+          if (!nativeResult?.isTile) onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
+          onDimensions(nativeResult ? `${nativeResult.sourceWidth} × ${nativeResult.sourceHeight}` : `${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
-            ? `${nativeAcceleration === 'gpu' ? 'Native GPU' : 'Native CPU fallback'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · interactive 1024' : ' · final quality'}${before ? ' · original' : ''}`
+            ? `${nativeAcceleration === 'gpu' ? 'Native GPU' : 'Native CPU fallback'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · interactive 1024' : nativeResult?.isTile ? nativeResult.tileOptimized ? ' · viewport tile' : ' · viewport tile · full-frame compatibility' : ' · final quality'}${before ? ' · original' : ''}`
             : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {
@@ -670,7 +701,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
     photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src,
     photo.libraryAsset?.metadata.width, photo.libraryAsset?.metadata.height,
-    maskPreview, interactionPhase, zoom, zoomScale, onDisplayScale])
+    maskPreview, interactionPhase, zoom, zoomScale, pan.x, pan.y, onDisplayScale])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -681,6 +712,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
 
   return <>
     <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`}
+      style={zoom === '100' && photo.libraryAsset?.metadata.width && photo.libraryAsset?.metadata.height ? {
+        width: `${photo.libraryAsset.metadata.width}px`, height: `${photo.libraryAsset.metadata.height}px`,
+      } : undefined}
       onPointerDown={(event) => { if (before || event.button !== 0 || (!healActive && !brushActive)) return; const points = [healPoint(event)]; if (healActive) healingStroke.current = points; else maskBrushStroke.current = points; event.currentTarget.setPointerCapture(event.pointerId) }}
       onPointerMove={(event) => { const points = healingStroke.current ?? maskBrushStroke.current; if (!points) return; const point = healPoint(event); const previous = points.at(-1)!; if (Math.hypot(point.x - previous.x, point.y - previous.y) >= .004) points.push(point) }}
       onPointerUp={(event) => { const healing = healingStroke.current; const brushing = maskBrushStroke.current; healingStroke.current = null; maskBrushStroke.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); if (healing?.length) onHealingStroke?.(healing); if (brushing?.length) onBrushStroke?.(brushing) }}
@@ -694,6 +728,12 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, interactionPhase = 
         const y = Math.max(0, Math.min(1 - size, pointY - size / 2))
         onWhiteBalancePick({ x, y, width: size, height: size })
       }} />
+    <canvas ref={tileCanvasRef} className="photo-tile-canvas" aria-hidden="true" style={tileRegion ? {
+      left: `${canvasBounds.left + tileRegion.x * canvasBounds.width}px`,
+      top: `${canvasBounds.top + tileRegion.y * canvasBounds.height}px`,
+      width: `${tileRegion.width * canvasBounds.width}px`,
+      height: `${tileRegion.height * canvasBounds.height}px`,
+    } : { display: 'none' }} />
     {maskActive && canvasBounds.width > 0 && onBeginMaskEdit && onMaskChange
       ? <MaskOverlay bounds={canvasBounds} mask={photo.mask} onBeginEdit={onBeginMaskEdit} onChange={onMaskChange} /> : null}
   </>
@@ -2222,7 +2262,7 @@ export function App() {
             }}
             onPointerUp={(event) => { panStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
-              <PreviewCanvas photo={selected} before={before} zoom={zoom} zoomScale={zoomScale} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
+              <PreviewCanvas photo={selected} before={before} zoom={zoom} zoomScale={zoomScale} pan={pan} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
                 brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}
