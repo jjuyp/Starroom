@@ -3885,7 +3885,7 @@ mod tests {
                 ]);
             }
         }
-        let encoded = starroom_imageio::encode_png_rgb8(&rgb, source_width, source_height)
+        let encoded = starroom_imageio::encode_png_rgb8(&rgb, source_width, source_height, None)
             .expect("24 MP fixture encode");
         std::fs::write(&source, encoded).unwrap();
         drop(rgb);

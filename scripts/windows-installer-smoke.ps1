@@ -124,6 +124,12 @@ foreach ($resource in $installedResources) {
 
 $exeHash = (Get-FileHash -LiteralPath $releaseExe -Algorithm SHA256).Hash.ToLowerInvariant()
 $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$checksumPath = Join-Path $root 'target\release\SHA256SUMS.txt'
+@(
+  "$exeHash  starroom-desktop.exe"
+  "$installerHash  $($installer.Name)"
+) | Set-Content -LiteralPath $checksumPath -Encoding utf8
 Write-Output "M30_RELEASE_EXE sha256=$exeHash"
 Write-Output "M30_NSIS_INSTALLER file=$($installer.Name) sha256=$installerHash"
+Write-Output "M30_RELEASE_CHECKSUMS file=$checksumPath"
 Write-Output 'M30_INSTALLER_RUNTIME install=ok launch=ok self_test=ok legal_resources=ok uninstall=ok'
