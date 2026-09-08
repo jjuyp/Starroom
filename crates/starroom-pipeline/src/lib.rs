@@ -1073,19 +1073,30 @@ fn apply_creative_graph(
     checkpoint()?;
     let working_bytes = (pixel_count as u64).saturating_mul(3 * F32_BYTES);
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
-        pixels
-            .into_iter()
-            .map(|pixel| {
-                apply_relative_color(
-                    LinearRgb {
-                        r: pixel[0],
-                        g: pixel[1],
-                        b: pixel[2],
-                    },
-                    settings.relative_color,
-                )
-            })
-            .collect::<Vec<_>>()
+        if settings.relative_color == RelativeColorParameters::default() {
+            pixels
+                .into_iter()
+                .map(|pixel| LinearRgb {
+                    r: pixel[0],
+                    g: pixel[1],
+                    b: pixel[2],
+                })
+                .collect::<Vec<_>>()
+        } else {
+            pixels
+                .into_iter()
+                .map(|pixel| {
+                    apply_relative_color(
+                        LinearRgb {
+                            r: pixel[0],
+                            g: pixel[1],
+                            b: pixel[2],
+                        },
+                        settings.relative_color,
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
     });
     let (prepared, tone_parameters) = if let Some(renderer) = gpu {
         let input: Vec<[f32; 4]> = prepared
@@ -1117,44 +1128,54 @@ fn apply_creative_graph(
     let mut prepared = prepared;
     checkpoint()?;
     profiling::measure(ProfileStage::Tone, working_bytes, || {
-        prepared
-            .iter_mut()
-            .for_each(|rgb| *rgb = apply_tone(*rgb, tone_parameters));
+        if tone_parameters != ToneParameters::default() {
+            prepared
+                .iter_mut()
+                .for_each(|rgb| *rgb = apply_tone(*rgb, tone_parameters));
+        }
     });
     checkpoint()?;
     profiling::measure(ProfileStage::Curve, working_bytes, || {
-        prepared
-            .iter_mut()
-            .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
+        if !settings.curve.is_empty() || settings.curves != ToneCurveSet::default() {
+            prepared
+                .iter_mut()
+                .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
+        }
     });
     checkpoint()?;
     profiling::measure(ProfileStage::ColorMixer, working_bytes, || {
-        prepared
-            .iter_mut()
-            .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
+        if settings.color_mixer != ColorMixer::default() {
+            prepared
+                .iter_mut()
+                .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
+        }
     });
     checkpoint()?;
     profiling::measure(ProfileStage::ColorGrading, working_bytes, || {
-        prepared
-            .iter_mut()
-            .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
+        if settings.grading != GradingParameters::default() {
+            prepared
+                .iter_mut()
+                .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
+        }
     });
     checkpoint()?;
     profiling::measure(ProfileStage::Mask, working_bytes, || {
-        for (index, rgb) in prepared.iter_mut().enumerate() {
-            if index % 4096 == 0 {
-                checkpoint()?;
+        if !settings.layers.is_empty() {
+            for (index, rgb) in prepared.iter_mut().enumerate() {
+                if index % 4096 == 0 {
+                    checkpoint()?;
+                }
+                let x = (index % width) as f32 / width.max(1) as f32;
+                let y = (index / width) as f32 / height.max(1) as f32;
+                *rgb = apply_layers(
+                    *rgb,
+                    &settings.layers,
+                    x,
+                    y,
+                    &settings.portrait_masks,
+                    &settings.generated_masks,
+                )?;
             }
-            let x = (index % width) as f32 / width.max(1) as f32;
-            let y = (index / width) as f32 / height.max(1) as f32;
-            *rgb = apply_layers(
-                *rgb,
-                &settings.layers,
-                x,
-                y,
-                &settings.portrait_masks,
-                &settings.generated_masks,
-            )?;
         }
         Ok::<_, PipelineError>(())
     })?;
@@ -3366,5 +3387,25 @@ mod tests {
         adjusted = settings;
         adjusted.vignette.amount = -0.01;
         assert!(!detail_stage_is_identity(&adjusted));
+    }
+
+    #[test]
+    fn rc2_identity_creative_stages_preserve_pixels_exactly() {
+        let pixels = vec![
+            [0.0, 0.1, 0.2],
+            [0.4, 0.5, 0.6],
+            [0.9, 1.0, 1.5],
+            [-0.1, 0.2, 0.3],
+        ];
+        let expected = pixels.iter().flatten().copied().collect::<Vec<_>>();
+        let actual = apply_creative_graph(pixels, 2, 2, &RenderSettings::default(), None)
+            .expect("identity creative graph");
+        assert_eq!(actual, expected);
+
+        let mut exposure = RenderSettings::default();
+        exposure.tone.exposure_ev = 1.0;
+        let adjusted = apply_creative_graph(vec![[0.1, 0.2, 0.3]], 1, 1, &exposure, None)
+            .expect("exposure creative graph");
+        assert_ne!(adjusted, vec![0.1, 0.2, 0.3]);
     }
 }
