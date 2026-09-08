@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "policy": "GPL-3.0-or-later combined work; preserve file-level and notice obligations",
-  "cargoLockSha256": "4d1f20a5f141ec9b46d52f048aaeb70f88b44501d001756d95591d095cc8eba4",
+  "cargoLockSha256": "db791da291fff21584cf10a38ed61bd94f3a28f369dd5c81cbe46c9263f21bcf",
   "packageLockSha256": "df16f6c9a3d8d91ef9f31c35418403752c19dc0a1c85e439f5366f777957c3d4",
   "rust": [
     {
@@ -347,6 +347,18 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
+      "name": "crossbeam-deque",
+      "version": "0.8.8",
+      "license": "MIT OR Apache-2.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "name": "crossbeam-epoch",
+      "version": "0.9.21",
+      "license": "MIT OR Apache-2.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
       "name": "crossbeam-utils",
       "version": "0.8.22",
       "license": "MIT OR Apache-2.0",
@@ -553,6 +565,12 @@
     {
       "name": "dyn-clone",
       "version": "1.0.20",
+      "license": "MIT OR Apache-2.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "name": "either",
+      "version": "1.18.0",
       "license": "MIT OR Apache-2.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
@@ -1856,6 +1874,18 @@
       "name": "rawpointer",
       "version": "0.2.1",
       "license": "MIT/Apache-2.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "name": "rayon-core",
+      "version": "1.13.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "name": "rayon",
+      "version": "1.12.0",
+      "license": "MIT OR Apache-2.0",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {

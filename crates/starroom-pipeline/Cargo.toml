@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rayon.workspace = true
 serde.workspace = true
 starroom-ai-denoise = { path = "../starroom-ai-denoise" }
 starroom-color = { path = "../starroom-color" }

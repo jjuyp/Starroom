@@ -1210,7 +1210,7 @@ enum PreviewResolutionMode {
 
 fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 {
     match phase {
-        PreviewInteractionPhase::Interactive => max_edge.min(1024),
+        PreviewInteractionPhase::Interactive => max_edge.min(512),
         PreviewInteractionPhase::Final => max_edge,
     }
     .clamp(256, 4096)
@@ -3837,7 +3837,7 @@ mod tests {
     fn m28_interactive_preview_is_bounded_and_final_restores_requested_quality() {
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Interactive),
-            1024
+            512
         );
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Final),

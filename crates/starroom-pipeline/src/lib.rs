@@ -4,6 +4,7 @@
 
 pub mod cancellation;
 use cancellation::checkpoint;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
@@ -539,7 +540,7 @@ impl RenderedRgbF32 {
             height: self.height,
             data: self
                 .data
-                .into_iter()
+                .into_par_iter()
                 .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8)
                 .collect(),
             color: self.color,
@@ -1075,7 +1076,7 @@ fn apply_creative_graph(
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         if settings.relative_color == RelativeColorParameters::default() {
             pixels
-                .into_iter()
+                .into_par_iter()
                 .map(|pixel| LinearRgb {
                     r: pixel[0],
                     g: pixel[1],
@@ -1084,7 +1085,7 @@ fn apply_creative_graph(
                 .collect::<Vec<_>>()
         } else {
             pixels
-                .into_iter()
+                .into_par_iter()
                 .map(|pixel| {
                     apply_relative_color(
                         LinearRgb {
@@ -1130,7 +1131,7 @@ fn apply_creative_graph(
     profiling::measure(ProfileStage::Tone, working_bytes, || {
         if tone_parameters != ToneParameters::default() {
             prepared
-                .iter_mut()
+                .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_tone(*rgb, tone_parameters));
         }
     });
@@ -1138,7 +1139,7 @@ fn apply_creative_graph(
     profiling::measure(ProfileStage::Curve, working_bytes, || {
         if !settings.curve.is_empty() || settings.curves != ToneCurveSet::default() {
             prepared
-                .iter_mut()
+                .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
         }
     });
@@ -1146,7 +1147,7 @@ fn apply_creative_graph(
     profiling::measure(ProfileStage::ColorMixer, working_bytes, || {
         if settings.color_mixer != ColorMixer::default() {
             prepared
-                .iter_mut()
+                .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
         }
     });
@@ -1154,7 +1155,7 @@ fn apply_creative_graph(
     profiling::measure(ProfileStage::ColorGrading, working_bytes, || {
         if settings.grading != GradingParameters::default() {
             prepared
-                .iter_mut()
+                .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
         }
     });
@@ -1446,15 +1447,18 @@ fn render_prepared_working_graph(
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
         apply_detail_stage(creative, settings)
     })?;
-    let mut pixels = Vec::with_capacity(width as usize * height as usize);
-    for pixel in detailed.data.as_chunks::<3>().0 {
-        let working_rgb = compress_to_unit_gamut(LinearRgb {
-            r: pixel[0],
-            g: pixel[1],
-            b: pixel[2],
-        });
-        pixels.push([working_rgb.r, working_rgb.g, working_rgb.b]);
-    }
+    let mut pixels = detailed
+        .data
+        .par_chunks_exact(3)
+        .map(|pixel| {
+            let working_rgb = compress_to_unit_gamut(LinearRgb {
+                r: pixel[0],
+                g: pixel[1],
+                b: pixel[2],
+            });
+            [working_rgb.r, working_rgb.g, working_rgb.b]
+        })
+        .collect::<Vec<_>>();
     checkpoint()?;
     let output_source = profiling::measure(ProfileStage::ColorTransform, working_bytes, || {
         LittleCmsProvider.working_to_output(

@@ -26,6 +26,13 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-rust-1.97.1-x86_64-pc-windows-msvc-test-rc2-performance-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-rust-1.97.1-x86_64-pc-windows-msvc-test-rc2-performance-
+      - name: Record performance machine
+        shell: pwsh
+        run: |
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1)
+          $system = Get-CimInstance Win32_ComputerSystem
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Output ("RC2_MACHINE cpu='{0}' logical_processors={1} memory_bytes={2} os='{3}' version='{4}'" -f $cpu.Name.Trim(), $cpu.NumberOfLogicalProcessors, [uint64]$system.TotalPhysicalMemory, $os.Caption.Trim(), $os.Version)
       - shell: pwsh
         env:
           STARROOM_RC2_PERFORMANCE_GATE: true
