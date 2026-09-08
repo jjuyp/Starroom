@@ -1,8 +1,9 @@
 # v1.0.0-rc.2 performance acceptance
 
 This report defines the immutable-candidate performance evidence for rc.2. Exact measurements are
-emitted by the manual `Release Candidate Gate` on the candidate SHA and retained in its job logs.
-They are not estimated from debug builds or substituted with unit-test timings.
+emitted by the manual `Release Candidate Gate` from optimized Rust release binaries on the
+candidate SHA and retained in its job logs. They are not estimated from debug builds or
+substituted with development-profile unit-test timings.
 
 ## Gates and machine-readable evidence
 

@@ -29,11 +29,11 @@ jobs:
       - shell: pwsh
         env:
           STARROOM_RC2_PERFORMANCE_GATE: true
-        run: cargo test --locked -p starroom-library rc2_two_hundred_asset_thumbnail_generation_and_cached_restart -- --ignored --nocapture
+        run: cargo test --release --locked -p starroom-library rc2_two_hundred_asset_thumbnail_generation_and_cached_restart -- --ignored --nocapture
       - shell: pwsh
         env:
           STARROOM_RC2_PERFORMANCE_GATE: true
-        run: cargo test --locked -p starroom-desktop rc2_release_preview_cache_interaction_and_viewport_timings -- --ignored --nocapture
+        run: cargo test --release --locked -p starroom-desktop rc2_release_preview_cache_interaction_and_viewport_timings -- --ignored --nocapture
 
   large-image:
     name: Real 24-100MP Native Workflow
@@ -56,7 +56,7 @@ jobs:
       - shell: pwsh
         env:
           STARROOM_M30_LARGE_IMAGE: true
-        run: cargo test --locked -p starroom-export --test m30_large_image -- --ignored --nocapture
+        run: cargo test --release --locked -p starroom-export --test m30_large_image -- --ignored --nocapture
 
   windows-installer:
     name: Windows Installer / Runtime
