@@ -581,7 +581,8 @@ fn build_parallel_lcms_transform(
     } else {
         Flags::NO_CACHE
     };
-    Transform::new_flags(
+    Transform::<[f32; 3], [f32; 3], GlobalContext, DisallowCache>::new_flags_context(
+        GlobalContext::new(),
         input,
         PixelFormat::RGB_FLT,
         output,
