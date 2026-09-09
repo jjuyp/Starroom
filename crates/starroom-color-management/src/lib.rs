@@ -2,7 +2,11 @@
 //! ICC parsing/execution is provided by LittleCMS. Published chromatic adaptation math lives here
 //! so the render graph can keep file, working and display transforms explicit.
 
-use lcms2::{CIExyY, CIExyYTRIPLE, Flags, Intent, PixelFormat, Profile, ToneCurve, Transform};
+use lcms2::{
+    CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile,
+    ToneCurve, Transform,
+};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use starroom_color::LinearRgb;
 use thiserror::Error;
@@ -291,6 +295,10 @@ pub struct LcmsTransform {
     transform: Transform<[f32; 3], [f32; 3]>,
 }
 
+struct ParallelLcmsTransform {
+    transform: Transform<[f32; 3], [f32; 3], GlobalContext, DisallowCache>,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LittleCmsProvider;
 
@@ -506,14 +514,14 @@ impl LittleCmsProvider {
             None => Profile::new_srgb(),
         };
         let working = rec2020_linear_d65_profile()?;
-        let transform = build_lcms_transform(
+        let transform = build_parallel_lcms_transform(
             &input,
             &working,
             intent,
             black_point_compensation,
             "input-to-working",
         )?;
-        transform.transform.transform_in_place(pixels);
+        transform_pixels_parallel(&transform, pixels);
         ensure_finite("linear Rec.2020 working output", pixels)?;
         Ok(source_kind)
     }
@@ -541,17 +549,48 @@ impl LittleCmsProvider {
             }
             None => Profile::new_srgb(),
         };
-        let transform = build_lcms_transform(
+        let transform = build_parallel_lcms_transform(
             &working,
             &output,
             intent,
             black_point_compensation,
             "working-to-output",
         )?;
-        transform.transform.transform_in_place(pixels);
+        transform_pixels_parallel(&transform, pixels);
         ensure_finite("encoded output", pixels)?;
         Ok(output_kind)
     }
+}
+
+fn transform_pixels_parallel(transform: &ParallelLcmsTransform, pixels: &mut [[f32; 3]]) {
+    const PIXELS_PER_CHUNK: usize = 16_384;
+    pixels
+        .par_chunks_mut(PIXELS_PER_CHUNK)
+        .for_each(|chunk| transform.transform.transform_in_place(chunk));
+}
+
+fn build_parallel_lcms_transform(
+    input: &Profile,
+    output: &Profile,
+    intent: RenderingIntent,
+    black_point_compensation: bool,
+    direction: &'static str,
+) -> Result<ParallelLcmsTransform, ColorManagementError> {
+    let flags = if black_point_compensation {
+        Flags::NO_CACHE | Flags::BLACKPOINT_COMPENSATION
+    } else {
+        Flags::NO_CACHE
+    };
+    Transform::new_flags(
+        input,
+        PixelFormat::RGB_FLT,
+        output,
+        PixelFormat::RGB_FLT,
+        lcms_intent(intent),
+        flags,
+    )
+    .map(|transform| ParallelLcmsTransform { transform })
+    .map_err(|source| ColorManagementError::TransformCreation { direction, source })
 }
 
 fn build_lcms_transform(
@@ -743,6 +782,48 @@ mod tests {
                     "embedded/fallback sRGB identity exceeded one 8-bit code value: embedded={}, fallback={}",
                     embedded[channel],
                     fallback[channel]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_lcms_chunks_match_the_single_call_reference() {
+        let input = rec2020_linear_d65_profile().expect("working profile");
+        let output = Profile::new_srgb();
+        let sequential = build_lcms_transform(
+            &input,
+            &output,
+            RenderingIntent::RelativeColorimetric,
+            true,
+            "test-sequential",
+        )
+        .expect("sequential transform");
+        let parallel = build_parallel_lcms_transform(
+            &input,
+            &output,
+            RenderingIntent::RelativeColorimetric,
+            true,
+            "test-parallel",
+        )
+        .expect("parallel transform");
+        let source = (0..32_777)
+            .map(|index| {
+                let value = index as f32 / 32_776.0;
+                [value * 1.2, (1.0 - value) * 0.8, value * value]
+            })
+            .collect::<Vec<_>>();
+        let mut expected = source.clone();
+        let mut actual = source;
+        sequential.transform.transform_in_place(&mut expected);
+        transform_pixels_parallel(&parallel, &mut actual);
+        for (expected, actual) in expected.iter().zip(actual) {
+            for channel in 0..3 {
+                assert!(
+                    (expected[channel] - actual[channel]).abs() <= 1.0e-6,
+                    "parallel LittleCMS output diverged: expected={}, actual={}",
+                    expected[channel],
+                    actual[channel]
                 );
             }
         }

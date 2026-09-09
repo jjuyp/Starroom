@@ -3750,6 +3750,7 @@ name = "starroom-color-management"
 version = "1.0.0-rc.2"
 dependencies = [
  "lcms2",
+ "rayon",
  "serde",
  "starroom-color",
  "thiserror 2.0.20",
