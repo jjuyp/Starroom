@@ -22,17 +22,17 @@ The remaining core AI and optional-pack requirements still need production valid
 
 | Area | State | Evidence / remaining acceptance |
 | --- | --- | --- |
-| Invisible thumbnails | FIXED, verification pending | Generated file URL had no Tauri asset-scope grant. Grant only the exact returned cache file. Validate installed JPEG/RAW WebView display and restart/corruption handling. |
-| Library registration/import latency | FIXED, verification pending | Phase A registers from file identity/header metadata in one bounded transaction; Phase B enriches full metadata on a background worker without holding SQLite during decode. Deterministic 200-asset release timing and installed progressive-use validation remain required. |
-| Progressive thumbnail display | FIXED, verification pending | Remove Promise.all display barrier; bounded 3-worker queue publishes each result; cache raster work no longer holds SQLite lock. |
-| Removed assets resurrect | FIXED, verification pending | One Native transaction deletes catalog membership, cascades keyword/collection membership, never source files. Retired-ID high-water prevents new imports from inheriting old history sidecars. |
-| Selection / rating / recent imports | FIXED, verification pending | Stable-ID Shift/Ctrl/Meta/Ctrl-Shift selection, full native filtered Ctrl-A, one-transaction bulk removal, schema-v2 deterministic latest import batches, shortcuts 0-5 and thumbnail 0-5 rating controls are implemented. Installed workflow validation remains required. |
-| Preview latency / latest-wins | FIXED, verification pending | Heavy work now runs on a blocking worker, per-surface latest-wins keeps one pending state, Native cancellation checkpoints reject stale publish, decoded source tiers and the GPU device are reused. Release-mode latency evidence remains required. |
-| True 1:1 viewport tiles | FIXED, verification pending | SRP3 transports only a source-positioned viewport JPEG; a bounded edit/source/viewport-keyed cache serves revisits. Tile-safe color/tone/detail graphs render only the requested region plus declared halo. Global coordinate stages use an explicit `full-frame compatibility` state before the correct viewport is cropped. Installed 1:1 latency, seam and 100 MP memory acceptance remain open. |
-| AI availability | FIXED, verification pending with Face/Skin exception | Native startup verifies model presence/hash before use and UI shows Ready / Model not installed / Invalid / Error. User-approved local-only BiSeNet policy remains. The exact MIT BiRefNet asset is acquired and hash-verified only at release-build time, then bundled for offline Subject/Background; installed packaging/offline validation remains pending. |
-| Final workspace / snapshots / control layout | FIXED, verification pending | Develop now owns Navigator plus Presets/Layers/History; full Snapshot create/rename/delete/restore/compare is exposed there. Export is a floating context panel and Portrait/Layers/Looks use progressive disclosure. Real installed 1280/1920/2560 layout acceptance remains required. |
-| Export performance | FIXED, measurement pending | Normal Professional batch no longer performs an unused full source decode before the FullResolutionRenderer decodes the same asset. AI Denoise retains its required residual prepass. Release-mode 24 MP comparison remains required. |
-| RC2 release | OPEN | No acceptance tag/artifact claim until same-SHA final gates pass. |
+| Invisible thumbnails | VERIFIED | Exact-file Tauri scope, restart reuse and corrupt-cache regeneration passed Blueprint and release self-test coverage. |
+| Library registration/import latency | VERIFIED | The release workload registered 200 assets in 65.952 ms; all first thumbnails completed in 487.647 ms and cached restart in 57.610 ms. |
+| Progressive thumbnail display | VERIFIED | Bounded three-worker progressive delivery and failure isolation passed frontend and Native regression. |
+| Removed assets resurrect | VERIFIED | Transactional removal, cascade cleanup, source immutability, retired-ID non-reuse and reopen persistence passed. |
+| Selection / rating / recent imports | VERIFIED | Stable range/additive/full-query selection, 0-5 rating and schema-v2 latest-batch behavior passed the final Blueprint. |
+| Preview latency / latest-wins | VERIFIED | Release results: cached reopen 0.355 ms, interactive Exposure 93.010 ms, final refine 1460.835 ms; stale/cancelled results cannot publish. |
+| True 1:1 viewport tiles | VERIFIED | First/second 1:1 tile were 620.706/232.651 ms. The 24/45/60/100 MP real-pixel gate passed with bounded 4,718,592-byte viewport transport and explicit full-frame compatibility. |
+| AI availability | VERIFIED with accepted Face/Skin limitation | Installed BiRefNet CPU inference produced a finite 1024x1024 Subject mask. Face/Skin, Sky and AI Denoise returned explicit typed-unavailable; no network fallback exists. |
+| Final workspace / snapshots / control layout | VERIFIED in automated desktop gates | Snapshot/session/recovery and command workflows passed. Physical mixed-DPI and human multi-monitor evaluation remains post-RC field validation. |
+| Export performance | VERIFIED | The real 24 MP Native workflow exported in 17.447 s. Compared with the rc.1 field observation of at least two minutes, this is at least 85.5% faster. |
+| RC2 release | READY FOR SAME-SHA FINAL GATE | Product blockers are verified. Tagging remains conditional on the final documentation SHA passing Blueprint and Release Candidate Gate. |
 
 ## First Library batch regression
 
@@ -80,7 +80,7 @@ No performance improvement percentage has been claimed from these unit tests.
   interior, and caches the encoded viewport under source/edit/region identity. Geometry, Lens,
   Masks, Healing, Skin, finishing effects, AI and image-statistical WB are deliberately classified
   as `full-frame compatibility`; correctness is preserved and the UI exposes that state instead of
-  silently claiming the local optimization. Installed latency/seam/100 MP validation is pending.
+  silently claiming the local optimization. The final 24/45/60/100 MP real-pixel gate passed.
 - Professional batch previously decoded every source during preparation even when AI Denoise was
   disabled and then decoded it again in `FullResolutionRenderer`. The unused first decode is gone;
   shared graph, color precision, output bytes, atomic write and AI-enabled behavior are unchanged.
@@ -90,7 +90,18 @@ No performance improvement percentage has been claimed from these unit tests.
 - The manual Release Gate now emits `RC2_LIBRARY_PERF` for 200 registrations, first thumbnails and
   cached restart, and `RC2_PREVIEW_PERF` for a real 24 MP cold Fit, cached reopen, interactive
   Exposure, final refine and 100%/200% source-positioned tiles. Final measured numbers belong in
-  the performance report only after the exact candidate SHA passes.
+  the performance report, linked to release run `34305888090` for implementation SHA `6e3e44d`.
+
+## Release evidence at implementation freeze
+
+- Blueprint push run `34305108067` and Draft PR run `34305110825` passed on `6e3e44d`.
+- Release Candidate Gate `34305888090` passed all three jobs: Library/Preview performance,
+  real 24-100 MP Native workflow, and Windows MSVC installer/runtime.
+- The installed executable completed deterministic Library -> History -> Session -> Native Export
+  restore/export parity, kept the source immutable, and performed real offline BiRefNet CPU inference.
+- Portable executable SHA-256: `4f0c94fc0f527728c501c5fe2d26acc270ad0c246068d7434a5ef5efa6a5963a`.
+- NSIS installer SHA-256: `98c3e180f422d9a10fb4b1453ac0df873a37f154c1b3f40979ef5bfb396e7520`.
+- The final documentation commit must rerun the same gates. Only that later SHA may be tagged.
 
 ## Preview scheduling batch
 

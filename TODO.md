@@ -1,8 +1,8 @@
 # Complete Internal Build Plan
 
-## RC2 field validation (2026-09-06, in progress)
+## RC2 field validation (2026-09-06, release candidate ready)
 
-- [ ] Complete and verify the Library/render/high-resolution/AI/UI/export fixes and immutable
+- [x] Complete and verify the Library/render/high-resolution/AI/UI/export fixes and immutable
   same-SHA release gates in `docs/38_RC2_FIELD_VALIDATION.md`.
 - [x] Repair exact-file thumbnail scope, progressive delivery, persistent transactional removal,
   stable range selection and bulk removal.
@@ -15,9 +15,9 @@
 - [x] Show verified local AI availability before tool activation; keep unbundled models explicit.
 - [x] Implement SRP3 viewport-only high-resolution transport/cache and source-positioned canvas
   refinement. Tile-safe graphs process only viewport+halo; global-coordinate graphs clearly report
-  full-frame compatibility. Installed seam/latency/100 MP verification remains in the rc.2 gate.
-- [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; collect the
-  final 24 MP release-mode comparison on the rc.2 candidate.
+  full-frame compatibility. The 24/45/60/100 MP real-pixel release gate passed.
+- [x] Remove the redundant Professional batch source decode when AI Denoise is disabled; the final
+  24 MP release workflow measured 17.447 s and passed source-immutability/output validation.
 - [x] Publish the cached Native Library thumbnail immediately on asset switch while the bounded Fit
   render refines in the background; final/1:1 output still comes only from the Native graph.
 - [x] Add release-only measured gates for 200-asset registration/first thumbnails/cached restart and

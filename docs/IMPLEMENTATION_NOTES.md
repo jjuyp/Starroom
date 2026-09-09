@@ -46,14 +46,24 @@
   expands tile-safe graphs by the declared halo, and caches encoded tiles in a bounded 64 MiB LRU.
   Global-coordinate stages are rendered through an explicit full-frame compatibility path and then
   cropped for transport; no incorrect local result or silent optimization claim is allowed.
-  Installed seam, latency and peak-memory evidence is still required before the rc.2 gate is accepted.
+  The real 24/45/60/100 MP release gate passed with fixed 4,718,592-byte viewport transport; measured
+  previews were 0.85/1.40/1.28/2.08 s and peak process memory 1.59/2.93/3.89/6.45 GB.
 - Professional batch preparation no longer decodes the source when AI Denoise is disabled. The
   FullResolutionRenderer performs the single required decode. AI Denoise still performs its model
   residual preparation and final graph decode, preserving existing output semantics.
 - The manual rc.2 Release Gate records a deterministic 200-image Library registration, first
   thumbnail and cached-restart corpus plus 24 MP cold Fit, cached reopen, interactive Exposure,
   final refine and 100%/200% viewport timings. These runner values become the RC1-vs-RC2 report;
-  ordinary source commits do not run the heavy corpus.
+  ordinary source commits do not run the heavy corpus. Implementation-freeze Release Gate
+  `34305888090` passed: 200 registrations 65.952 ms, first thumbnails 487.647 ms, cached restart
+  57.610 ms, RAW Fit 463.501 ms, interactive response 93.010 ms and final refine 1460.835 ms.
+- The shared CPU graph uses pinned Rayon 1.12.0 only for independent per-pixel stages. LittleCMS
+  input/output transforms use `NO_CACHE` thread-local contexts and chunked parallel execution;
+  a 32,777-pixel HDR regression compares against the serial transform within `1e-6`. Render order,
+  ICC embedding and Preview/Export parity are unchanged.
+- Real 24 MP export measured 17.447 s, at least 85.5% faster than the conservative rc.1 field lower
+  bound of two minutes. The complete first JPEG Fit measured 2.151 s; Starroom exposes immediate
+  Native thumbnail feedback while it refines rather than misreporting the thumbnail as final Fit.
 
 ## 2026-08-26 M30 release-candidate qualification
 
