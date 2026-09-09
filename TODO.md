@@ -1,5 +1,15 @@
 # Complete Internal Build Plan
 
+## RC3 close-request field hotfix (2026-09-10, in progress)
+
+- [x] Reproduce the installed close failure: `plugin:window|destroy not allowed by ACL`.
+- [x] Grant only `core:window:allow-destroy` to the existing `main` window capability.
+- [x] Preserve the production ordering: confirm transient fallback edits, atomically mark the Native
+  Session clean, then destroy the window; a failed Session write still keeps the window open.
+- [x] Add release validation that rejects packaging without the required close permission.
+- [ ] Pass same-SHA Blueprint and Windows installer/runtime gates, then publish `v1.0.0-rc.3`
+  without replacing rc.2, merging `main`, closing Draft PR #2, or starting M31.
+
 ## RC2 field validation (2026-09-06, release candidate ready)
 
 - [x] Complete and verify the Library/render/high-resolution/AI/UI/export fixes and immutable

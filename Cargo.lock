@@ -3721,14 +3721,14 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "starroom-advisor"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "starroom-ai-denoise"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "ndarray",
  "ort",
@@ -3740,14 +3740,14 @@ dependencies = [
 
 [[package]]
 name = "starroom-color"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "starroom-color-management"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "lcms2",
  "rayon",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-core"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "sha2",
@@ -3768,7 +3768,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-desktop"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3801,14 +3801,14 @@ dependencies = [
 
 [[package]]
 name = "starroom-detail"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "starroom-export"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "image",
  "kamadak-exif",
@@ -3829,14 +3829,14 @@ dependencies = [
 
 [[package]]
 name = "starroom-geometry"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "starroom-grading"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "starroom-color",
@@ -3844,7 +3844,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-heal"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "starroom-detail",
@@ -3852,7 +3852,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-history"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3862,7 +3862,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-imageio"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "crc32fast",
  "image",
@@ -3875,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-library"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "image",
  "rusqlite",
@@ -3889,7 +3889,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-look"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3902,7 +3902,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-optics"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "quick-xml",
  "serde",
@@ -3910,7 +3910,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-pipeline"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "rayon",
  "serde",
@@ -3934,7 +3934,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-portrait"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "ndarray",
  "ort",
@@ -3947,7 +3947,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-project"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-raw"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "cc",
  "serde",
@@ -3970,7 +3970,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-reference"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "sha2",
@@ -3982,7 +3982,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-render"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "bytemuck",
  "pollster",
@@ -3996,7 +3996,7 @@ dependencies = [
 
 [[package]]
 name = "starroom-session"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",

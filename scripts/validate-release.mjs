@@ -7,6 +7,7 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8')
 const pkg = JSON.parse(read('package.json'))
 const tauri = JSON.parse(read('src-tauri/tauri.conf.json'))
 const rc2Tauri = JSON.parse(read('src-tauri/tauri.rc2.conf.json'))
+const desktopCapability = JSON.parse(read('src-tauri/capabilities/default.json'))
 const cargo = read('Cargo.toml')
 const cargoLock = read('Cargo.lock')
 const expectedArg = process.argv.find((arg) => arg.startsWith('--expected-version='))
@@ -26,6 +27,9 @@ if (!starroomLockVersions.length || starroomLockVersions.some(([, , version]) =>
 }
 if (!tauri.bundle?.active || !tauri.bundle?.icon?.includes('icons/icon.ico')) throw new Error('Windows bundle or release icon is not configured')
 if (tauri.bundle?.licenseFile !== '../LICENSE') throw new Error('Windows bundle license file is not configured')
+if (!desktopCapability.permissions?.includes('core:window:allow-destroy')) {
+  throw new Error('Main-window close flow requires core:window:allow-destroy after clean session persistence')
+}
 if (rc2Tauri.bundle?.resources?.[`../${releaseModelPath}`] !== 'models/local/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx') {
   throw new Error('RC2 BiRefNet bundle mapping is missing or incorrect')
 }

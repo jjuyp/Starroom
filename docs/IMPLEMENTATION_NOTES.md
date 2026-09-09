@@ -1,4 +1,19 @@
 # Implementation Notes
+## 2026-09-10 v1.0.0-rc.3 close-request field hotfix
+
+- The installed rc.2 close handler correctly prevented the native close request until Session state
+  was marked clean, but its final `window.destroy()` call was outside the Tauri 2 capability ACL.
+  The resulting `plugin:window|destroy not allowed by ACL` error kept the window open even after a
+  successful clean-session write.
+- The desktop capability now grants only `core:window:allow-destroy` and only to the existing `main`
+  window. The save/confirmation behavior is unchanged: transient Browser-fallback edits still need
+  explicit discard confirmation, clean Session persistence happens before destruction, and a real
+  persistence failure still leaves the recovery envelope and window intact.
+- Release validation reads the actual capability JSON and fails packaging if the permission is
+  removed. No imaging, Library, Export, AI, network, privacy or source-file behavior changed.
+- rc.2 artifacts remain immutable. The repaired build is versioned `1.0.0-rc.3` and requires a new
+  same-SHA Blueprint plus Windows MSVC/NSIS install/runtime gate before publication.
+
 ## 2026-09-06 v1.0.0-rc.2 field validation
 
 - Tauri asset URLs now grant only the exact generated thumbnail-cache file. Library thumbnails are
