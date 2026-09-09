@@ -3873,7 +3873,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let source = root.join("24mp.png");
+        let source = root.join("24mp.jpg");
         let (source_width, source_height) = (6000_u32, 4000_u32);
         let mut rgb = Vec::with_capacity(source_width as usize * source_height as usize * 3);
         for y in 0..source_height {
@@ -3885,8 +3885,9 @@ mod tests {
                 ]);
             }
         }
-        let encoded = starroom_imageio::encode_png_rgb8(&rgb, source_width, source_height, None)
-            .expect("24 MP fixture encode");
+        let encoded =
+            starroom_imageio::encode_jpeg_rgb8(&rgb, source_width, source_height, 95, None)
+                .expect("24 MP fixture encode");
         std::fs::write(&source, encoded).unwrap();
         drop(rgb);
 
@@ -3931,6 +3932,31 @@ mod tests {
             None,
             settings(),
         );
+        let raw_source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/raw/sources/nikon-d1.nef");
+        let render_raw = |request_id: &str| {
+            let started = std::time::Instant::now();
+            native_preview_inner(
+                &scheduler,
+                &portrait,
+                &masks,
+                &denoise,
+                NativePreviewRequest {
+                    request_id: request_id.into(),
+                    source_path: raw_source.clone(),
+                    max_edge: 1800,
+                    prefer_gpu: false,
+                    interaction_phase: PreviewInteractionPhase::Final,
+                    resolution_mode: PreviewResolutionMode::Fit,
+                    viewport: None,
+                    settings: settings(),
+                },
+            )
+            .expect("RAW native preview");
+            started.elapsed()
+        };
+        let raw_first = render_raw("raw-first-fit");
+        let raw_reopen = render_raw("raw-cached-reopen");
         let _ = render(
             "interactive-warm",
             PreviewInteractionPhase::Interactive,
@@ -3982,16 +4008,18 @@ mod tests {
             }),
             dragged,
         );
-        assert_eq!(scheduler.decoded.lock().unwrap().len(), 2);
+        assert_eq!(scheduler.decoded.lock().unwrap().len(), 3);
         assert!(!scheduler.viewport_frames.lock().unwrap().is_empty());
         assert!(
             interactive < first,
             "warmed interactive response {interactive:?} must beat cold open {first:?}"
         );
         eprintln!(
-            "RC2_PREVIEW_PERF first_fit_ms={:.3} cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
+            "RC2_PREVIEW_PERF jpeg_first_fit_ms={:.3} jpeg_cached_reopen_ms={:.3} raw_first_fit_ms={:.3} raw_cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
             first.as_secs_f64() * 1000.0,
             reopen.as_secs_f64() * 1000.0,
+            raw_first.as_secs_f64() * 1000.0,
+            raw_reopen.as_secs_f64() * 1000.0,
             interactive.as_secs_f64() * 1000.0,
             refine.as_secs_f64() * 1000.0,
             tile_100.as_secs_f64() * 1000.0,
