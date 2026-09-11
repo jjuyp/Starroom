@@ -93,7 +93,17 @@ function Assert-BundledResource([string]$SourceRelativePath) {
   if ($matches.Count -ne 1) { throw "Expected one installed $name resource, found $($matches.Count)" }
   $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
   $installedHash = (Get-FileHash -LiteralPath $matches[0].FullName -Algorithm SHA256).Hash
-  if ($sourceHash -ne $installedHash) { throw "Installed resource hash mismatch: $name" }
+  $isTextResource = $name -eq 'LICENSE' -or [IO.Path]::GetExtension($name) -in @('.md', '.txt', '.json')
+  if ($isTextResource) {
+    # actions/checkout and NSIS may materialize tracked text with different LF/CRLF endings.
+    # Compare the complete normalized text so legal content remains exact without treating a
+    # platform newline conversion as corruption. Binary/model resources retain byte-exact hashes.
+    $sourceText = [IO.File]::ReadAllText($source).TrimStart([char]0xfeff).Replace("`r`n", "`n").Replace("`r", "`n")
+    $installedText = [IO.File]::ReadAllText($matches[0].FullName).TrimStart([char]0xfeff).Replace("`r`n", "`n").Replace("`r", "`n")
+    if ($sourceText -cne $installedText) { throw "Installed text resource content mismatch: $name" }
+  } elseif ($sourceHash -ne $installedHash) {
+    throw "Installed binary resource hash mismatch: $name"
+  }
   return $matches[0].FullName
 }
 
