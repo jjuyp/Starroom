@@ -98,9 +98,18 @@ function Assert-BundledResource([string]$SourceRelativePath) {
     # actions/checkout and NSIS may materialize tracked text with different LF/CRLF endings.
     # Compare the complete normalized text so legal content remains exact without treating a
     # platform newline conversion as corruption. Binary/model resources retain byte-exact hashes.
-    $sourceText = [IO.File]::ReadAllText($source).TrimStart([char]0xfeff).Replace("`r`n", "`n").Replace("`r", "`n")
-    $installedText = [IO.File]::ReadAllText($matches[0].FullName).TrimStart([char]0xfeff).Replace("`r`n", "`n").Replace("`r", "`n")
-    if ($sourceText -cne $installedText) { throw "Installed text resource content mismatch: $name" }
+    $normalizeText = {
+      param([string]$Path)
+      $text = [IO.File]::ReadAllText($Path).TrimStart([char]0xfeff).Replace("`r`n", "`n").Replace("`r", "`n")
+      (($text -split "`n") | ForEach-Object { $_.TrimEnd() }) -join "`n" | ForEach-Object { $_.TrimEnd().Normalize([Text.NormalizationForm]::FormC) }
+    }
+    $sourceText = & $normalizeText $source
+    $installedText = & $normalizeText $matches[0].FullName
+    if ($sourceText -cne $installedText) {
+      $sourceDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sourceText))).ToLowerInvariant()
+      $installedDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($installedText))).ToLowerInvariant()
+      throw "Installed text resource content mismatch: $name source=$sourceDigest installed=$installedDigest"
+    }
   } elseif ($sourceHash -ne $installedHash) {
     throw "Installed binary resource hash mismatch: $name"
   }
