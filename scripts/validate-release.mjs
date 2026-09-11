@@ -10,6 +10,7 @@ const rc2Tauri = JSON.parse(read('src-tauri/tauri.rc2.conf.json'))
 const desktopCapability = JSON.parse(read('src-tauri/capabilities/default.json'))
 const cargo = read('Cargo.toml')
 const cargoLock = read('Cargo.lock')
+const desktopBuild = read('src-tauri/build.rs')
 const expectedArg = process.argv.find((arg) => arg.startsWith('--expected-version='))
 const expected = expectedArg?.split('=', 2)[1] ?? pkg.version
 const requireReleaseModels = process.argv.includes('--require-release-models')
@@ -71,6 +72,9 @@ for (const destination of [
 ]) {
   if (!Object.values(bundledResources).includes(destination)) {
     throw new Error(`Required notice is not bundled: ${destination}`)
+  }
+  if (!desktopBuild.includes(`../${destination}`)) {
+    throw new Error(`Required notice is not tracked by the Tauri build fingerprint: ${destination}`)
   }
 }
 
