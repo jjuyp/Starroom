@@ -13,7 +13,7 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
     [0.019_333_9, 0.119_192, 0.950_304_1],
 ]);
 
-pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v1";
+pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +79,7 @@ pub struct CameraProfileInput {
     pub make: String,
     pub model: String,
     pub dng_version: u32,
-    /// LibRaw camera-to-XYZ rows are stored by camera channel, then XYZ.
+    /// LibRaw XYZ-to-camera coefficients, camera channel rows and XYZ columns.
     pub libraw_cam_xyz: [[f32; 3]; 4],
     pub camera_neutral: [f32; 4],
     pub dng: [DngMatrixSet; 2],
@@ -366,11 +366,21 @@ fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
 }
 
 fn libraw_camera_to_xyz(cam_xyz: [[f32; 3]; 4]) -> Option<Matrix3> {
-    let matrix = Matrix3([
-        [cam_xyz[0][0], cam_xyz[1][0], cam_xyz[2][0]],
-        [cam_xyz[0][1], cam_xyz[1][1], cam_xyz[2][1]],
-        [cam_xyz[0][2], cam_xyz[1][2], cam_xyz[2][2]],
-    ]);
+    // Adapted from LibRaw 0.22.2 cam_xyz_coeff (utils_dcraw.cpp, LGPL-2.1-or-later).
+    // The demosaiced buffer is already WB-scaled. Normalize XYZ->camera rows
+    // against D65 before inversion, just as LibRaw normalizes cam_rgb before
+    // deriving rgb_cam. Transposition is not an inverse for a camera matrix.
+    let mut forward = Matrix3([cam_xyz[0], cam_xyz[1], cam_xyz[2]]);
+    for row in &mut forward.0 {
+        let white = row[0] * D65.x + row[1] * D65.y + row[2] * D65.z;
+        if !white.is_finite() || white <= 1.0e-5 {
+            return None;
+        }
+        for value in row {
+            *value /= white;
+        }
+    }
+    let matrix = forward.inverse()?;
     valid_matrix(matrix).then_some(matrix)
 }
 
@@ -473,6 +483,10 @@ mod tests {
         assert_eq!(profile.status, CameraProfileStatus::Resolved);
         assert_eq!(profile.family, CameraFamily::Nikon);
         assert_eq!(profile.source, CameraProfileSource::LibRawCameraMatrix);
+        let white = profile.camera_rgb_to_xyz_d65([1.0; 3]);
+        for (actual, expected) in white.into_iter().zip([D65.x, D65.y, D65.z]) {
+            assert!((actual - expected).abs() < 1.0e-5);
+        }
     }
 
     #[test]

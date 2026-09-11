@@ -499,70 +499,95 @@ pub fn compress_to_unit_gamut(rgb: LinearRgb) -> LinearRgb {
 /// Monotone cubic Hermite curve mapping. For monotone control points this avoids spline
 /// overshoot and the harsh piecewise-linear bends from the v0.1 browser prototype.
 pub fn map_monotone_curve(value: f32, points: &[CurvePoint]) -> f32 {
-    let mut points: Vec<CurvePoint> = points
-        .iter()
-        .copied()
-        .filter(|point| point.x.is_finite() && point.y.is_finite())
-        .collect();
-    points.sort_by(|left, right| left.x.total_cmp(&right.x));
-    points.dedup_by(|left, right| (left.x - right.x).abs() < 1.0e-6);
+    PreparedCurve::new(points).map(value)
+}
 
-    if points.len() < 2 {
-        return value;
-    }
+/// Immutable spline coefficients prepared once per edit, shared by all pixels.
+pub struct PreparedCurve {
+    points: Vec<CurvePoint>,
+    tangents: Vec<f32>,
+}
 
-    let segment_count = points.len() - 1;
-    let mut slopes = vec![0.0_f32; segment_count];
-    for index in 0..segment_count {
-        let dx = (points[index + 1].x - points[index].x).max(1.0e-6);
-        slopes[index] = (points[index + 1].y - points[index].y) / dx;
-    }
+impl PreparedCurve {
+    pub fn new(points: &[CurvePoint]) -> Self {
+        let mut points: Vec<CurvePoint> = points
+            .iter()
+            .copied()
+            .filter(|point| point.x.is_finite() && point.y.is_finite())
+            .collect();
+        points.sort_by(|left, right| left.x.total_cmp(&right.x));
+        points.dedup_by(|left, right| (left.x - right.x).abs() < 1.0e-6);
 
-    let mut tangents = vec![0.0_f32; points.len()];
-    tangents[0] = slopes[0];
-    tangents[points.len() - 1] = slopes[segment_count - 1];
-    for index in 1..points.len() - 1 {
-        let left = slopes[index - 1];
-        let right = slopes[index];
-        tangents[index] = if left * right <= 0.0 {
-            0.0
-        } else {
-            2.0 * left * right / (left + right)
-        };
-    }
-
-    // Preserve scene-linear HDR values by extrapolating endpoint tangents rather than
-    // clamping to 0..1 before the output transform.
-    if value <= points[0].x {
-        return points[0].y + (value - points[0].x) * tangents[0];
-    }
-    if value >= points[points.len() - 1].x {
-        let last = points.len() - 1;
-        return points[last].y + (value - points[last].x) * tangents[last];
-    }
-
-    for index in 0..segment_count {
-        let left = points[index];
-        let right = points[index + 1];
-        if value > right.x {
-            continue;
+        if points.len() < 2 {
+            return Self {
+                points,
+                tangents: Vec::new(),
+            };
         }
 
-        let width = (right.x - left.x).max(1.0e-6);
-        let t = ((value - left.x) / width).clamp(0.0, 1.0);
-        let t2 = t * t;
-        let t3 = t2 * t;
-        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
-        let h10 = t3 - 2.0 * t2 + t;
-        let h01 = -2.0 * t3 + 3.0 * t2;
-        let h11 = t3 - t2;
-        return h00 * left.y
-            + h10 * width * tangents[index]
-            + h01 * right.y
-            + h11 * width * tangents[index + 1];
+        let segment_count = points.len() - 1;
+        let mut slopes = vec![0.0_f32; segment_count];
+        for index in 0..segment_count {
+            let dx = (points[index + 1].x - points[index].x).max(1.0e-6);
+            slopes[index] = (points[index + 1].y - points[index].y) / dx;
+        }
+
+        let mut tangents = vec![0.0_f32; points.len()];
+        tangents[0] = slopes[0];
+        tangents[points.len() - 1] = slopes[segment_count - 1];
+        for index in 1..points.len() - 1 {
+            let left = slopes[index - 1];
+            let right = slopes[index];
+            tangents[index] = if left * right <= 0.0 {
+                0.0
+            } else {
+                2.0 * left * right / (left + right)
+            };
+        }
+
+        Self { points, tangents }
     }
 
-    value
+    pub fn map(&self, value: f32) -> f32 {
+        let points = &self.points;
+        let tangents = &self.tangents;
+        if points.len() < 2 {
+            return value;
+        }
+        let segment_count = points.len() - 1;
+        // Preserve scene-linear HDR values by extrapolating endpoint tangents rather than
+        // clamping to 0..1 before the output transform.
+        if value <= points[0].x {
+            return points[0].y + (value - points[0].x) * tangents[0];
+        }
+        if value >= points[points.len() - 1].x {
+            let last = points.len() - 1;
+            return points[last].y + (value - points[last].x) * tangents[last];
+        }
+
+        for index in 0..segment_count {
+            let left = points[index];
+            let right = points[index + 1];
+            if value > right.x {
+                continue;
+            }
+
+            let width = (right.x - left.x).max(1.0e-6);
+            let t = ((value - left.x) / width).clamp(0.0, 1.0);
+            let t2 = t * t;
+            let t3 = t2 * t;
+            let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+            let h10 = t3 - 2.0 * t2 + t;
+            let h01 = -2.0 * t3 + 3.0 * t2;
+            let h11 = t3 - t2;
+            return h00 * left.y
+                + h10 * width * tangents[index]
+                + h01 * right.y
+                + h11 * width * tangents[index + 1];
+        }
+
+        value
+    }
 }
 
 #[cfg(test)]
@@ -801,6 +826,28 @@ mod tests {
             assert!((0.0..=1.0).contains(&output));
             previous = output;
         }
+    }
+
+    #[test]
+    fn prepared_curve_preserves_endpoints_hdr_and_known_hermite_values() {
+        let curve = PreparedCurve::new(&[
+            CurvePoint { x: 0.0, y: 0.0 },
+            CurvePoint { x: 0.5, y: 0.25 },
+            CurvePoint { x: 1.0, y: 1.0 },
+        ]);
+        // Secants .5 and 1.5, harmonic interior tangent .75.
+        for (input, expected) in [
+            (-1.0, -0.5),
+            (0.0, 0.0),
+            (0.25, 0.109375),
+            (0.5, 0.25),
+            (0.75, 0.578125),
+            (1.0, 1.0),
+            (2.0, 2.5),
+        ] {
+            assert_eq!(curve.map(input), expected);
+        }
+        assert_eq!(PreparedCurve::new(&[]).map(4.0), 4.0);
     }
 
     #[test]

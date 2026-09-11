@@ -2,7 +2,7 @@ export class PreviewSuperseded extends Error {
   constructor() { super('PreviewCancelled: superseded'); this.name = 'PreviewSuperseded' }
 }
 
-interface Request<T> { run: () => Promise<T>; cancel: () => void; resolve: (value: T) => void; reject: (error: unknown) => void; stale: boolean }
+interface Request<T> { run: () => Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void }
 
 /** One running render and one replaceable pending state per visible preview surface. */
 export class LatestPreviewQueue<T> {
@@ -10,11 +10,10 @@ export class LatestPreviewQueue<T> {
   private pending: Request<T> | null = null
 
   submit(run: () => Promise<T>, cancel: () => void): Promise<T> {
+    void cancel // Kept for API compatibility; the active frame is intentionally allowed to finish.
     return new Promise<T>((resolve, reject) => {
-      const request = { run, cancel, resolve, reject, stale: false }
+      const request = { run, resolve, reject }
       if (this.running) {
-        this.running.stale = true
-        this.running.cancel()
         this.pending?.reject(new PreviewSuperseded())
         this.pending = request
       } else { void this.execute(request) }
@@ -25,9 +24,8 @@ export class LatestPreviewQueue<T> {
     this.running = request
     try {
       const value = await request.run()
-      if (request.stale) request.reject(new PreviewSuperseded())
-      else request.resolve(value)
-    } catch (error) { request.reject(request.stale ? new PreviewSuperseded() : error) }
+      request.resolve(value)
+    } catch (error) { request.reject(error) }
     finally {
       this.running = null
       const next = this.pending; this.pending = null

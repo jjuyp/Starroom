@@ -912,7 +912,7 @@ impl Library {
 
     pub fn thumbnail_identity(asset: &AssetRecord, size: ThumbnailSize) -> String {
         let mut hash = Sha256::new();
-        hash.update(b"starroom-thumbnail-v1\0");
+        hash.update(b"starroom-thumbnail-v2-camera-profile-v2\0");
         hash.update(asset.content_fingerprint.as_bytes());
         hash.update(asset.metadata.orientation.unwrap_or(1).to_le_bytes());
         hash.update(size.pixels().to_le_bytes());
@@ -1575,7 +1575,7 @@ mod tests {
         let generation = generation_started.elapsed();
         drop(library);
 
-        let mut reopened = Library::open(&database).unwrap();
+        let reopened = Library::open(&database).unwrap();
         let cached_started = Instant::now();
         for asset_id in &imported {
             reopened

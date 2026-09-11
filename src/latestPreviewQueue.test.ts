@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { LatestPreviewQueue, PreviewSuperseded } from './latestPreviewQueue'
 
-it('runs only active and latest pending, rejects stale output even when native cancellation is late', async () => {
+it('publishes the active frame and runs only the latest pending state', async () => {
   const queue = new LatestPreviewQueue<number>()
   let finish!: (value: number) => void
   let cancelled = 0
@@ -9,9 +9,9 @@ it('runs only active and latest pending, rejects stale output even when native c
   const first = queue.submit(() => new Promise<number>((resolve) => { finish = resolve; ran.push(0) }), () => { cancelled++ }).catch((error: unknown) => error)
   const second = queue.submit(async () => { ran.push(1); return 1 }, () => {}).catch((error: unknown) => error)
   const third = queue.submit(async () => { ran.push(2); return 2 }, () => {})
-  expect(ran).toEqual([0]); expect(cancelled).toBe(2)
+  expect(ran).toEqual([0]); expect(cancelled).toBe(0)
   finish(0)
-  expect(await first).toBeInstanceOf(PreviewSuperseded)
+  expect(await first).toBe(0)
   expect(await second).toBeInstanceOf(PreviewSuperseded)
   expect(await third).toBe(2); expect(ran).toEqual([0, 2])
 })

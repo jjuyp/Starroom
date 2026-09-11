@@ -443,10 +443,13 @@ export interface NativePreviewViewport {
 }
 
 export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: number, sourceWidth = 0, sourceHeight = 0,
-  visible?: { centerX: number; centerY: number; widthFraction: number; heightFraction: number }) {
-  const safeScale = Number.isFinite(zoomScale) ? Math.max(.25, Math.min(6, zoomScale)) : 1
+  visible?: { centerX: number; centerY: number; widthFraction: number; heightFraction: number }, displayEdge = 1800) {
+  void zoomScale // retained in the public contract; displayEdge is the authoritative pixel demand.
   const sourceEdge = Math.max(0, Math.trunc(sourceWidth), Math.trunc(sourceHeight))
-  const highResolution = zoom === '100' || safeScale > 1
+  const requestedEdge = Math.max(512, Math.min(4096, Math.ceil(Number.isFinite(displayEdge) ? displayEdge : 1800)))
+  // A small wheel zoom must not trigger a full 24 MP decode. Pyramid previews stay sharp up to
+  // 4096 display pixels; source-resolution tiles are reserved for true 1:1/deeper inspection.
+  const highResolution = zoom === '100' || displayEdge > 4096
   let viewport: NativePreviewViewport | null = null
   if (highResolution && sourceWidth > 0 && sourceHeight > 0 && visible) {
     const width = Math.max(1, Math.min(sourceWidth, Math.ceil(sourceWidth * Math.max(0, Math.min(1, visible.widthFraction)) * 1.25)))
@@ -459,7 +462,7 @@ export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: nu
   }
   return {
     resolutionMode: highResolution ? 'highResolution' as const : 'fit' as const,
-    maxEdge: highResolution && sourceEdge ? sourceEdge : Math.max(512, Math.ceil(1800 * Math.max(1, safeScale))),
+    maxEdge: highResolution && sourceEdge ? sourceEdge : requestedEdge,
     viewport,
   }
 }
@@ -533,6 +536,10 @@ export async function chooseNativeLibraryFolder() {
 
 export async function importNativeLibraryFolder(root: string) {
   return invoke<{ imported: number[]; alreadyPresent: string[]; duplicates: string[]; relinkCandidates: Array<[number, string]>; unsupported: string[]; failed: Array<[string, string]>; cancelled: boolean }>('library_import_folder', { root })
+}
+
+export async function importNativeLibraryPaths(paths: readonly string[]) {
+  return invoke<{ imported: number[]; alreadyPresent: string[]; duplicates: string[]; relinkCandidates: Array<[number, string]>; failed: Array<[string, string]>; unsupported: string[]; cancelled: boolean }>('library_import_folder', { root: null, paths })
 }
 
 export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {

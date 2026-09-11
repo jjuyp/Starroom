@@ -7,7 +7,8 @@ const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 describe('native preview contract', () => {
   it('requests full source resolution for 1:1/high zoom while retaining a bounded Fit tier', () => {
     expect(nativePreviewViewportContract('fit', 1, 6000, 4000)).toEqual({ resolutionMode: 'fit', maxEdge: 1800, viewport: null })
-    expect(nativePreviewViewportContract('fit', 2, 6000, 4000)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: null })
+    expect(nativePreviewViewportContract('fit', 2, 6000, 4000, undefined, 2200)).toEqual({ resolutionMode: 'fit', maxEdge: 2200, viewport: null })
+    expect(nativePreviewViewportContract('fit', 5, 6000, 4000, undefined, 4600)).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: null })
     expect(nativePreviewViewportContract('100', 1, 6000, 4000, {
       centerX: .5, centerY: .5, widthFraction: .2, heightFraction: .25,
     })).toEqual({ resolutionMode: 'highResolution', maxEdge: 6000, viewport: { sourceWidth: 6000, sourceHeight: 4000, x: 2250, y: 1375, width: 1500, height: 1250 } })

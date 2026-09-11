@@ -8,8 +8,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
-    ColorBand, ColorMixer, CurvePoint, LinearRgb, ToneParameters, apply_color_mixer, apply_tone,
-    compress_to_unit_gamut, map_monotone_curve, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab,
+    ColorBand, ColorMixer, CurvePoint, LinearRgb, PreparedCurve, ToneParameters, apply_color_mixer,
+    apply_tone, compress_to_unit_gamut, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab,
     rec2020_to_oklab, sample_color_band,
 };
 use starroom_color_management::{
@@ -567,13 +567,15 @@ fn apply_relative_color(rgb: LinearRgb, parameters: RelativeColorParameters) -> 
     oklab_to_rec2020(oklch_to_oklab(lch))
 }
 
+#[cfg(test)]
 fn apply_one_curve(value: f32, curve: &[CurvePoint]) -> f32 {
     if curve.len() < 2 {
         value
     } else {
-        map_monotone_curve(value, curve)
+        starroom_color::map_monotone_curve(value, curve)
     }
 }
+#[cfg(test)]
 fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> LinearRgb {
     let master = if curves.master.len() >= 2 {
         &curves.master
@@ -589,6 +591,46 @@ fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> 
         r: apply_one_curve(rgb.r, &curves.red),
         g: apply_one_curve(rgb.g, &curves.green),
         b: apply_one_curve(rgb.b, &curves.blue),
+    }
+}
+
+struct PreparedLayer<'a> {
+    layer: &'a NativeAdjustmentLayer,
+    master: PreparedCurve,
+    red: PreparedCurve,
+    green: PreparedCurve,
+    blue: PreparedCurve,
+}
+
+impl<'a> PreparedLayer<'a> {
+    fn new(layer: &'a NativeAdjustmentLayer) -> Result<Self, PipelineError> {
+        if !layer_is_finite(layer) {
+            return Err(PipelineError::InvalidLayer {
+                id: layer.id.clone(),
+                reason: "non-finite control",
+            });
+        }
+        if !(0.0..=1.0).contains(&layer.opacity) {
+            return Err(PipelineError::InvalidLayer {
+                id: layer.id.clone(),
+                reason: "opacity must be 0..1",
+            });
+        }
+        Ok(Self {
+            layer,
+            master: PreparedCurve::new(&layer.adjustments.curves.master),
+            red: PreparedCurve::new(&layer.adjustments.curves.red),
+            green: PreparedCurve::new(&layer.adjustments.curves.green),
+            blue: PreparedCurve::new(&layer.adjustments.curves.blue),
+        })
+    }
+
+    fn apply_curve(&self, rgb: LinearRgb) -> LinearRgb {
+        LinearRgb {
+            r: self.red.map(self.master.map(rgb.r)),
+            g: self.green.map(self.master.map(rgb.g)),
+            b: self.blue.map(self.master.map(rgb.b)),
+        }
     }
 }
 
@@ -915,40 +957,25 @@ fn mask_weight(
     }
 }
 
-fn apply_layers(
+fn apply_prepared_layers(
     mut rgb: LinearRgb,
-    layers: &[NativeAdjustmentLayer],
+    layers: &[PreparedLayer<'_>],
     x: f32,
     y: f32,
     portrait_masks: &[PortraitMaskRaster],
     generated_masks: &[GeneratedMaskRaster],
 ) -> Result<LinearRgb, PipelineError> {
-    for layer in layers {
+    for prepared_layer in layers {
+        let layer = prepared_layer.layer;
         if !layer.enabled {
             continue;
         }
-        if !layer_is_finite(layer) {
-            return Err(PipelineError::InvalidLayer {
-                id: layer.id.clone(),
-                reason: "non-finite control",
-            });
-        }
-        if !(0.0..=1.0).contains(&layer.opacity) {
-            return Err(PipelineError::InvalidLayer {
-                id: layer.id.clone(),
-                reason: "opacity must be 0..1",
-            });
-        }
         let adjusted = apply_grading(
             apply_color_mixer(
-                apply_curve(
-                    apply_tone(
-                        apply_relative_color(rgb, layer.adjustments.relative_color),
-                        layer.adjustments.tone,
-                    ),
-                    &[],
-                    &layer.adjustments.curves,
-                ),
+                prepared_layer.apply_curve(apply_tone(
+                    apply_relative_color(rgb, layer.adjustments.relative_color),
+                    layer.adjustments.tone,
+                )),
                 layer.adjustments.color_mixer,
             ),
             layer.adjustments.grading,
@@ -970,6 +997,22 @@ fn apply_layers(
         }
     }
     Ok(rgb)
+}
+
+#[cfg(test)]
+fn apply_layers(
+    rgb: LinearRgb,
+    layers: &[NativeAdjustmentLayer],
+    x: f32,
+    y: f32,
+    portrait_masks: &[PortraitMaskRaster],
+    generated_masks: &[GeneratedMaskRaster],
+) -> Result<LinearRgb, PipelineError> {
+    let prepared = layers
+        .iter()
+        .map(PreparedLayer::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    apply_prepared_layers(rgb, &prepared, x, y, portrait_masks, generated_masks)
 }
 
 fn skin_retouch_is_identity(parameters: SkinRetouchParameters) -> bool {
@@ -1138,9 +1181,19 @@ fn apply_creative_graph(
     checkpoint()?;
     profiling::measure(ProfileStage::Curve, working_bytes, || {
         if !settings.curve.is_empty() || settings.curves != ToneCurveSet::default() {
-            prepared
-                .par_iter_mut()
-                .for_each(|rgb| *rgb = apply_curve(*rgb, &settings.curve, &settings.curves));
+            let master = starroom_color::PreparedCurve::new(if settings.curves.master.len() >= 2 {
+                &settings.curves.master
+            } else {
+                &settings.curve
+            });
+            let red = starroom_color::PreparedCurve::new(&settings.curves.red);
+            let green = starroom_color::PreparedCurve::new(&settings.curves.green);
+            let blue = starroom_color::PreparedCurve::new(&settings.curves.blue);
+            prepared.par_iter_mut().for_each(|rgb| {
+                rgb.r = red.map(master.map(rgb.r));
+                rgb.g = green.map(master.map(rgb.g));
+                rgb.b = blue.map(master.map(rgb.b));
+            });
         }
     });
     checkpoint()?;
@@ -1162,15 +1215,20 @@ fn apply_creative_graph(
     checkpoint()?;
     profiling::measure(ProfileStage::Mask, working_bytes, || {
         if !settings.layers.is_empty() {
+            let layers = settings
+                .layers
+                .iter()
+                .map(PreparedLayer::new)
+                .collect::<Result<Vec<_>, _>>()?;
             for (index, rgb) in prepared.iter_mut().enumerate() {
                 if index % 4096 == 0 {
                     checkpoint()?;
                 }
                 let x = (index % width) as f32 / width.max(1) as f32;
                 let y = (index / width) as f32 / height.max(1) as f32;
-                *rgb = apply_layers(
+                *rgb = apply_prepared_layers(
                     *rgb,
-                    &settings.layers,
+                    &layers,
                     x,
                     y,
                     &settings.portrait_masks,

@@ -1,12 +1,24 @@
 # Complete Internal Build Plan
 
-## RC3 close-request field hotfix (2026-09-10, in progress)
+## RC3 field-quality and responsiveness hotfix (2026-09-11, release-qualified)
 
 - [x] Reproduce the installed close failure: `plugin:window|destroy not allowed by ACL`.
 - [x] Grant only `core:window:allow-destroy` to the existing `main` window capability.
 - [x] Preserve the production ordering: confirm transient fallback edits, atomically mark the Native
   Session clean, then destroy the window; a failed Session write still keeps the window open.
 - [x] Add release validation that rejects packaging without the required close permission.
+- [x] Persist exact-file/drop imports in the Native Library, keep sidebar/grid counts consistent,
+  and regenerate RAW thumbnails after camera-profile corrections.
+- [x] Correct LibRaw `cam_xyz` direction/white normalization for camera RGB -> XYZ D65; verify the
+  reported D750 night RAW no longer has the red/green cast without using its private pixels in Git.
+- [x] Precompute four-channel monotone curve coefficients once per render instead of per pixel.
+- [x] Keep the preview canvas geometry stable while proxy/final frames change; size Fit tiers from
+  actual HiDPI display demand, retain 1024-edge interactive detail, and cache eligible full RAW
+  decodes for repeated 1:1 viewport edits.
+- [x] Apply the requested blue frosted-glass workspace and put visual Temperature/Tint/Vibrance/
+  Saturation controls before advanced Color Mixer/Grading controls.
+- [x] Complete full warning-denied/RAW/Golden/performance regression, package and installed-app
+  field workflow validation on the final immutable candidate SHA.
 - [ ] Pass same-SHA Blueprint and Windows installer/runtime gates, then publish `v1.0.0-rc.3`
   without replacing rc.2, merging `main`, closing Draft PR #2, or starting M31.
 

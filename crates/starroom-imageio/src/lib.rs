@@ -247,6 +247,11 @@ fn raw_format(path: &Path) -> bool {
     RawFormat::from_path(path).is_ok()
 }
 
+/// Reports whether a source uses the pinned RAW decoder path without opening the file.
+pub fn is_raw_source(path: impl AsRef<Path>) -> bool {
+    raw_format(path.as_ref())
+}
+
 fn resize_raw_preview(mut image: DecodedRawImage, max_edge: u32) -> DecodedRawImage {
     let max_edge = max_edge.max(1);
     if image.width <= max_edge && image.height <= max_edge {
@@ -275,6 +280,13 @@ pub fn decode_source(path: impl AsRef<Path>) -> Result<DecodedSourceImage, Image
         return Ok(DecodedSourceImage::Raw(Box::new(decode_raw(path)?)));
     }
     Ok(DecodedSourceImage::Rendered(decode_rendered(path)?))
+}
+
+/// Header dimensions for encoded files, without allocating image pixels.
+pub fn encoded_dimensions(path: impl AsRef<Path>) -> Result<(u32, u32), ImageIoError> {
+    Ok(ImageReader::open(path)?
+        .with_guessed_format()?
+        .into_dimensions()?)
 }
 
 pub fn decode_source_preview(
@@ -704,6 +716,10 @@ mod tests {
             std::process::id()
         ));
         std::fs::write(&path, bytes).expect("fixture");
+        assert_eq!(
+            encoded_dimensions(&path).expect("header dimensions"),
+            (3, 2)
+        );
         let region = decode_source_region(&path, 1, 1, 2, 1).expect("region");
         let _ = std::fs::remove_file(path);
         assert_eq!((region.source_width, region.source_height), (3, 2));

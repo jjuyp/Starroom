@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-M30 — **Starroom v1.0.0-rc.3 field-validation hotfix (feature freeze)**.
+M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.
 
 M27 acceptance is `225a7ae`; M28 acceptance is `94a9ccc` with push CI `32942892981`; M29
 acceptance is `d83fd9f` with push CI `32943720530`. M1-M29 are immutable quality baselines.
@@ -10,8 +10,9 @@ acceptance is `d83fd9f` with push CI `32943720530`. M1-M29 are immutable quality
 ## Goal
 
 Produce a verifiable Windows `v1.0.0-rc.3`, not Final, from the published rc.2 baseline. Repair the
-Tauri close-request ACL regression reported during field validation without changing imaging
-semantics, then repeat installer/runtime qualification on one immutable candidate SHA.
+reported close-request, Library/RAW thumbnail, camera-color, preview latency/detail and glass UI
+field regressions, then repeat installer/runtime qualification on one immutable candidate SHA.
+Local full, 100 MP and installed-runtime qualification are green; remote same-SHA gates remain.
 
 ## Validation order
 

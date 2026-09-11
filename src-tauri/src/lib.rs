@@ -23,7 +23,7 @@ use starroom_heal::HealingOperation;
 use starroom_history::{EditCommand, EditHistory, HistoryEntry, NamedSnapshot};
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, decode_source_region,
-    encode_jpeg_rgb8,
+    encode_jpeg_rgb8, is_raw_source,
 };
 use starroom_library::{
     AssetFlag, AssetRecord, CollectionKind, CollectionRecord, ColorLabel, ImportResult, Library,
@@ -166,13 +166,27 @@ fn library_open_default(
 #[tauri::command]
 async fn library_import_folder(
     runtime: State<'_, NativeLibraryRuntime>,
-    root: PathBuf,
+    root: Option<PathBuf>,
+    paths: Option<Vec<PathBuf>>,
 ) -> Result<ImportResult, String> {
     let runtime = runtime.inner().clone();
     runtime.cancel_import.store(false, Ordering::Relaxed);
     let worker = runtime.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let paths = Library::recursive_paths(&root).map_err(|error| error.to_string())?;
+        let mut inputs = paths.unwrap_or_default();
+        if let Some(root) = root {
+            inputs.push(root);
+        }
+        let mut paths = Vec::new();
+        for input in inputs {
+            if input.is_dir() {
+                paths.extend(Library::recursive_paths(&input).map_err(|error| error.to_string())?);
+            } else {
+                paths.push(input);
+            }
+        }
+        paths.sort();
+        paths.dedup();
         let mut guard = worker
             .library
             .lock()
@@ -1210,7 +1224,8 @@ enum PreviewResolutionMode {
 
 fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 {
     match phase {
-        PreviewInteractionPhase::Interactive => max_edge.min(384),
+        // Keep drag feedback detailed enough for modern HiDPI displays while remaining bounded.
+        PreviewInteractionPhase::Interactive => max_edge.min(1024),
         PreviewInteractionPhase::Final => max_edge,
     }
     .clamp(256, 4096)
@@ -1250,6 +1265,57 @@ struct NativePreviewScheduler {
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<GpuRenderer, String>>>,
+}
+
+const DECODE_CACHE_BUDGET: u64 = 512 * 1024 * 1024;
+
+fn cached_decoded_source(
+    scheduler: &NativePreviewScheduler,
+    source_identity: &str,
+    edge: u32,
+) -> Result<Option<Arc<DecodedSourceImage>>, String> {
+    let mut cache = scheduler
+        .decoded
+        .lock()
+        .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+    Ok(cache
+        .iter()
+        .position(|(identity, cached_edge, _)| identity == source_identity && *cached_edge == edge)
+        .and_then(|index| cache.remove(index))
+        .map(|entry| {
+            let image = entry.2.clone();
+            cache.push_back(entry);
+            image
+        }))
+}
+
+fn cache_decoded_source(
+    scheduler: &NativePreviewScheduler,
+    source_identity: String,
+    edge: u32,
+    image: Arc<DecodedSourceImage>,
+) -> Result<(), String> {
+    let bytes = u64::from(image.width()) * u64::from(image.height()) * 16;
+    if bytes > DECODE_CACHE_BUDGET {
+        return Ok(());
+    }
+    let mut cache = scheduler
+        .decoded
+        .lock()
+        .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+    while !cache.is_empty()
+        && (cache.len() >= 4
+            || cache
+                .iter()
+                .map(|(_, _, value)| u64::from(value.width()) * u64::from(value.height()) * 16)
+                .sum::<u64>()
+                + bytes
+                > DECODE_CACHE_BUDGET)
+    {
+        cache.pop_front();
+    }
+    cache.push_back((source_identity, edge, image));
+    Ok(())
 }
 
 /// Process-local M16 model/session and soft-mask cache. It never crosses the Tauri boundary:
@@ -2742,89 +2808,86 @@ fn native_preview_inner(
             viewport.source_height,
             RenderGraph::default().maximum_halo(),
         );
-        let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
-            decode_source_region(
-                &request.source_path,
-                expanded.x,
-                expanded.y,
-                expanded.width,
-                expanded.height,
-            )
-        })
-        .map_err(|error| format!("native high-resolution region decode failed: {error}"))?;
-        if decoded.source_width != viewport.source_width
-            || decoded.source_height != viewport.source_height
-        {
+        let (source_width, source_height, image) = if is_raw_source(&request.source_path) {
+            let full = if let Some(image) =
+                cached_decoded_source(scheduler, &source_identity, u32::MAX)?
+            {
+                image
+            } else {
+                let image = Arc::new(
+                    profiling::measure(ProfileStage::RawDecode, 0, || {
+                        decode_source(&request.source_path)
+                    })
+                    .map_err(|error| {
+                        format!("native high-resolution RAW decode failed: {error}")
+                    })?,
+                );
+                cache_decoded_source(scheduler, source_identity.clone(), u32::MAX, image.clone())?;
+                image
+            };
+            let dimensions = source_dimensions(&full);
+            let crop = full
+                .crop(expanded.x, expanded.y, expanded.width, expanded.height)
+                .map_err(|error| format!("native high-resolution RAW crop failed: {error}"))?;
+            (dimensions.0, dimensions.1, crop)
+        } else {
+            let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
+                decode_source_region(
+                    &request.source_path,
+                    expanded.x,
+                    expanded.y,
+                    expanded.width,
+                    expanded.height,
+                )
+            })
+            .map_err(|error| format!("native high-resolution region decode failed: {error}"))?;
+            (decoded.source_width, decoded.source_height, decoded.image)
+        };
+        if source_width != viewport.source_width || source_height != viewport.source_height {
             return Err(
                 "PreviewViewportInvalid: source dimensions changed since Library registration"
                     .into(),
             );
         }
-        Some((viewport, expanded, Arc::new(decoded.image)))
+        Some((viewport, expanded, Arc::new(image)))
     } else {
         None
     };
-    let cached = if high_resolution || region.is_some() {
+    // Full sensor data and preview tiers have distinct identities. Reusing the immutable
+    // full decode avoids running LibRaw again for every 1:1 slider edit.
+    let decode_edge = if high_resolution {
+        u32::MAX
+    } else {
+        level.max_edge()
+    };
+    let cached = if region.is_some() {
         None
     } else {
-        let mut cache = scheduler
-            .decoded
-            .lock()
-            .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
-        cache
-            .iter()
-            .position(|(identity, edge, _)| {
-                identity == &source_identity && *edge == level.max_edge()
-            })
-            .and_then(|index| cache.remove(index))
-            .map(|entry| {
-                let image = entry.2.clone();
-                cache.push_back(entry);
-                image
-            })
+        cached_decoded_source(scheduler, &source_identity, decode_edge)?
     };
     let decoded = if let Some((_, _, image)) = &region {
         image.clone()
     } else if let Some(image) = cached {
         image
-    } else if high_resolution {
-        Arc::new(
-            profiling::measure(ProfileStage::RawDecode, 0, || {
-                decode_source(&request.source_path)
-            })
-            .map_err(|error| format!("native high-resolution preview decode failed: {error}"))?,
-        )
     } else {
         let image = Arc::new(
             profiling::measure(ProfileStage::RawDecode, 0, || {
-                decode_source_preview(&request.source_path, level.max_edge())
+                if high_resolution {
+                    decode_source(&request.source_path)
+                } else {
+                    decode_source_preview(&request.source_path, level.max_edge())
+                }
             })
             .map_err(|error| format!("native preview decode failed: {error}"))?,
         );
         // Keep a bounded source-resolution-tier cache, not an edit-state cache. Exposure changes
         // reuse immutable decoded sensor data; a source identity/preview-tier change cannot hit.
-        let bytes = u64::from(image.width()) * u64::from(image.height()) * 16;
-        const BUDGET: u64 = 128 * 1024 * 1024;
-        if bytes <= BUDGET {
-            let mut cache = scheduler
-                .decoded
-                .lock()
-                .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
-            while !cache.is_empty()
-                && (cache.len() >= 4
-                    || cache
-                        .iter()
-                        .map(|(_, _, value)| {
-                            u64::from(value.width()) * u64::from(value.height()) * 16
-                        })
-                        .sum::<u64>()
-                        + bytes
-                        > BUDGET)
-            {
-                cache.pop_front();
-            }
-            cache.push_back((source_identity.clone(), level.max_edge(), image.clone()));
-        }
+        cache_decoded_source(
+            scheduler,
+            source_identity.clone(),
+            decode_edge,
+            image.clone(),
+        )?;
         image
     };
     let (source_width, source_height) = region
@@ -2973,12 +3036,26 @@ fn native_preview_inner(
         encode_jpeg_rgb8(&tile_data, tile_width, tile_height, 91, None)
     })
     .map_err(|error| format!("native preview encode failed: {error}"))?;
+    let original_dimensions = match decoded.as_ref() {
+        DecodedSourceImage::Rendered(_) => {
+            starroom_imageio::encoded_dimensions(&request.source_path)
+                .map_err(|error| format!("PreviewDimensionsFailed: {error}"))?
+        }
+        DecodedSourceImage::Raw(raw) => {
+            let dimensions = (raw.metadata.active_width, raw.metadata.active_height);
+            if matches!(raw.metadata.orientation, 5..=8) {
+                (dimensions.1, dimensions.0)
+            } else {
+                dimensions
+            }
+        }
+    };
     let frame = preview_frame(
         PreviewFrameHeader {
             width: tile_width,
             height: tile_height,
-            source_width,
-            source_height,
+            source_width: original_dimensions.0,
+            source_height: original_dimensions.1,
             tile_x: if tile_requested { viewport.x } else { 0 },
             tile_y: if tile_requested { viewport.y } else { 0 },
             flags,
@@ -3622,6 +3699,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn decoded_preview_cache_is_tiered_by_source_and_resolution() {
+        let scheduler = NativePreviewScheduler::default();
+        let image = Arc::new(DecodedSourceImage::Rendered(
+            starroom_imageio::DecodedRenderedImage {
+                width: 2,
+                height: 2,
+                format: starroom_imageio::RenderedFormat::Png,
+                rgba: vec![0.25; 16],
+                embedded_icc: None,
+                exif: None,
+            },
+        ));
+        cache_decoded_source(&scheduler, "photo-a".into(), u32::MAX, image.clone()).unwrap();
+        assert!(
+            cached_decoded_source(&scheduler, "photo-a", 1024)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cached_decoded_source(&scheduler, "photo-b", u32::MAX)
+                .unwrap()
+                .is_none()
+        );
+        let restored = cached_decoded_source(&scheduler, "photo-a", u32::MAX)
+            .unwrap()
+            .expect("full-resolution source should be cached");
+        assert!(Arc::ptr_eq(&restored, &image));
+    }
+
+    #[test]
     fn model_root_prefers_explicit_then_bundled_then_development_location() {
         let base = std::env::temp_dir().join(format!("starroom-model-root-{}", std::process::id()));
         let executable = base.join("installed").join("Starroom.exe");
@@ -3837,7 +3944,7 @@ mod tests {
     fn m28_interactive_preview_is_bounded_and_final_restores_requested_quality() {
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Interactive),
-            384
+            1024
         );
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Final),

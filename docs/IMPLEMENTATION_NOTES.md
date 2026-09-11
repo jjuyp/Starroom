@@ -1,4 +1,28 @@
 # Implementation Notes
+## 2026-09-10 rc.3 field image-quality, preview and workspace repair
+
+- Exact-file picker/drop now enters the same transactional Native Library import path as folder
+  import. The UI reloads persisted assets and progressive Native thumbnails; RAW paths are never
+  assigned directly to an HTML image element, and the Library count is derived from Library rows
+  rather than the Browser demo photo.
+- LibRaw 0.22.2 exposes `cam_xyz` as XYZ-to-camera coefficients. The M3 adapter previously
+  transposed that value as though it were camera-to-XYZ, producing the reported severe red/green
+  Nikon cast. Resolver v2 now follows the pinned LibRaw `cam_xyz_coeff` white-normalization and
+  inversion semantics before the existing D65/Rec.2020 stage. The private D750 field file was used
+  only for local visual/timing verification and was not copied into the repository or CI.
+- The four-channel monotone Hermite curve now prepares sorted points, secants and tangents once per
+  render. Previously this allocation/sort ran once per pixel/channel even for identity curves.
+  Known Hermite/HDR vectors and the existing Preview/Export/Golden regressions protect semantics.
+- Preview demand now comes from actual canvas CSS pixels times device-pixel ratio. A 116% wheel
+  zoom no longer forces a full 24 MP decode; pyramid tiers remain authoritative through 4096 display
+  pixels, with source viewport tiles for true 1:1/deep zoom. Interactive quality is 1024-edge, the
+  active frame is allowed to publish while only one newest request waits, and eligible full RAW
+  decodes use a source/tier-keyed 512 MiB LRU bound. Canvas CSS geometry is independent of proxy
+  raster dimensions, preventing the photo from shrinking/growing during slider refinement.
+- The field workspace uses translucent blue glass panels, blur, edge highlights and larger filmstrip
+  targets. Basic Color is now the first visible color group with blue-to-amber Temperature,
+  green-to-magenta Tint and chroma gradients; advanced native OKLCh tools remain below it.
+
 ## 2026-09-10 v1.0.0-rc.3 close-request field hotfix
 
 - The installed rc.2 close handler correctly prevented the native close request until Session state

@@ -18,7 +18,7 @@ import {
 } from './imagePipeline'
 import {
   adviseNativeImage, chooseNativePhotoPaths, nativeRuntimeAvailable,
-  nativeThumbnailUrl, renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   queryNativeAiAvailability, type NativeAiAvailability,
@@ -35,7 +35,8 @@ import {
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
 import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
-import { supportedNativePhotoPaths } from './importPaths'
+import { importNativeLibraryPaths } from './nativeRender'
+import { PreviewSuperseded } from './latestPreviewQueue'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -335,7 +336,7 @@ function Slider({ label, value, min, max, step, suffix = '', onBeginEdit, onChan
     if (Number.isFinite(parsed)) onChange(Math.min(max, Math.max(min, parsed)))
     setEditing(false)
   }
-  return <div className="slider-row">
+  return <div className="slider-row" data-control={label.toLowerCase()}>
     <div className="slider-label"><span>{label}</span><label className="numeric-editor" title={`Type ${label} value`}>
       <input aria-label={`${label} value`} type="number" min={min} max={max} step={step} value={editing ? draft : display}
         onFocus={(event) => { onBeginEdit(); setEditing(true); setDraft(display); event.currentTarget.select() }}
@@ -575,6 +576,12 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tileCanvasRef = useRef<HTMLCanvasElement>(null)
   const previewSurface = useRef({})
+  const displayedSource = useRef('')
+  const activePhotoId = useRef(photo.id)
+  const nativeDimensions = useRef({ id: '', width: 0, height: 0 })
+  const [sourceDisplaySize, setSourceDisplaySize] = useState({ width: 0, height: 0 })
+  const [aspect, setAspect] = useState(1.5)
+  const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 })
   const [canvasBounds, setCanvasBounds] = useState({ left: 0, top: 0, width: 0, height: 0 })
   const [tileRegion, setTileRegion] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const healingStroke = useRef<Array<{ x: number; y: number }> | null>(null)
@@ -583,19 +590,21 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
     return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
   }
 
+  useEffect(() => { activePhotoId.current = photo.id }, [photo.id])
+
   useEffect(() => {
-    let cancelled = false
     let finalPublished = false
-    if (photo.renderBackend === 'native' && photo.src) {
+    if (photo.renderBackend === 'native' && photo.src && displayedSource.current !== photo.id) {
       const cachedThumbnail = new Image()
       cachedThumbnail.onload = () => {
-        if (cancelled || finalPublished || !canvasRef.current) return
+        if (activePhotoId.current !== photo.id || finalPublished || !canvasRef.current || displayedSource.current === photo.id) return
         const canvas = canvasRef.current
         const context = canvas.getContext('2d')
         if (!context) return
         canvas.width = cachedThumbnail.naturalWidth
         canvas.height = cachedThumbnail.naturalHeight
         context.drawImage(cachedThumbnail, 0, 0)
+        setAspect(cachedThumbnail.naturalWidth / cachedThumbnail.naturalHeight)
         setTileRegion(null)
         onDimensions(`${photo.libraryAsset?.metadata.width ?? cachedThumbnail.naturalWidth} × ${photo.libraryAsset?.metadata.height ?? cachedThumbnail.naturalHeight}`)
         onStatus('Native cached thumbnail · refining…')
@@ -622,8 +631,8 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             { ...defaultLayer(), id: '__mask-preview-dim__', name: 'Mask preview outside', opacity: .72, mask: { operation: 'invert' as const, children: [structuredClone(maskPreview)] }, adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: -1.35 } } },
             { ...defaultLayer(), id: '__mask-preview-inside__', name: 'Mask preview inside', opacity: .38, mask: structuredClone(maskPreview), adjustments: { tone: { ...defaultLayer().adjustments.tone, exposureEv: .55 } } },
           ] : photo.layers
-          const sourceWidth = photo.libraryAsset?.metadata.width ?? 0
-          const sourceHeight = photo.libraryAsset?.metadata.height ?? 0
+          const sourceWidth = nativeDimensions.current.id === photo.id ? nativeDimensions.current.width : photo.libraryAsset?.metadata.width ?? 0
+          const sourceHeight = nativeDimensions.current.id === photo.id ? nativeDimensions.current.height : photo.libraryAsset?.metadata.height ?? 0
           const baseRect = canvasRef.current?.getBoundingClientRect()
           const stageRect = canvasRef.current?.closest('.photo-stage')?.getBoundingClientRect()
           const visible = baseRect && stageRect && baseRect.width > 0 && baseRect.height > 0 ? {
@@ -632,13 +641,19 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             widthFraction: Math.max(0, Math.min(1, stageRect.width / baseRect.width)),
             heightFraction: Math.max(0, Math.min(1, stageRect.height / baseRect.height)),
           } : undefined
-          const viewport = nativePreviewViewportContract(zoom, zoomScale, sourceWidth, sourceHeight, visible)
+          const displayEdge = Math.max(baseRect?.width ?? 0, baseRect?.height ?? 0)
+            * Math.max(1, window.devicePixelRatio || 1)
+          const viewport = nativePreviewViewportContract(zoom, zoomScale, sourceWidth, sourceHeight, visible, displayEdge)
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
             before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
             viewport.resolutionMode, viewport.viewport)
           nativeResult = result
+          if (activePhotoId.current === photo.id) {
+            nativeDimensions.current = { id: photo.id, width: result.sourceWidth, height: result.sourceHeight }
+            setSourceDisplaySize({ width: result.sourceWidth, height: result.sourceHeight })
+          }
           const jpegBuffer = result.jpeg.buffer.slice(
             result.jpeg.byteOffset,
             result.jpeg.byteOffset + result.jpeg.byteLength,
@@ -662,7 +677,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           renderedWidth = fallback.width
           renderedHeight = fallback.height
         }
-        if (cancelled || !canvasRef.current) {
+        if (activePhotoId.current !== photo.id || !canvasRef.current) {
           release?.()
           return
         }
@@ -690,6 +705,8 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           canvas.width = renderedWidth
           canvas.height = renderedHeight
           context.drawImage(rendered, 0, 0)
+          displayedSource.current = photo.id
+          setAspect(renderedWidth / renderedHeight)
           setTileRegion(null)
         }
         release?.()
@@ -697,7 +714,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           if (!canvasRef.current) return
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
             width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight })
-          const sourceWidth = photo.libraryAsset?.metadata.width ?? renderedWidth
+          const sourceWidth = nativeResult?.sourceWidth ?? photo.libraryAsset?.metadata.width ?? renderedWidth
           if (sourceWidth > 0) onDisplayScale?.(canvasRef.current.clientWidth / sourceWidth)
         })
         if (metric) {
@@ -708,31 +725,41 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             : `Browser fallback${before ? ' · original' : ''}`)
         }
       } catch (error) {
-        if (!cancelled) onStatus(formatUserError(error, 'Preview failed'))
+        if (activePhotoId.current === photo.id && !(error instanceof PreviewSuperseded)) onStatus(formatUserError(error, 'Preview failed'))
       }
     }, 30)
 
     return () => {
-      cancelled = true
       window.clearTimeout(timeout)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
     photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src,
     photo.libraryAsset?.metadata.width, photo.libraryAsset?.metadata.height,
-    maskPreview, interactionPhase, zoom, zoomScale, pan.x, pan.y, onDisplayScale])
+    maskPreview, interactionPhase, zoom, zoomScale, pan.x, pan.y, onDisplayScale, photo.id])
 
   useEffect(() => {
     const measure = () => canvasRef.current && setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
       width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight })
+    const observer = new ResizeObserver(measure)
+    if (canvasRef.current) observer.observe(canvasRef.current)
     window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
+
+  useEffect(() => {
+    const parent = canvasRef.current?.parentElement
+    if (!parent) return
+    const observer = new ResizeObserver(() => setSurfaceSize({ width: parent.clientWidth, height: parent.clientHeight }))
+    observer.observe(parent)
+    return () => observer.disconnect()
+  }, [])
+  const fitWidth = Math.min(surfaceSize.width, surfaceSize.height * aspect)
 
   return <>
     <canvas ref={canvasRef} className={`photo-canvas zoom-${zoom}`} aria-label={`Edited preview of ${photo.name}`}
-      style={zoom === '100' && photo.libraryAsset?.metadata.width && photo.libraryAsset?.metadata.height ? {
-        width: `${photo.libraryAsset.metadata.width}px`, height: `${photo.libraryAsset.metadata.height}px`,
-      } : undefined}
+      style={zoom === '100' && sourceDisplaySize.width ? {
+        width: `${sourceDisplaySize.width}px`, height: `${sourceDisplaySize.height}px`,
+      } : fitWidth > 0 ? { width: `${fitWidth}px`, height: `${fitWidth / aspect}px` } : undefined}
       onPointerDown={(event) => { if (before || event.button !== 0 || (!healActive && !brushActive)) return; const points = [healPoint(event)]; if (healActive) healingStroke.current = points; else maskBrushStroke.current = points; event.currentTarget.setPointerCapture(event.pointerId) }}
       onPointerMove={(event) => { const points = healingStroke.current ?? maskBrushStroke.current; if (!points) return; const point = healPoint(event); const previous = points.at(-1)!; if (Math.hypot(point.x - previous.x, point.y - previous.y) >= .004) points.push(point) }}
       onPointerUp={(event) => { const healing = healingStroke.current; const brushing = maskBrushStroke.current; healingStroke.current = null; maskBrushStroke.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); if (healing?.length) onHealingStroke?.(healing); if (brushing?.length) onBrushStroke?.(brushing) }}
@@ -779,7 +806,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   const sliders = sliderGroups[tool] ?? []
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
-    <div className="inspector-head"><div><span className="eyebrow">Live CPU preview</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
+    <div className="inspector-head"><div><span className="eyebrow">Adjustments</span><h2>{tool}</h2></div><ChevronDown size={16} /></div>
     {renderBackend === 'native' && tool === 'masks'
       && <div className="tool-note">Native M15 mask layer: the dashed radial selection is evaluated in the shared Preview/Before-After/Export graph. No Browser Canvas compositing is used.</div>}
     {tool === 'color' && <>
@@ -791,6 +818,10 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
         <option value="neutralPicker">Neutral picker</option><option value="relative">Relative (encoded)</option>
       </select></label><div><button onClick={onCopyWhiteBalance}>Copy WB</button><button onClick={onPasteWhiteBalance}>Paste WB</button></div>
       <small>{whiteBalanceMode === 'neutralPicker' ? 'Double-click a neutral area in the preview to sample it.' : 'Mode is recorded with this non-destructive edit.'}</small></div>}
+      <div className="basic-color-controls"><strong>Basic color</strong>
+        {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
+          onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
+      </div>
       <div className="mixer-panel" aria-label="Eight-band Color Mixer">
         <div className="mixer-heading"><strong>Color Mixer</strong><button className={mixerPicking ? 'active' : ''} onClick={onMixerPicking}>Target</button><label><input type="checkbox" checked={values.mixerHueLock !== 0}
           onFocus={onBeginAdjustment} onChange={(event) => onAdjust('mixerHueLock', event.target.checked ? 1 : 0)} /> Hue lock</label></div>
@@ -848,7 +879,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
       <div className={`optics-status status-${opticsStatus?.status ?? 'idle'}`}><strong>{opticsStatus?.status ?? 'Not resolved'}</strong>
         <span>{opticsStatus?.profileId ?? 'No profile selected'}</span><small>{opticsStatus?.cameraMount ?? ''} · DB {opticsStatus?.databaseVersion ?? '0.3.4'}</small></div>
     </div>}
-    {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
+    {tool !== 'color' && sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
       {([
@@ -1152,40 +1183,36 @@ export function App() {
   }, [])
 
   const importNativePaths = useCallback((paths: readonly string[]) => {
-    const supported = supportedNativePhotoPaths(paths)
-    if (!supported.length) {
-      setNotice('No supported Native photos were dropped. Starroom did not create a Browser fallback.')
-      return
-    }
-    const imported = supported.map<PhotoItem>((sourcePath) => ({
-      id: crypto.randomUUID(),
-      name: sourcePath.split(/[\\/]/).at(-1) ?? sourcePath,
-      src: nativeThumbnailUrl(sourcePath),
-      sourcePath,
-      renderBackend: 'native',
-      imported: true,
-      rating: 0,
-      adjustments: { ...defaultAdjustments },
-      curvePoints: copyCurve(defaultCurvePoints),
-      curveChannels: defaultCurveChannels(),
-      whiteBalanceMode: 'sourceDefault',
-      whiteBalanceSample: null,
-      opticsState: { ...defaultNativeOpticsState },
-      mask: { ...defaultMask },
-      layers: [],
-      skinRetouch: defaultNativeSkinRetouch(),
-      healingOperations: [],
-      history: [],
-      future: [],
-    }))
-    setPhotos((current) => [...imported, ...current])
-    selectPhoto(imported[0].id)
-    setFilter('all')
-    setView('edit')
-    setBefore(false)
-    const rejected = paths.length - supported.length
-    setNotice(`${imported.length} photo${imported.length === 1 ? '' : 's'} imported into Native preview${rejected ? ` · ${rejected} unsupported rejected` : ''}`)
-  }, [selectPhoto])
+    if (!paths.length) return
+    setLibraryBusy(true)
+    void (async () => {
+      try {
+        const result = await importNativeLibraryPaths(paths)
+        const assets = await queryNativeLibrary({ limit: 200 })
+        setLibraryAssets(assets)
+        setLibraryPage(0)
+        setLibrarySearch('')
+        if (assets.length) setPhotos((current) => assets.map((asset) => {
+          const existing = current.find((photo) => photo.libraryAsset?.id === asset.id)
+          return existing ? { ...existing, name: asset.sourcePath.split(/[\\/]/).pop() ?? asset.sourcePath,
+            sourcePath: asset.sourcePath, rating: asset.rating, libraryAsset: asset } : libraryPhoto(asset, '')
+        }))
+        loadLibraryThumbnails(assets)
+        const selectedPath = paths[0]?.toLocaleLowerCase()
+        const selectedAsset = assets.find((asset) => result.imported.includes(asset.id))
+          ?? assets.find((asset) => asset.sourcePath.toLocaleLowerCase() === selectedPath) ?? assets[0]
+        if (selectedAsset) {
+          selectPhoto(`library-${selectedAsset.id}`)
+          setSelectedLibraryIds([selectedAsset.id])
+          setView('edit')
+        }
+        setFilter('all')
+        setBefore(false)
+        setNotice(`${result.imported.length} photos added · ${result.unsupported.length} unsupported · ${result.failed.length} failed${result.failed[0] ? `: ${result.failed[0][1]}` : ''}`)
+      } catch (error) { setNotice(formatUserError(error, 'Import failed')) }
+      finally { setLibraryBusy(false) }
+    })()
+  }, [selectPhoto, loadLibraryThumbnails])
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
   useEffect(() => { transientEditsPending.current = !selected.libraryAsset && hasPhotoEdits(selected) }, [selected])
@@ -1287,12 +1314,16 @@ export function App() {
     return true
   }), [filter, photos])
 
-  const counts = useMemo(() => ({
-    all: photos.length,
-    recent: photos.filter((photo) => photo.imported).length,
-    five: photos.filter((photo) => photo.rating === 5).length,
-    edited: photos.filter(hasPhotoEdits).length,
-  }), [photos])
+  const counts = useMemo(() => {
+    const nativePhotos = photos.filter((photo) => photo.libraryAsset)
+    const visible = nativeRuntimeAvailable() ? nativePhotos : photos
+    return {
+      all: nativeRuntimeAvailable() ? libraryAssets.length : visible.length,
+      recent: visible.filter((photo) => photo.imported).length,
+      five: visible.filter((photo) => photo.rating === 5).length,
+      edited: visible.filter(hasPhotoEdits).length,
+    }
+  }, [libraryAssets.length, photos])
 
   function nativeQuery(queryText: string, page: number, activeFilter: LibraryFilter): NativeLibraryQuery {
     return { text: queryText.trim() || null, limit: 200, offset: page * 200,
@@ -2222,7 +2253,7 @@ export function App() {
           {libraryCollections.map((collection) => <button className="library-item" key={collection.id} onClick={() => void openLibraryCollection(collection)}><Folder size={16} /> {collection.name}<small>{collection.kind}</small></button>)}
           <div className="portrait-regions"><button onClick={() => void createLibraryCollection('normal')}>+ Collection</button><button onClick={() => void createLibraryCollection('smart')}>+ Smart</button></div>
         </div>
-        <div className="library-summary"><Library size={15} /><span>{filteredPhotos.length} visible photos</span></div>
+        <div className="library-summary"><Library size={15} /><span>{libraryAssets.length} visible photos</span></div>
         </>}
       </aside>
       {!leftOpen && <button className="edge-toggle left" aria-label="Open library" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
@@ -2280,7 +2311,7 @@ export function App() {
             }}
             onPointerUp={(event) => { panStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
             <div className="photo-frame" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomScale})` }}>
-              <PreviewCanvas photo={selected} before={before} zoom={zoom} zoomScale={zoomScale} pan={pan} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
+              <PreviewCanvas key={selected.id} photo={selected} before={before} zoom={zoom} zoomScale={zoomScale} pan={pan} interactionPhase={previewInteraction} maskActive={tool === 'masks' && !before && !activeLayerIsBrush}
                 onBeginMaskEdit={beginInteractiveEdit} onMaskChange={updateMask}
                 healActive={tool === 'heal' && !before && selected.renderBackend === 'native'} onHealingStroke={addHealingStroke}
                 brushActive={tool === 'masks' && !before && activeLayerIsBrush} onBrushStroke={addMaskBrushStroke}
