@@ -30,6 +30,14 @@ if ($actualHash -ne $expectedHash -or $actualSize -ne $expectedSize) {
 # Refresh every legal/runtime document explicitly before `tauri build`; this keeps the speed of the
 # compiled-artifact cache without allowing an old notice or provenance file into a new installer.
 $releaseStage = Join-Path $root 'target\release'
+$bundleStage = Join-Path $releaseStage 'bundle'
+if (Test-Path -LiteralPath $bundleStage) {
+  $resolvedBundleStage = (Resolve-Path -LiteralPath $bundleStage).Path
+  if (-not $resolvedBundleStage.StartsWith($releaseStage, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Unsafe stale bundle staging target: $resolvedBundleStage"
+  }
+  Remove-Item -LiteralPath $resolvedBundleStage -Recurse -Force
+}
 $releaseResources = @(
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
@@ -49,4 +57,4 @@ foreach ($relative in $releaseResources) {
   Copy-Item -LiteralPath $sourcePath -Destination $stagedPath -Force
 }
 Write-Output "RC2_RELEASE_MODEL name=$modelName sha256=$actualHash size=$actualSize source=$source"
-Write-Output "RC_RELEASE_RESOURCES refreshed=$($releaseResources.Count) staging=$releaseStage"
+Write-Output "RC_RELEASE_RESOURCES refreshed=$($releaseResources.Count) staging=$releaseStage stale_bundle=removed"
