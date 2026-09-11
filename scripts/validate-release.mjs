@@ -60,6 +60,7 @@ for (const path of [
 }
 
 const bundledResources = tauri.bundle?.resources ?? {}
+const releaseBundledResources = rc2Tauri.bundle?.resources ?? {}
 for (const destination of [
   'LICENSE',
   'THIRD_PARTY_NOTICES.md',
@@ -72,6 +73,9 @@ for (const destination of [
 ]) {
   if (!Object.values(bundledResources).includes(destination)) {
     throw new Error(`Required notice is not bundled: ${destination}`)
+  }
+  if (!Object.values(releaseBundledResources).includes(destination)) {
+    throw new Error(`Required notice is not explicit in the release bundle config: ${destination}`)
   }
   if (!desktopBuild.includes(`../${destination}`)) {
     throw new Error(`Required notice is not tracked by the Tauri build fingerprint: ${destination}`)
