@@ -18,7 +18,6 @@ export type AdjustmentKey =
   | 'maskExposure'
   | 'maskFeather'
   | 'vignette'
-  | 'lensBrightness'
   | 'rotation'
   | 'flipHorizontal'
   | 'flipVertical'
@@ -70,7 +69,6 @@ export const defaultAdjustments: Adjustments = {
   maskExposure: 0,
   maskFeather: 50,
   vignette: 0,
-  lensBrightness: 0,
   rotation: 0,
   flipHorizontal: 0,
   flipVertical: 0,

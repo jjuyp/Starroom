@@ -2,7 +2,7 @@ import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { LatestPreviewQueue } from './latestPreviewQueue'
 import type { Adjustments } from './editorState'
-import type { RadialMask, ToneCurvePoint } from './imagePipeline'
+import type { RadialMask, ToneCurvePoint } from './previewPresentation'
 
 export type RenderBackend = 'native' | 'browserFallback'
 export type NativePreviewInteractionPhase = 'interactive' | 'final'
@@ -182,7 +182,6 @@ export function assertNativeSupported(adjustments: Adjustments, mask: RadialMask
   // native radial layer below, so the browser never composites it itself.
   void mask
   const unsupported: string[] = []
-  if (adjustments.lensBrightness !== 0) unsupported.push('Optics')
   if (unsupported.length) {
     throw new Error(`Native M1C does not support ${unsupported.join(', ')} yet; Browser fallback was not used.`)
   }
@@ -431,6 +430,16 @@ export async function cancelNativeAiDenoise(requestId: string): Promise<boolean>
 
 export async function queryNativeAiAvailability(): Promise<NativeAiAvailability> {
   return invoke<NativeAiAvailability>('ai_availability_status')
+}
+
+export async function installLocalPortraitModels(): Promise<NativeAiAvailability | null> {
+  const detector = await open({ title: 'Choose verified YuNet ONNX model', multiple: false, directory: false,
+    filters: [{ name: 'YuNet ONNX', extensions: ['onnx'] }] })
+  if (typeof detector !== 'string') return null
+  const parser = await open({ title: 'Choose verified BiSeNet ResNet18 ONNX model', multiple: false, directory: false,
+    filters: [{ name: 'BiSeNet ONNX', extensions: ['onnx'] }] })
+  if (typeof parser !== 'string') return null
+  return invoke<NativeAiAvailability>('portrait_models_install_local', { detectorPath: detector, parserPath: parser })
 }
 
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)

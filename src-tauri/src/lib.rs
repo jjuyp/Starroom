@@ -62,7 +62,7 @@ use std::path::{Path, PathBuf};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -1788,7 +1788,12 @@ fn resolve_local_model_root(
     working_directory.join("models").join("local")
 }
 
+static APP_LOCAL_MODEL_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
 fn local_model_root() -> PathBuf {
+    if let Some(root) = APP_LOCAL_MODEL_ROOT.get() {
+        return root.clone();
+    }
     resolve_local_model_root(
         std::env::var_os("STARROOM_LOCAL_MODELS"),
         std::env::current_exe().ok().as_deref(),
@@ -1798,6 +1803,43 @@ fn local_model_root() -> PathBuf {
 
 fn local_portrait_models() -> PortraitModelRegistry {
     PortraitModelRegistry::local_default(local_model_root())
+}
+
+#[tauri::command]
+fn portrait_models_install_local(
+    detector_path: String,
+    parser_path: String,
+) -> Result<AiAvailabilityStatus, String> {
+    let mut selected = local_portrait_models();
+    selected.detector.path = PathBuf::from(detector_path);
+    selected.parser.path = PathBuf::from(parser_path);
+    selected.verify().map_err(|error| error.to_string())?;
+
+    let target = local_portrait_models();
+    let root = local_model_root();
+    std::fs::create_dir_all(&root)
+        .map_err(|error| format!("could not create local model directory: {error}"))?;
+    let detector_temp = root.join("face_detection_yunet_2026may.onnx.installing");
+    let parser_temp = root.join("bisenet_resnet18.onnx.installing");
+    std::fs::copy(&selected.detector.path, &detector_temp)
+        .map_err(|error| format!("could not stage YuNet model: {error}"))?;
+    if let Err(error) = std::fs::copy(&selected.parser.path, &parser_temp) {
+        let _ = std::fs::remove_file(&detector_temp);
+        return Err(format!("could not stage BiSeNet model: {error}"));
+    }
+    for (staged, destination) in [
+        (&detector_temp, &target.detector.path),
+        (&parser_temp, &target.parser.path),
+    ] {
+        if destination.exists() {
+            std::fs::remove_file(destination)
+                .map_err(|error| format!("could not replace local model: {error}"))?;
+        }
+        std::fs::rename(staged, destination)
+            .map_err(|error| format!("could not activate local model: {error}"))?;
+    }
+    target.verify().map_err(|error| error.to_string())?;
+    Ok(ai_availability_status())
 }
 
 fn local_ai_mask_models() -> AiMaskModelRegistry {
@@ -3629,6 +3671,17 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            if std::env::var_os("STARROOM_LOCAL_MODELS").is_none() {
+                let root = app
+                    .path()
+                    .app_local_data_dir()?
+                    .join("models")
+                    .join("local");
+                let _ = APP_LOCAL_MODEL_ROOT.set(root);
+            }
+            Ok(())
+        })
         .manage(NativePreviewScheduler::default())
         .manage(NativePortraitRuntime::default())
         .manage(NativeAiMaskRuntime::default())
@@ -3651,6 +3704,7 @@ pub fn run() {
             native_preview_profile,
             native_export_jpeg,
             portrait_detect,
+            portrait_models_install_local,
             ai_mask_generate,
             ai_mask_cancel,
             ai_denoise_cancel,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertNativeSupported, nativePreviewViewportContract, parseNativePreviewFrame, toNativeSettings } from './nativeRender'
+import { nativePreviewViewportContract, parseNativePreviewFrame, toNativeSettings } from './nativeRender'
 import { defaultAdjustments } from './editorState'
 
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
@@ -75,11 +75,6 @@ describe('native preview contract', () => {
       { master: [], red: [], green: [], blue: [] }, undefined, [], { x: .25, y: .75, width: .3, height: .5, rotation: 18 })
     expect(settings.layers).toHaveLength(1)
     expect(settings.layers[0]).toMatchObject({ id: '__m15-radial-mask__', mask: { type: 'radial', x: .25, y: .75, feather: .4 } })
-  })
-
-  it('never silently ignores edits outside the M1C native slice', () => {
-    expect(() => assertNativeSupported({ ...defaultAdjustments, lensBrightness: 10 }, defaultMask))
-      .toThrow(/Browser fallback was not used/)
   })
 
   it('transports M21 residual controls and M23 finishing effects without pixels', () => {

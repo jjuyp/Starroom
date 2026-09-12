@@ -514,7 +514,7 @@ Preferred foundation: darktable `ashift` and proven projective math.
 - [ ] Semantic theme tokens: Dark / Gray / Light.
 - [ ] Brand gradient tokens and functional accent subset.
 - [ ] Collapsible Library, Filmstrip, hybrid Inspector.
-- [ ] Resizable left/right panels.
+- [x] Resizable left/right panels with persisted bounded widths and accessible separators.
 - [ ] Category icon rail + accordion inspector.
 - [ ] Slider numeric bubble and direct numeric entry.
 - [ ] Proof background switch independent from theme.

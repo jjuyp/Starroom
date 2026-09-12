@@ -10,7 +10,7 @@
 }
 .theme-dark .workspace { gap: 9px; padding: 10px; }
 .theme-dark .topbar { height: 54px; background: rgba(24,48,80,.32); border-bottom: 1px solid var(--border); }
-.theme-dark .workspace { height: calc(100% - 54px); grid-template-columns: 208px minmax(360px,1fr) 420px; }
+.theme-dark .workspace { height: calc(100% - 54px); grid-template-columns: var(--left-panel-width) minmax(360px,1fr) var(--right-panel-width); }
 .theme-dark .library-panel, .theme-dark .canvas-area, .theme-dark .inspector-panel,
 .theme-dark .library-browser {
   border: 1px solid var(--border); border-radius: 13px;
@@ -56,7 +56,11 @@
 .slider-row[data-control=saturation] input[type=range], .slider-row[data-control=vibrance] input[type=range] { background:linear-gradient(90deg,#969ba6,#95b7bf,#827de6,#dc77a9); }
 .mixer-tabs button::before { content:''; display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--band-color); margin-right:4px; }
 .band-red { --band-color:#ee6b75; }.band-orange { --band-color:#eea468; }.band-yellow { --band-color:#e9d56a; }.band-green { --band-color:#6bc287; }.band-cyan { --band-color:#72cbd8; }.band-blue { --band-color:#6b98ef; }.band-purple { --band-color:#a187ec; }.band-magenta { --band-color:#de81bc; }
-@media (min-width:1700px) { .theme-dark .workspace { grid-template-columns:224px minmax(500px,1fr) 470px; } }
-@media (max-width:1180px) { .theme-dark .workspace { grid-template-columns:0 minmax(360px,1fr) 350px; } }
-.theme-dark .workspace.left-collapsed { grid-template-columns:0 minmax(360px,1fr) 420px; }
+@media (min-width:1700px) { .theme-dark .workspace { grid-template-columns:var(--left-panel-width) minmax(500px,1fr) var(--right-panel-width); } }
+@media (max-width:1180px) { .theme-dark .workspace { grid-template-columns:0 minmax(360px,1fr) var(--right-panel-width); } }
+.theme-dark .workspace.left-collapsed { grid-template-columns:0 minmax(360px,1fr) var(--right-panel-width); }
+.theme-dark .workspace.view-library { grid-template-columns:var(--left-panel-width) minmax(420px,1fr) 0; }
+.theme-dark .workspace.view-library.left-collapsed { grid-template-columns:0 minmax(420px,1fr) 0; }
+.theme-dark .panel-resizer-left { left:calc(10px + var(--left-panel-width)); }
+.theme-dark .panel-resizer-right { right:calc(10px + var(--right-panel-width)); }
 .theme-dark .workspace.filmstrip-collapsed .canvas-area { grid-template-rows:42px minmax(0,1fr) 30px 0; }

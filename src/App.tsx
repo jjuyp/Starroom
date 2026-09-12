@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { selectLibraryRange } from './librarySelection'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import {
@@ -13,15 +13,15 @@ import {
   defaultAdjustments,
 } from './editorState'
 import {
-  calculateHistogram, hasAdjustments, mapToneCurve, renderImageSource,
+  calculateHistogram, hasAdjustments, mapToneCurve,
   type RadialMask, type ToneCurvePoint,
-} from './imagePipeline'
+} from './previewPresentation'
 import {
   adviseNativeImage, chooseNativePhotoPaths, nativeRuntimeAvailable,
   renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
-  queryNativeAiAvailability, type NativeAiAvailability,
+  queryNativeAiAvailability, installLocalPortraitModels, type NativeAiAvailability,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
   openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
@@ -672,10 +672,16 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           nativeProfile = result.cameraProfileId ?? result.inputProfile
           nativeAcceleration = result.acceleration
         } else {
-          const fallback = await renderImageSource(photo.src, adjustments, 1800, curvePoints, mask)
-          rendered = fallback
-          renderedWidth = fallback.width
-          renderedHeight = fallback.height
+          const original = new Image()
+          await new Promise<void>((resolve, reject) => {
+            original.onload = () => resolve()
+            original.onerror = () => reject(new Error('Browser image could not be decoded.'))
+            original.src = photo.src
+          })
+          rendered = original
+          renderedWidth = original.naturalWidth
+          renderedHeight = original.naturalHeight
+          onStatus('Original only · Native desktop required for editing')
         }
         if (activePhotoId.current !== photo.id || !canvasRef.current) {
           release?.()
@@ -1009,6 +1015,8 @@ export function App() {
   const [theme, setTheme] = usePersistedValue<Theme>('starroom-theme', 'dark')
   const [leftOpen, setLeftOpen] = usePersistedValue('starroom-left-panel', true)
   const [filmstripOpen, setFilmstripOpen] = usePersistedValue('starroom-filmstrip', true)
+  const [leftPanelWidth, setLeftPanelWidth] = usePersistedValue('starroom-left-panel-width', 224)
+  const [rightPanelWidth, setRightPanelWidth] = usePersistedValue('starroom-right-panel-width', 420)
   const [photos, setPhotos] = useState<PhotoItem[]>([demoPhoto])
   const [selectedId, setSelectedId] = useState(demoPhoto.id)
   const [filter, setFilter] = useState<LibraryFilter>('all')
@@ -1082,6 +1090,21 @@ export function App() {
   const [previewInteraction, setPreviewInteraction] = useState<'interactive' | 'final'>('final')
   const fileInput = useRef<HTMLInputElement>(null)
   const objectUrls = useRef(new Set<string>())
+
+  const resizePanel = (side: 'left' | 'right', event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const origin = event.clientX
+    const initial = side === 'left' ? leftPanelWidth : rightPanelWidth
+    const move = (next: PointerEvent) => {
+      const delta = next.clientX - origin
+      const value = Math.round(Math.max(side === 'left' ? 180 : 300, Math.min(side === 'left' ? 380 : 620, initial + (side === 'left' ? delta : -delta))))
+      if (side === 'left') setLeftPanelWidth(value); else setRightPanelWidth(value)
+    }
+    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); document.body.classList.remove('panel-resizing') }
+    document.body.classList.add('panel-resizing')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop, { once: true })
+  }
 
   useEffect(() => {
     if (!nativeRuntimeAvailable()) return
@@ -1811,6 +1834,21 @@ export function App() {
     }
   }
 
+  async function setupPortraitModels() {
+    setRenderStatus('Verifying local YuNet + BiSeNet models…')
+    try {
+      const status = await installLocalPortraitModels()
+      if (!status) { setRenderStatus('Portrait model setup cancelled'); return }
+      setAiAvailability(status)
+      setNotice('YuNet and BiSeNet verified and installed locally. No model was uploaded.')
+      setRenderStatus('Local portrait models ready')
+    } catch (error) {
+      setNotice(formatUserError(error, 'Portrait model setup failed'))
+      setRenderStatus('Portrait model verification failed')
+      setAiAvailability(await queryNativeAiAvailability().catch(() => aiAvailability))
+    }
+  }
+
   function addPortraitMask(faceId: string, cacheKey: string, region: NativePortraitRegion) {
     if (!portraitDetection) return
     const layer = defaultLayer()
@@ -2150,17 +2188,7 @@ export function App() {
         setExportBusy(false)
         return
       }
-      const canvas = await renderImageSource(selected.src, selected.adjustments, Number.POSITIVE_INFINITY, selected.curvePoints, selected.mask)
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('JPEG encoding failed.')), 'image/jpeg', .94))
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      const base = selected.name.replace(/\.[^.]+$/, '')
-      anchor.href = url
-      anchor.download = `${base}-starroom.jpg`
-      anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setNotice('Browser fallback JPEG exported without overwriting the original')
-      setRenderStatus('Browser fallback preview')
+      throw new Error('Native desktop is required for editing and export. Browser creative rendering has been retired.')
     } catch (error) {
       setExportBusy(false)
       setNotice(formatUserError(error, 'Export failed'))
@@ -2221,7 +2249,8 @@ export function App() {
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}
       canRedo={selected.libraryAsset ? Boolean(nativeHistory?.canRedo) : selected.future.length > 0} undo={undo} redo={redo}
       onRetouch={() => { setView('edit'); setTool('heal'); setBefore(false) }} onExport={() => { if (view === 'library') void exportJpeg(); else setExportPanelOpen(true) }} exportBusy={exportBusy} />
-    <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}>
+    <div className={`workspace view-${view} ${leftOpen ? '' : 'left-collapsed'} ${filmstripOpen ? '' : 'filmstrip-collapsed'}`}
+      style={{ '--left-panel-width': `${leftPanelWidth}px`, '--right-panel-width': `${rightPanelWidth}px` } as CSSProperties}>
       <aside className="library-panel">
         <div className="panel-title"><span>{view === 'library' ? 'Library' : 'Develop'}</span><IconButton label="Collapse left panel" onClick={() => setLeftOpen(false)}><PanelLeftClose size={17} /></IconButton></div>
         {view !== 'library' ? <div className="develop-left">
@@ -2256,6 +2285,7 @@ export function App() {
         <div className="library-summary"><Library size={15} /><span>{libraryAssets.length} visible photos</span></div>
         </>}
       </aside>
+      {leftOpen && <div className="panel-resizer panel-resizer-left" role="separator" aria-label="Resize left panel" aria-orientation="vertical" onPointerDown={(event) => resizePanel('left', event)} />}
       {!leftOpen && <button className="edge-toggle left" aria-label="Open library" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
 
       {view === 'library' ? <section className="library-browser" aria-label="Photo library">
@@ -2348,6 +2378,7 @@ export function App() {
           </div>
         </section>}
 
+      {view !== 'library' && <div className="panel-resizer panel-resizer-right" role="separator" aria-label="Resize right panel" aria-orientation="vertical" onPointerDown={(event) => resizePanel('right', event)} />}
       <aside className="inspector-panel">
         {exportPanelOpen && <div className="export-popover glass-popover"><button className="popover-close" aria-label="Close export settings" onClick={() => setExportPanelOpen(false)}>×</button>
           <ExportPanel settings={exportSettings} busy={exportBusy} selectedCount={view === 'library' ? Math.max(1, selectedLibraryIds.length) : 1}
@@ -2360,6 +2391,7 @@ export function App() {
         {(tool === 'masks' || tool === 'heal') && <section className="portrait-panel" aria-label="Portrait masks">
           <div className="layer-stack-head"><strong>Portrait</strong><button onClick={detectPortrait} disabled={selected.renderBackend !== 'native' || aiAvailability?.faceSkin.state !== 'ready'}>Detect faces</button></div>
           <div className={`ai-availability state-${aiAvailability?.faceSkin.state ?? 'checking'}`}><strong>Face / Skin · {aiAvailability?.faceSkin.state === 'ready' ? 'Ready' : aiAvailability?.faceSkin.state === 'modelNotInstalled' ? 'Model not installed' : aiAvailability?.faceSkin.state ?? 'Checking'}</strong><small>{aiAvailability?.faceSkin.detail ?? 'Checking local model files…'}</small></div>
+          {aiAvailability?.faceSkin.state !== 'ready' && <button className="import-button portrait-model-setup" onClick={() => void setupPortraitModels()} disabled={!nativeRuntimeAvailable()}>Choose local YuNet + BiSeNet models</button>}
           {selected.renderBackend !== 'native' && <small>Native image required. Browser fallback is intentionally unavailable.</small>}
           {portraitDetection && <div className={`portrait-status status-${portraitDetection.status}`}>
             <strong>{portraitDetection.status === 'ready' ? `${portraitDetection.faces.length} face(s)` : portraitDetection.status}</strong>

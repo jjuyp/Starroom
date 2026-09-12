@@ -160,7 +160,6 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
   const maskExposure = 2 ** adjustments.maskExposure
   const maskFeather = Math.max(0.02, adjustments.maskFeather / 100 * 0.7)
   const vignette = adjustments.vignette / 100
-  const lensBrightness = adjustments.lensBrightness / 100
   const clarity = adjustments.clarity / 100
   const activeMask = mask ?? { x: .5, y: .5, width: .5, height: .5, rotation: 0 }
   const maskAngle = -activeMask.rotation * Math.PI / 180
@@ -178,7 +177,7 @@ export function processImageData(imageData: ImageData, adjustments: Adjustments,
     const maskDistance = Math.hypot(maskX / Math.max(.02, activeMask.width / 2), maskY / Math.max(.02, activeMask.height / 2))
     const maskWeight = 1 - smoothstep(1, 1 + maskFeather * 2.2, maskDistance)
     const distance = Math.min(1, Math.hypot(normalizedX - .5, normalizedY - .5) / .707)
-    const radialScale = 1 + lensBrightness * distance * distance * 0.65 - vignette * distance * distance * 0.78
+    const radialScale = 1 - vignette * distance * distance * 0.78
     const localExposure = 1 + (maskExposure - 1) * maskWeight
     let red = srgbToLinear(pixels[index] / 255)
     let green = srgbToLinear(pixels[index + 1] / 255)
