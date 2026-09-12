@@ -5,22 +5,22 @@ export type CommandId = 'undo' | 'redo' | 'copySettings' | 'pasteSettings' | 'be
 export interface StarroomCommand { id: CommandId; label: string; shortcut: string; keywords: string }
 
 export const commandCatalog: StarroomCommand[] = [
-  { id: 'undo', label: 'Undo', shortcut: 'Ctrl/Cmd Z', keywords: 'history' },
-  { id: 'redo', label: 'Redo', shortcut: 'Ctrl/Cmd Shift Z', keywords: 'history' },
-  { id: 'copySettings', label: 'Copy settings', shortcut: 'Ctrl/Cmd Shift C', keywords: 'edit clipboard' },
-  { id: 'pasteSettings', label: 'Paste settings', shortcut: 'Ctrl/Cmd Shift V', keywords: 'edit clipboard' },
-  { id: 'before', label: 'Toggle Before/After', shortcut: 'B', keywords: 'compare original' },
-  { id: 'mask', label: 'Open Masks', shortcut: 'M', keywords: 'local adjustment' },
-  { id: 'healing', label: 'Open Healing', shortcut: 'H', keywords: 'retouch remove' },
-  { id: 'crop', label: 'Open Crop / Geometry', shortcut: 'C', keywords: 'rotate transform' },
-  ...([0, 1, 2, 3, 4, 5] as const).map((rating) => ({ id: `rate${rating}` as CommandId, label: rating === 0 ? 'Clear rating' : `Rate ${rating} star${rating === 1 ? '' : 's'}`, shortcut: String(rating), keywords: 'rating library' })),
-  { id: 'pick', label: 'Flag as Pick', shortcut: 'P', keywords: 'library flag' },
-  { id: 'reject', label: 'Flag as Reject', shortcut: 'X', keywords: 'library flag' },
-  { id: 'fit', label: 'Zoom to Fit', shortcut: 'F', keywords: 'canvas view' },
-  { id: 'oneToOne', label: 'Zoom 1:1', shortcut: 'Z', keywords: 'canvas 100 percent' },
-  { id: 'filmstrip', label: 'Toggle Filmstrip', shortcut: 'Shift F', keywords: 'panel thumbnails' },
-  { id: 'panels', label: 'Toggle Library Panel', shortcut: '\\', keywords: 'sidebar panel' },
-  { id: 'export', label: 'Export', shortcut: 'Ctrl/Cmd E', keywords: 'render output' },
+  { id: 'undo', label: '復原', shortcut: 'Ctrl/Cmd Z', keywords: '歷史 history' },
+  { id: 'redo', label: '重做', shortcut: 'Ctrl/Cmd Shift Z', keywords: '歷史 history' },
+  { id: 'copySettings', label: '複製設定', shortcut: 'Ctrl/Cmd Shift C', keywords: '編輯 剪貼簿 edit clipboard' },
+  { id: 'pasteSettings', label: '貼上設定', shortcut: 'Ctrl/Cmd Shift V', keywords: '編輯 剪貼簿 edit clipboard' },
+  { id: 'before', label: '切換編輯前／後', shortcut: 'B', keywords: '比較 原圖 compare original' },
+  { id: 'mask', label: '開啟遮罩', shortcut: 'M', keywords: '局部調整 local adjustment' },
+  { id: 'healing', label: '開啟修復', shortcut: 'H', keywords: '修飾 移除 retouch remove' },
+  { id: 'crop', label: '開啟裁切／幾何', shortcut: 'C', keywords: '旋轉 變形 rotate transform' },
+  ...([0, 1, 2, 3, 4, 5] as const).map((rating) => ({ id: `rate${rating}` as CommandId, label: rating === 0 ? '清除評分' : `評為 ${rating} 星`, shortcut: String(rating), keywords: '評分 圖庫 rating library' })),
+  { id: 'pick', label: '標記為保留', shortcut: 'P', keywords: '圖庫 標記 library flag' },
+  { id: 'reject', label: '標記為拒絕', shortcut: 'X', keywords: '圖庫 標記 library flag' },
+  { id: 'fit', label: '縮放至適合視窗', shortcut: 'F', keywords: '畫布 檢視 canvas view' },
+  { id: 'oneToOne', label: '縮放至 1:1', shortcut: 'Z', keywords: '畫布 100 percent' },
+  { id: 'filmstrip', label: '顯示／隱藏底片列', shortcut: 'Shift F', keywords: '面板 縮圖 panel thumbnails' },
+  { id: 'panels', label: '顯示／隱藏圖庫面板', shortcut: '\\', keywords: '側邊欄 面板 sidebar panel' },
+  { id: 'export', label: '匯出', shortcut: 'Ctrl/Cmd E', keywords: '輸出 render output' },
 ]
 
 export function searchCommands(query: string) {

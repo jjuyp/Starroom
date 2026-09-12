@@ -2,6 +2,11 @@ export type ErrorCategory = 'File' | 'RAW' | 'Color' | 'Library' | 'Missing' | '
 
 export interface PresentedError { category: ErrorCategory; message: string; diagnostic: string }
 
+const categoryNames: Record<ErrorCategory, string> = {
+  File: '檔案', RAW: 'RAW', Color: '色彩', Library: '圖庫', Missing: '缺少檔案', Relink: '重新連結',
+  AI: 'AI', Export: '匯出', Memory: '記憶體', Permission: '權限', Session: '工作階段', Unknown: '未知錯誤',
+}
+
 const categoryFor = (diagnostic: string): ErrorCategory => {
   const value = diagnostic.toLowerCase()
   if (value.includes('outofmemory') || value.includes('out of memory')) return 'Memory'
@@ -21,15 +26,15 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
 export function presentError(error: unknown, fallback: string): PresentedError {
   const diagnostic = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
   const category = categoryFor(diagnostic)
-  const message = category === 'Memory' ? 'Starroom does not have enough memory for this operation.'
-    : category === 'Permission' ? 'Starroom cannot access the selected file or folder.'
-      : category === 'Missing' ? 'A required source file or local model is missing.'
-        : category === 'Session' ? 'Starroom could not safely restore or save this session.'
+  const message = category === 'Memory' ? 'Starroom 沒有足夠的記憶體執行這項操作。'
+    : category === 'Permission' ? 'Starroom 無法存取所選的檔案或資料夾。'
+      : category === 'Missing' ? '缺少必要的來源檔案或本機模型。'
+        : category === 'Session' ? 'Starroom 無法安全地還原或儲存這個工作階段。'
           : fallback
   return { category, message, diagnostic }
 }
 
 export function formatUserError(error: unknown, fallback: string) {
   const value = presentError(error, fallback)
-  return `${value.category}: ${value.message} · ${value.diagnostic}`
+  return `${categoryNames[value.category]}：${value.message} · 診斷資訊：${value.diagnostic}`
 }

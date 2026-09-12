@@ -336,7 +336,7 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
 
 export async function chooseNativePhotoPaths(): Promise<string[]> {
   const selected = await open({
-    title: 'Add photos to Starroom',
+    title: '加入照片到 Starroom',
     multiple: true,
     directory: false,
     filters: [{
@@ -348,17 +348,17 @@ export async function chooseNativePhotoPaths(): Promise<string[]> {
 }
 
 export async function chooseNativeReferencePath(): Promise<string | null> {
-  const selected = await open({ title: 'Choose reference photo', multiple: false, directory: false,
+  const selected = await open({ title: '選擇參考照片', multiple: false, directory: false,
     filters: [{ name: 'Photo or camera RAW', extensions: ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'nef', 'arw', 'cr2', 'cr3', 'dng', 'raf'] }] })
   return typeof selected === 'string' ? selected : null
 }
 
 export async function chooseNativeLookPath(mode: 'open' | 'save', suggestedName = 'Starroom Look.srlook'): Promise<string | null> {
   if (mode === 'open') {
-    const selected = await open({ title: 'Open Starroom look', multiple: false, directory: false, filters: [{ name: 'Starroom Look', extensions: ['srlook'] }] })
+    const selected = await open({ title: '開啟 Starroom 風格', multiple: false, directory: false, filters: [{ name: 'Starroom 風格', extensions: ['srlook'] }] })
     return typeof selected === 'string' ? selected : null
   }
-  return save({ title: 'Save Starroom look', defaultPath: suggestedName, filters: [{ name: 'Starroom Look', extensions: ['srlook'] }] })
+  return save({ title: '儲存 Starroom 風格', defaultPath: suggestedName, filters: [{ name: 'Starroom 風格', extensions: ['srlook'] }] })
 }
 
 export interface NativeReferenceControls { amount: number; tone: number; color: number; grading: number; protectSkin: number }
@@ -433,10 +433,10 @@ export async function queryNativeAiAvailability(): Promise<NativeAiAvailability>
 }
 
 export async function installLocalPortraitModels(): Promise<NativeAiAvailability | null> {
-  const detector = await open({ title: 'Choose verified YuNet ONNX model', multiple: false, directory: false,
+  const detector = await open({ title: '選擇已驗證的 YuNet ONNX 模型', multiple: false, directory: false,
     filters: [{ name: 'YuNet ONNX', extensions: ['onnx'] }] })
   if (typeof detector !== 'string') return null
-  const parser = await open({ title: 'Choose verified BiSeNet ResNet18 ONNX model', multiple: false, directory: false,
+  const parser = await open({ title: '選擇已驗證的 BiSeNet ResNet18 ONNX 模型', multiple: false, directory: false,
     filters: [{ name: 'BiSeNet ONNX', extensions: ['onnx'] }] })
   if (typeof parser !== 'string') return null
   return invoke<NativeAiAvailability>('portrait_models_install_local', { detectorPath: detector, parserPath: parser })
@@ -528,7 +528,7 @@ export async function adviseNativeImage(sourcePath: string, adjustments: Adjustm
 export async function chooseNativeExportPath(sourceName: string) {
   const base = sourceName.replace(/\.[^.]+$/, '')
   return save({
-    title: 'Export Starroom JPEG',
+    title: '匯出 Starroom JPEG',
     defaultPath: `${base}-starroom.jpg`,
     filters: [{ name: 'JPEG image', extensions: ['jpg', 'jpeg'] }],
   })
@@ -539,7 +539,7 @@ export async function openNativeLibrary() {
 }
 
 export async function chooseNativeLibraryFolder() {
-  const value = await open({ title: 'Import folder into Starroom Library', directory: true, multiple: false })
+  const value = await open({ title: '將資料夾匯入 Starroom 圖庫', directory: true, multiple: false })
   return typeof value === 'string' ? value : null
 }
 
@@ -605,7 +605,7 @@ export async function renameNativeSnapshot(assetId: number, snapshotId: string, 
 export async function deleteNativeSnapshot(assetId: number, snapshotId: string) { return invoke<NativeHistoryResult>('history_snapshot_delete', { assetId, snapshotId }) }
 
 export async function chooseNativeExportDirectory() {
-  const value = await open({ title: 'Choose Starroom export folder', directory: true, multiple: false })
+  const value = await open({ title: '選擇 Starroom 匯出資料夾', directory: true, multiple: false })
   return typeof value === 'string' ? value : null
 }
 
