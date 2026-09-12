@@ -2,6 +2,12 @@
 
 Starroom is a Windows-first, local-first, non-destructive photo editor. This repository is the engineering blueprint Codex should implement before any public release.
 
+Third-party distribution notices are in [NOTICE.md](NOTICE.md); the complete
+source/version/license inventory is in `docs/17_THIRD_PARTY_PROVENANCE.md`.
+The repository is GPL-3.0-or-later from M4 onward because it contains a
+documented GPL-derived darktable sigmoid adaptation; corresponding source is
+kept in this repository.
+
 ## Public 1.0 target
 RAW and rendered-image editing, ICC-aware color management, GPU rendering, full manual/AI masks, AI denoise, optics/geometry/detail tools, presets/batch/history/compare/export, Look Engine, Style Mixer, Reference Match, and Beginner/Pro UX over one shared parameter model.
 
