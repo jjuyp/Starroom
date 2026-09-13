@@ -43,6 +43,13 @@ pub struct RenderProfile {
     pub peak_working_bytes: u64,
     pub cache_hits: u64,
     pub cache_misses: u64,
+    /// Time spent waiting for a bounded preview worker permit. This is distinct from render time.
+    pub queue_wait_nanoseconds: u64,
+    /// Time from the first observed cancellation request until the worker reaches a checkpoint.
+    pub cancel_latency_nanoseconds: Option<u64>,
+    /// Interactive preview uses one upload and one final presentation readback at most.
+    pub gpu_upload_nanoseconds: u64,
+    pub gpu_readback_nanoseconds: u64,
     pub working_set_before_bytes: Option<u64>,
     pub working_set_after_bytes: Option<u64>,
     /// Operating-system process peak. Windows reports this for the process lifetime, so consumers

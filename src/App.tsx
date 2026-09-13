@@ -616,7 +616,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
       }
       cachedThumbnail.src = photo.src
     }
-    const timeout = window.setTimeout(async () => {
+    // Coalesce high-frequency pointer/slider state to at most one native submission per display
+    // frame. LatestPreviewQueue owns cancellation; this is not a latency-hiding debounce.
+    const frameRequest = window.requestAnimationFrame(async () => {
       onStatus('正在算圖…')
       try {
         const adjustments = before ? defaultAdjustments : photo.adjustments
@@ -729,7 +731,11 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           if (sourceWidth > 0) onDisplayScale?.(canvasRef.current.clientWidth / sourceWidth)
         })
         if (metric) {
-          if (!nativeResult?.isTile) onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
+          if (!nativeResult?.isTile) window.requestAnimationFrame(() => {
+            if (activePhotoId.current === photo.id && canvasRef.current === canvas) {
+              onHistogram(calculateHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
+            }
+          })
           onDimensions(nativeResult ? `${nativeResult.sourceWidth} × ${nativeResult.sourceHeight}` : `${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
             ? `${nativeAcceleration === 'gpu' ? '原生 GPU' : '原生 CPU 備援'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · 即時預覽 1024' : nativeResult?.isTile ? nativeResult.tileOptimized ? ' · 可視區域圖塊' : ' · 可視區域圖塊 · 全幅相容' : ' · 最終品質'}${before ? ' · 原圖' : ''}`
@@ -738,10 +744,10 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
       } catch (error) {
         if (activePhotoId.current === photo.id && !(error instanceof PreviewSuperseded)) onStatus(formatUserError(error, '預覽失敗'))
       }
-    }, 30)
+    })
 
     return () => {
-      window.clearTimeout(timeout)
+      window.cancelAnimationFrame(frameRequest)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
     photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src,

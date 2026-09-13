@@ -49,22 +49,20 @@ use starroom_portrait::{
 use starroom_project::{GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion};
 use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match_reference};
 use starroom_render::{
-    RenderGraph,
+    RenderGraph, StageId, StageStateIdentity,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
     profiling::{self, ProfileStage, RenderProfile},
-    scheduler::{
-        Completion, DEFAULT_TILE_EDGE, RenderCacheIdentity, RenderScheduler, SchedulerStatus,
-        Viewport,
-    },
+    scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
 };
 use starroom_session::{SessionOpen, SessionState};
 use std::path::{Path, PathBuf};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 use tauri::ipc::Response;
 use tauri::{Manager, State};
@@ -1261,10 +1259,62 @@ struct NativePreviewScheduler {
     scheduler: Mutex<RenderScheduler>,
     last_profile: Mutex<Option<RenderProfile>>,
     cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
-    render_lock: Mutex<()>,
+    cancellation_times: Mutex<BTreeMap<String, Instant>>,
+    workers: PreviewWorkerPool,
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<GpuRenderer, String>>>,
+}
+
+/// A small process-wide worker pool bounds memory without serializing the complete lifetime of
+/// Before and After renders. Waiting is cancellation-aware, so stale requests never hold a slot.
+struct PreviewWorkerPool {
+    active: Mutex<usize>,
+    changed: Condvar,
+    limit: usize,
+}
+
+struct PreviewWorkerPermit<'a>(&'a PreviewWorkerPool);
+
+impl PreviewWorkerPool {
+    fn new(limit: usize) -> Self {
+        Self {
+            active: Mutex::new(0),
+            changed: Condvar::new(),
+            limit: limit.max(1),
+        }
+    }
+
+    fn acquire(&self, cancelled: &AtomicBool) -> Result<PreviewWorkerPermit<'_>, String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "PreviewWorkerFailed: poisoned worker pool".to_owned())?;
+        while *active >= self.limit {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("PreviewCancelled: request was superseded while queued".into());
+            }
+            active = self
+                .changed
+                .wait_timeout(active, Duration::from_millis(4))
+                .map_err(|_| "PreviewWorkerFailed: poisoned worker pool".to_owned())?
+                .0;
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err("PreviewCancelled: request was superseded before rendering".into());
+        }
+        *active += 1;
+        Ok(PreviewWorkerPermit(self))
+    }
+}
+
+impl Drop for PreviewWorkerPermit<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.0.active.lock() {
+            *active = active.saturating_sub(1);
+            self.0.changed.notify_one();
+        }
+    }
 }
 
 const DECODE_CACHE_BUDGET: u64 = 512 * 1024 * 1024;
@@ -1278,7 +1328,7 @@ fn cached_decoded_source(
         .decoded
         .lock()
         .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
-    Ok(cache
+    let value = cache
         .iter()
         .position(|(identity, cached_edge, _)| identity == source_identity && *cached_edge == edge)
         .and_then(|index| cache.remove(index))
@@ -1286,7 +1336,9 @@ fn cached_decoded_source(
             let image = entry.2.clone();
             cache.push_back(entry);
             image
-        }))
+        });
+    profiling::record_cache(value.is_some());
+    Ok(value)
 }
 
 fn cache_decoded_source(
@@ -1469,7 +1521,8 @@ impl Default for NativePreviewScheduler {
             scheduler: Mutex::new(RenderScheduler::default()),
             last_profile: Mutex::new(None),
             cancellations: Mutex::new(BTreeMap::new()),
-            render_lock: Mutex::new(()),
+            cancellation_times: Mutex::new(BTreeMap::new()),
+            workers: PreviewWorkerPool::new(2),
             decoded: Mutex::new(VecDeque::new()),
             viewport_frames: Mutex::new(VecDeque::new()),
             gpu: Mutex::new(None),
@@ -2725,6 +2778,12 @@ fn native_preview_cancel(
     scheduler: State<'_, NativePreviewScheduler>,
     request_id: String,
 ) -> Result<bool, String> {
+    scheduler
+        .cancellation_times
+        .lock()
+        .map_err(|_| "PreviewCancelled: poisoned cancellation timing registry".to_owned())?
+        .entry(request_id.clone())
+        .or_insert_with(Instant::now);
     let mut tokens = scheduler
         .cancellations
         .lock()
@@ -2756,13 +2815,21 @@ async fn native_preview(
         .clone();
     tauri::async_runtime::spawn_blocking(move || {
         let scheduler = app.state::<NativePreviewScheduler>();
-        // Bound Native preview memory/GPU work across Before/After surfaces. The lock is held
-        // only by a background worker; cancellation commands and the WebView remain responsive.
-        let _render = scheduler
-            .render_lock
-            .lock()
-            .map_err(|_| "PreviewWorkerFailed: poisoned render lock".to_owned())?;
-        let (result, profile) = profiling::capture(|| {
+        let queued_at = Instant::now();
+        let _permit = match scheduler.workers.acquire(&token) {
+            Ok(permit) => permit,
+            Err(error) => {
+                if let Ok(mut cancellations) = scheduler.cancellations.lock() {
+                    cancellations.remove(&request_id);
+                }
+                if let Ok(mut timings) = scheduler.cancellation_times.lock() {
+                    timings.remove(&request_id);
+                }
+                return Err(error);
+            }
+        };
+        let queue_wait = u64::try_from(queued_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let (result, mut profile) = profiling::capture(|| {
             starroom_pipeline::cancellation::with_cancellation(token.clone(), || {
                 starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
                 let result = native_preview_inner(
@@ -2776,6 +2843,13 @@ async fn native_preview(
                 Ok(result)
             })
         });
+        profile.queue_wait_nanoseconds = queue_wait;
+        profile.cancel_latency_nanoseconds = scheduler
+            .cancellation_times
+            .lock()
+            .map_err(|_| "PreviewCancelled: poisoned cancellation timing registry".to_owned())?
+            .remove(&request_id)
+            .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
         scheduler
             .cancellations
             .lock()
@@ -2794,6 +2868,98 @@ async fn native_preview(
     .map_err(|error| format!("PreviewWorkerFailed: {error}"))?
 }
 
+fn preview_stage_identity(
+    source_identity: &str,
+    settings: &RenderSettings,
+) -> Result<String, String> {
+    fn encoded<T: Serialize>(value: &T) -> Result<String, String> {
+        serde_json::to_string(value).map_err(|error| format!("PreviewCacheIdentityFailed: {error}"))
+    }
+    let mut parameters = BTreeMap::new();
+    parameters.insert(
+        StageId::InputTransform,
+        encoded(&settings.color_management)?,
+    );
+    parameters.insert(
+        StageId::WhiteBalance,
+        encoded(&(
+            settings.white_balance,
+            settings.relative_color.temperature,
+            settings.relative_color.tint,
+        ))?,
+    );
+    parameters.insert(StageId::AiDenoise, encoded(&settings.ai_denoise)?);
+    parameters.insert(StageId::Exposure, encoded(&settings.tone.exposure_ev)?);
+    parameters.insert(
+        StageId::Tone,
+        encoded(&(
+            settings.tone.contrast,
+            settings.tone.highlights,
+            settings.tone.shadows,
+            settings.tone.whites,
+            settings.tone.blacks,
+        ))?,
+    );
+    parameters.insert(
+        StageId::Curve,
+        encoded(&(&settings.curve, &settings.curves))?,
+    );
+    parameters.insert(StageId::ColorMixer, encoded(&settings.color_mixer)?);
+    parameters.insert(
+        StageId::ColorGrading,
+        encoded(&(
+            &settings.grading,
+            settings.relative_color.vibrance,
+            settings.relative_color.saturation,
+            settings.grain,
+            settings.vignette,
+        ))?,
+    );
+    let portrait_mask_keys = settings
+        .portrait_masks
+        .iter()
+        .map(|mask| {
+            format!(
+                "{}:{}:{:?}:{}x{}",
+                mask.cache_key, mask.face_id, mask.region, mask.width, mask.height
+            )
+        })
+        .collect::<Vec<_>>();
+    let generated_mask_keys = settings
+        .generated_masks
+        .iter()
+        .map(|mask| {
+            format!(
+                "{}:{:?}:{}x{}",
+                mask.cache_identity, mask.semantic, mask.width, mask.height
+            )
+        })
+        .collect::<Vec<_>>();
+    parameters.insert(
+        StageId::Mask,
+        encoded(&(portrait_mask_keys, generated_mask_keys))?,
+    );
+    parameters.insert(StageId::Layers, encoded(&settings.layers)?);
+    parameters.insert(StageId::Skin, encoded(&settings.skin_retouch)?);
+    parameters.insert(StageId::Healing, encoded(&settings.healing_operations)?);
+    parameters.insert(
+        StageId::Detail,
+        encoded(&(settings.denoise, settings.local_detail, settings.sharpen))?,
+    );
+    parameters.insert(StageId::Optics, encoded(&settings.optics)?);
+    parameters.insert(StageId::Geometry, encoded(&settings.geometry)?);
+    parameters.insert(
+        StageId::DisplayTransform,
+        "display:srgb:relative-colorimetric:bpc".into(),
+    );
+    let identity = StageStateIdentity::build(&RenderGraph::default(), source_identity, &parameters)
+        .map_err(|error| format!("PreviewCacheIdentityFailed: {error:?}"))?;
+    identity
+        .key(StageId::DisplayTransform)
+        .map(str::to_owned)
+        .ok_or_else(|| "PreviewCacheIdentityFailed: display stage is missing".into())
+}
+
 fn native_preview_inner(
     scheduler: &NativePreviewScheduler,
     portrait_runtime: &NativePortraitRuntime,
@@ -2802,30 +2968,11 @@ fn native_preview_inner(
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
     let source_identity = preview_source_identity(&request.source_path)?;
-    let graph_identity = RenderCacheIdentity {
-        source_identity: source_identity.clone(),
-        render_state: serde_json::to_string(&request.settings).map_err(|error| {
-            format!("native preview render identity serialization failed: {error}")
-        })?,
-        layer_state: serde_json::to_string(&request.settings.layers).map_err(|error| {
-            format!("native preview layer identity serialization failed: {error}")
-        })?,
-        mask_identity: serde_json::to_string(&(
-            &request.settings.layers,
-            &request.settings.skin_retouch,
-            &request.settings.healing_operations,
-        ))
-        .map_err(|error| format!("native preview mask identity serialization failed: {error}"))?,
-        geometry_state: serde_json::to_string(&request.settings.geometry).map_err(|error| {
-            format!("native preview geometry identity serialization failed: {error}")
-        })?,
-        color_transform: "display:srgb:relative-colorimetric:bpc".into(),
-    }
-    .fingerprint();
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, portrait_runtime)?;
     attach_generated_masks(&mut settings, ai_mask_runtime)?;
+    let graph_identity = preview_stage_identity(&source_identity, &settings)?;
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let high_resolution = wants_high_resolution(request.resolution_mode, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
@@ -3751,6 +3898,31 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_worker_pool_allows_before_after_without_global_serialization() {
+        let pool = PreviewWorkerPool::new(2);
+        let token = AtomicBool::new(false);
+        let first = pool.acquire(&token).unwrap();
+        let second = pool.acquire(&token).unwrap();
+        assert_eq!(*pool.active.lock().unwrap(), 2);
+        drop((first, second));
+        assert_eq!(*pool.active.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn queued_preview_worker_observes_superseding_cancellation() {
+        let pool = Arc::new(PreviewWorkerPool::new(1));
+        let active_token = AtomicBool::new(false);
+        let _active = pool.acquire(&active_token).unwrap();
+        let queued_pool = pool.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let queued_cancelled = cancelled.clone();
+        let queued = std::thread::spawn(move || queued_pool.acquire(&queued_cancelled).is_err());
+        std::thread::sleep(Duration::from_millis(10));
+        cancelled.store(true, Ordering::Release);
+        assert!(queued.join().unwrap());
+    }
 
     #[test]
     fn decoded_preview_cache_is_tiered_by_source_and_resolution() {

@@ -254,6 +254,48 @@ pub fn stage_cache_key(
     format!("{:x}", hasher.finalize())
 }
 
+/// Production cache identity chain. Each key depends only on immutable source identity, that
+/// stage's parameters and upstream keys, so a downstream edit cannot evict valid upstream work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageStateIdentity {
+    keys: BTreeMap<StageId, String>,
+}
+
+impl StageStateIdentity {
+    pub fn build(
+        graph: &RenderGraph,
+        source_identity: &str,
+        parameters: &BTreeMap<StageId, String>,
+    ) -> Result<Self, GraphError> {
+        graph.validate()?;
+        let mut keys = BTreeMap::new();
+        for node in &graph.stages {
+            let upstream = node
+                .dependencies
+                .iter()
+                .map(|dependency| {
+                    keys.get(dependency)
+                        .cloned()
+                        .ok_or(GraphError::MissingDependency {
+                            stage: node.id,
+                            dependency: *dependency,
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let parameter = parameters.get(&node.id).map(String::as_str).unwrap_or("{}");
+            keys.insert(
+                node.id,
+                stage_cache_key(node.id, source_identity, parameter, &upstream),
+            );
+        }
+        Ok(Self { keys })
+    }
+
+    pub fn key(&self, stage: StageId) -> Option<&str> {
+        self.keys.get(&stage).map(String::as_str)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +351,54 @@ mod tests {
         );
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn stage_identity_preserves_upstream_keys_for_downstream_changes() {
+        let graph = RenderGraph::default();
+        let mut first = BTreeMap::new();
+        first.insert(StageId::Exposure, "0.0".into());
+        first.insert(StageId::ColorMixer, "neutral".into());
+        let baseline = StageStateIdentity::build(&graph, "source", &first).unwrap();
+
+        let mut exposure_change = first.clone();
+        exposure_change.insert(StageId::Exposure, "1.0".into());
+        let exposure = StageStateIdentity::build(&graph, "source", &exposure_change).unwrap();
+        assert_eq!(
+            baseline.key(StageId::WhiteBalance),
+            exposure.key(StageId::WhiteBalance)
+        );
+        assert_ne!(
+            baseline.key(StageId::Exposure),
+            exposure.key(StageId::Exposure)
+        );
+
+        let mut mixer_change = first;
+        mixer_change.insert(StageId::ColorMixer, "red:+10".into());
+        let mixer = StageStateIdentity::build(&graph, "source", &mixer_change).unwrap();
+        assert_eq!(
+            baseline.key(StageId::Exposure),
+            mixer.key(StageId::Exposure)
+        );
+        assert_eq!(baseline.key(StageId::Curve), mixer.key(StageId::Curve));
+        assert_ne!(
+            baseline.key(StageId::ColorMixer),
+            mixer.key(StageId::ColorMixer)
+        );
+
+        let mut display_change = BTreeMap::new();
+        display_change.insert(StageId::Exposure, "0.0".into());
+        display_change.insert(StageId::ColorMixer, "neutral".into());
+        display_change.insert(StageId::DisplayTransform, "display:p3".into());
+        let display = StageStateIdentity::build(&graph, "source", &display_change).unwrap();
+        assert_eq!(
+            baseline.key(StageId::ColorGrading),
+            display.key(StageId::ColorGrading)
+        );
+        assert_ne!(
+            baseline.key(StageId::DisplayTransform),
+            display.key(StageId::DisplayTransform)
+        );
     }
 
     #[test]
