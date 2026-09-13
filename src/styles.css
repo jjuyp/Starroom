@@ -168,7 +168,7 @@ button:disabled { opacity: .35; cursor: default; }
 .zoom-help { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--text-3); }
 .zoom-help + button { margin-left: 0; }
 .status-dot { width: 5px; height: 5px; border-radius: 50%; background: #63c695; }
-.filmstrip { min-height: 0; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 10px; overflow-x: auto; overflow-y: hidden; background: var(--surface-1); border-top: 1px solid var(--border); transition: opacity 130ms var(--ease); }
+.filmstrip { min-height: 0; display: flex; align-items: center; justify-content: flex-start; gap: 7px; padding: 8px 10px; overflow-x: auto; overflow-y: hidden; background: var(--surface-1); border-top: 1px solid var(--border); transition: opacity 130ms var(--ease); }
 .filmstrip-collapsed .filmstrip { opacity: 0; pointer-events: none; }
 .thumb-shell { flex: 0 0 auto; position: relative; }
 .thumb { width: 98px; height: 76px; padding: 3px; position: relative; border: 2px solid transparent; border-radius: var(--radius-md); background: var(--surface-2); overflow: hidden; }

@@ -37,6 +37,11 @@ import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
 import { importNativeLibraryPaths } from './nativeRender'
 import { PreviewSuperseded } from './latestPreviewQueue'
+import {
+  appendInteractiveHistory,
+  prependInteractiveHistory,
+  scrollFilmstripFromWheel,
+} from './interactiveState'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -1031,6 +1036,7 @@ export function App() {
   const [displayScale, setDisplayScale] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const panStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  const filmstripRef = useRef<HTMLDivElement | null>(null)
   const [histogram, setHistogram] = useState(() => Array.from({ length: 48 }, () => 0))
   const [renderStatus, setRenderStatus] = useState('就緒')
   const [dimensions, setDimensions] = useState('—')
@@ -1238,6 +1244,15 @@ export function App() {
   }, [selectPhoto, loadLibraryThumbnails])
 
   const selected = photos.find((photo) => photo.id === selectedId) ?? photos[0]
+  useEffect(() => {
+    if (view === 'library' || !filmstripOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      const selectedThumbnail = [...(filmstripRef.current?.querySelectorAll<HTMLElement>('[data-photo-id]') ?? [])]
+        .find((element) => element.dataset.photoId === selectedId)
+      selectedThumbnail?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [filmstripOpen, selectedId, view])
   useEffect(() => { transientEditsPending.current = !selected.libraryAsset && hasPhotoEdits(selected) }, [selected])
   useEffect(() => {
     const pending = pendingSession.current
@@ -1550,7 +1565,7 @@ export function App() {
       return {
         ...photo,
         adjustments: { ...photo.adjustments, [key]: normalizedValue },
-        history: recordHistory ? [...photo.history, takeSnapshot(photo)].slice(-100) : photo.history,
+        history: recordHistory ? appendInteractiveHistory(photo.history, takeSnapshot(photo)) : photo.history,
         future: [],
       }
     })
@@ -1559,7 +1574,7 @@ export function App() {
 
   function beginInteractiveEdit() {
     setPreviewInteraction('interactive')
-    updateSelected((photo) => ({ ...photo, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
   }
 
   function updateCurve(points: ToneCurvePoint[]) {
@@ -1584,7 +1599,7 @@ export function App() {
     const mapped = fromNativeSettings(selected.adjustments, settings)
     updateSelected((photo) => ({ ...photo, adjustments: mapped.adjustments,
       curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
-      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+      history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
     setNotice(label)
   }
@@ -1700,7 +1715,7 @@ export function App() {
   }
 
   function mutateLayers(mutator: (layers: NativeAdjustmentLayer[]) => NativeAdjustmentLayer[]) {
-    updateSelected((photo) => ({ ...photo, layers: mutator(copyLayers(photo.layers)), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, layers: mutator(copyLayers(photo.layers)), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
   }
 
@@ -1749,14 +1764,14 @@ export function App() {
   function loadCurvePreset() {
     if (!savedCurvePreset) return
     updateSelected((photo) => ({ ...photo, curvePoints: copyCurve(savedCurvePreset.master), curveChannels: copyCurveChannels(savedCurvePreset),
-      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+      history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
     setNotice('已載入自訂曲線預設')
   }
 
   function updateWhiteBalance(mode: NativeWhiteBalanceMode, sample: NativeWhiteBalanceSample | null = null) {
     updateSelected((photo) => ({ ...photo, whiteBalanceMode: mode, whiteBalanceSample: sample,
-      history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+      history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
   }
 
@@ -1796,7 +1811,7 @@ export function App() {
   }
 
   function updateOpticsState(opticsState: NativeOpticsState) {
-    updateSelected((photo) => ({ ...photo, opticsState, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, opticsState, history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setOpticsStatus(null)
     setBefore(false)
   }
@@ -1928,7 +1943,7 @@ export function App() {
   }
 
   function updateSkinRetouch(mutator: (current: NativeSkinRetouchSettings) => NativeSkinRetouchSettings) {
-    updateSelected((photo) => ({ ...photo, skinRetouch: copySkinRetouch(mutator(copySkinRetouch(photo.skinRetouch))), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, skinRetouch: copySkinRetouch(mutator(copySkinRetouch(photo.skinRetouch))), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
   }
 
@@ -1945,7 +1960,7 @@ export function App() {
   }
 
   function updateHealingOperations(mutator: (current: NativeHealingOperation[]) => NativeHealingOperation[]) {
-    updateSelected((photo) => ({ ...photo, healingOperations: copyHealingOperations(mutator(copyHealingOperations(photo.healingOperations))).slice(0, 256), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, healingOperations: copyHealingOperations(mutator(copyHealingOperations(photo.healingOperations))).slice(0, 256), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
   }
 
@@ -1973,7 +1988,7 @@ export function App() {
         const max = key === 'exposure' ? 5 : 100
         adjustments[key] = Math.max(min, Math.min(max, adjustments[key] + suggestion.amount))
       }
-      return { ...photo, adjustments, history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }
+      return { ...photo, adjustments, history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }
     })
     setBefore(false)
   }
@@ -1997,7 +2012,7 @@ export function App() {
 
   function acceptAdvisorPreview() {
     if (!advisorPreview) return
-    updateSelected((photo) => ({ ...photo, history: [...photo.history, advisorPreview].slice(-100), future: [] }))
+    updateSelected((photo) => ({ ...photo, history: appendInteractiveHistory(photo.history, advisorPreview), future: [] }))
     setAdvisorPreview(null)
   }
 
@@ -2056,7 +2071,7 @@ export function App() {
     updateSelected((photo) => {
       const previous = photo.history.at(-1)
       if (!previous) return photo
-      return { ...applySnapshot(photo, previous), history: photo.history.slice(0, -1), future: [takeSnapshot(photo), ...photo.future] }
+      return { ...applySnapshot(photo, previous), history: photo.history.slice(0, -1), future: prependInteractiveHistory(photo.future, takeSnapshot(photo)) }
     })
   }
 
@@ -2068,7 +2083,7 @@ export function App() {
     updateSelected((photo) => {
       const next = photo.future[0]
       if (!next) return photo
-      return { ...applySnapshot(photo, next), history: [...photo.history, takeSnapshot(photo)], future: photo.future.slice(1) }
+      return { ...applySnapshot(photo, next), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: photo.future.slice(1) }
     })
   }
 
@@ -2107,7 +2122,7 @@ export function App() {
     updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
       opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
       layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [],
-      history: [...photo.history, takeSnapshot(photo)], future: [] }))
+      history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
   }
 
   function executeCommand(id: CommandId) {
@@ -2121,7 +2136,7 @@ export function App() {
         return
       case 'pasteSettings':
         if (!copiedSettings) { setNotice('請先從照片複製設定'); return }
-        updateSelected((photo) => ({ ...applySnapshot(photo, copiedSettings), history: [...photo.history, takeSnapshot(photo)].slice(-100), future: [] }))
+        updateSelected((photo) => ({ ...applySnapshot(photo, copiedSettings), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
         setBefore(false)
         setNotice('已透過共用編輯狀態貼上設定')
         return
@@ -2368,8 +2383,10 @@ export function App() {
           <div className="canvas-footer"><span>{zoom === 'fit' && zoomScale === 1 ? 'Fit · ' : ''}{Math.round(displayScale * zoomScale * 100)}%</span><span className="status-dot" /><span>{renderStatus}</span><span>· {dimensions}</span>
             <span className="zoom-help"><Move size={12} /> Wheel to zoom · drag to pan</span>
             <button aria-label="Toggle filmstrip" onClick={() => setFilmstripOpen(!filmstripOpen)}>{filmstripOpen ? <PanelBottomClose size={16} /> : <PanelBottomOpen size={16} />}</button></div>
-          <div className="filmstrip" aria-label="Filmstrip">
-            {filteredPhotos.length ? filteredPhotos.map((photo) => <div key={photo.id} className="thumb-shell">
+          <div ref={filmstripRef} className="filmstrip" aria-label="Filmstrip" onWheel={(event) => {
+            if (scrollFilmstripFromWheel(event.currentTarget, event.deltaX, event.deltaY)) event.preventDefault()
+          }}>
+            {filteredPhotos.length ? filteredPhotos.map((photo) => <div key={photo.id} className="thumb-shell" data-photo-id={photo.id}>
               <button className={photo.id === selected.id ? 'thumb active' : 'thumb'} onClick={() => { selectPhoto(photo.id); setBefore(false) }} title={photo.name}>
                 <img src={photo.src} alt={photo.name} /><span>{photo.rating === 5 ? '★' : hasPhotoEdits(photo) ? 'E' : ''}</span>
               </button>

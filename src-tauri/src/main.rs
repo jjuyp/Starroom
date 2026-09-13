@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 fn main() {
     let mut arguments = std::env::args_os().skip(1);
     let command = arguments.next();

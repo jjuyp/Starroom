@@ -15,6 +15,7 @@ use thiserror::Error;
 
 pub const HISTORY_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_CHECKPOINT_INTERVAL: usize = 100;
+pub const MAX_INTERACTIVE_HISTORY: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum HistoryError {
@@ -305,18 +306,74 @@ impl EditHistory {
         });
         self.document.cursor += 1;
         self.state = next;
-        if self
-            .document
-            .cursor
-            .is_multiple_of(self.document.checkpoint_interval)
-        {
-            self.document.checkpoints.push(HistoryCheckpoint {
-                sequence,
-                state_version: version.clone(),
-                state: self.state.clone(),
-            });
-        }
+        self.enforce_interactive_history_limit()?;
         Ok(version)
+    }
+
+    fn enforce_interactive_history_limit(&mut self) -> Result<(), HistoryError> {
+        if self.document.entries.len() <= MAX_INTERACTIVE_HISTORY {
+            self.rebuild_checkpoints()?;
+            return Ok(());
+        }
+
+        // Keep a bounded window containing the current cursor. In the normal commit path the
+        // cursor is at the end, so this retains the latest twenty undoable commands. A legacy
+        // document loaded while undone keeps as much redo history as fits in the same window.
+        let start = self.document.cursor.saturating_sub(MAX_INTERACTIVE_HISTORY);
+        let end = (start + MAX_INTERACTIVE_HISTORY).min(self.document.entries.len());
+        let mut new_initial_state = self.document.initial_state.clone();
+        for entry in &self.document.entries[..start] {
+            if state_version(&new_initial_state) != entry.parent_version {
+                return Err(HistoryError::HistoryReplayFailed(format!(
+                    "retention parent mismatch at sequence {}",
+                    entry.sequence
+                )));
+            }
+            entry.command.forward(&mut new_initial_state)?;
+            if state_version(&new_initial_state) != entry.version {
+                return Err(HistoryError::HistoryReplayFailed(format!(
+                    "retention version mismatch at sequence {}",
+                    entry.sequence
+                )));
+            }
+        }
+
+        self.document.initial_state = new_initial_state;
+        self.document.entries = self.document.entries[start..end].to_vec();
+        self.document.cursor -= start;
+        for (index, entry) in self.document.entries.iter_mut().enumerate() {
+            entry.sequence = index as u64 + 1;
+        }
+        self.rebuild_checkpoints()
+    }
+
+    fn rebuild_checkpoints(&mut self) -> Result<(), HistoryError> {
+        let mut replay = self.document.initial_state.clone();
+        let mut checkpoints = Vec::new();
+        for entry in &self.document.entries {
+            if state_version(&replay) != entry.parent_version {
+                return Err(HistoryError::HistoryReplayFailed(format!(
+                    "checkpoint rebuild parent mismatch at sequence {}",
+                    entry.sequence
+                )));
+            }
+            entry.command.forward(&mut replay)?;
+            if state_version(&replay) != entry.version {
+                return Err(HistoryError::HistoryReplayFailed(format!(
+                    "checkpoint rebuild version mismatch at sequence {}",
+                    entry.sequence
+                )));
+            }
+            if (entry.sequence as usize).is_multiple_of(self.document.checkpoint_interval) {
+                checkpoints.push(HistoryCheckpoint {
+                    sequence: entry.sequence,
+                    state_version: entry.version.clone(),
+                    state: replay.clone(),
+                });
+            }
+        }
+        self.document.checkpoints = checkpoints;
+        Ok(())
     }
     pub fn undo(&mut self) -> Result<EditStateVersion, HistoryError> {
         if !self.can_undo() {
@@ -488,7 +545,9 @@ impl EditHistory {
                 )));
             }
         }
-        Ok(Self { state, document })
+        let mut history = Self { state, document };
+        history.enforce_interactive_history_limit()?;
+        Ok(history)
     }
 }
 
@@ -621,7 +680,7 @@ mod tests {
         assert_eq!(history.entries().len(), 1);
     }
     #[test]
-    fn one_hundred_edits_and_checkpoint_replay_are_deterministic() {
+    fn one_hundred_edits_remain_bounded_and_replay_is_deterministic() {
         let mut history = EditHistory::with_checkpoint_interval(state(), 10).unwrap();
         for index in 0..100 {
             history
@@ -636,14 +695,15 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(history.checkpoints().len(), 10);
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(history.checkpoints().len(), 2);
         let loaded = EditHistory::from_document(history.document.clone()).unwrap();
         assert_eq!(loaded.state(), history.state());
-        for _ in 0..100 {
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
             history.undo().unwrap();
         }
-        assert_eq!(history.state(), &state());
-        for _ in 0..100 {
+        assert_eq!(history.state().pointer("/tone/exposure"), Some(&json!(8.0)));
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
             history.redo().unwrap();
         }
         assert_eq!(history.state(), loaded.state());
@@ -767,6 +827,170 @@ mod tests {
             Err(HistoryError::CheckpointCorrupt(_))
         ));
     }
+
+    fn commit_exposure(history: &mut EditHistory, before: usize, after: usize) {
+        history
+            .commit(
+                format!("Exposure {after}"),
+                "tone",
+                set("/tone/exposure", json!(before as f64), json!(after as f64)),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn exactly_20_commits_are_all_undoable() {
+        let mut history = EditHistory::new(state()).unwrap();
+        for index in 0..MAX_INTERACTIVE_HISTORY {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
+            history.undo().unwrap();
+        }
+        assert!(matches!(history.undo(), Err(HistoryError::UndoUnavailable)));
+    }
+
+    #[test]
+    fn twenty_first_commit_prunes_oldest_history() {
+        let mut history = EditHistory::new(state()).unwrap();
+        for index in 0..=MAX_INTERACTIVE_HISTORY {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(
+            history.state().pointer("/tone/exposure"),
+            Some(&json!(21.0))
+        );
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
+            history.undo().unwrap();
+        }
+        assert_eq!(history.state().pointer("/tone/exposure"), Some(&json!(1.0)));
+        assert!(matches!(history.undo(), Err(HistoryError::UndoUnavailable)));
+    }
+
+    #[test]
+    fn history_stays_bounded_after_many_commits() {
+        let mut history = EditHistory::new(state()).unwrap();
+        for index in 0..1_000 {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(history.cursor(), MAX_INTERACTIVE_HISTORY);
+    }
+
+    #[test]
+    fn redo_branch_is_still_linear() {
+        let mut history = EditHistory::new(state()).unwrap();
+        for index in 0..3 {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        history.undo().unwrap();
+        commit_exposure(&mut history, 2, 4);
+        assert!(!history.can_redo());
+        assert!(matches!(history.redo(), Err(HistoryError::RedoUnavailable)));
+        assert_eq!(history.state().pointer("/tone/exposure"), Some(&json!(4.0)));
+    }
+
+    #[test]
+    fn persist_and_reload_bounded_history() {
+        let root = env::temp_dir().join(format!("starroom-history-bounded-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let path = root.join("history.json");
+        let mut history = EditHistory::new(state()).unwrap();
+        for index in 0..50 {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        let current = history.state().clone();
+        history.persist(&path).unwrap();
+        let persisted: PersistedHistory =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted.entries.len(), MAX_INTERACTIVE_HISTORY);
+        let mut loaded = EditHistory::load(&path).unwrap();
+        assert_eq!(loaded.state(), &current);
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
+            loaded.undo().unwrap();
+        }
+        assert!(matches!(loaded.undo(), Err(HistoryError::UndoUnavailable)));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshots_survive_history_pruning() {
+        let mut history = EditHistory::new(state()).unwrap();
+        commit_exposure(&mut history, 0, 1);
+        let snapshot_id = history.create_snapshot("Version 1").unwrap();
+        let snapshot_state = history.snapshot_state(&snapshot_id).unwrap().clone();
+        for index in 1..100 {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(history.snapshots().len(), 1);
+        assert_eq!(
+            history.snapshot_state(&snapshot_id).unwrap(),
+            &snapshot_state
+        );
+        history.restore_snapshot(&snapshot_id).unwrap();
+        assert_eq!(history.state(), &snapshot_state);
+    }
+
+    #[test]
+    fn legacy_oversized_history_load() {
+        let mut replay = state();
+        let initial_state = replay.clone();
+        let mut entries = Vec::new();
+        for index in 0..50 {
+            let parent_version = state_version(&replay);
+            let command = set(
+                "/tone/exposure",
+                json!(index as f64),
+                json!((index + 1) as f64),
+            );
+            command.forward(&mut replay).unwrap();
+            entries.push(HistoryEntry {
+                sequence: index as u64 + 1,
+                parent_version,
+                version: state_version(&replay),
+                timestamp: now(),
+                description: format!("Legacy {index}"),
+                affected_stage: "tone".into(),
+                command,
+            });
+        }
+        let document = PersistedHistory {
+            schema_version: HISTORY_SCHEMA_VERSION,
+            initial_state,
+            entries,
+            cursor: 50,
+            checkpoints: Vec::new(),
+            snapshots: Vec::new(),
+            checkpoint_interval: 5,
+        };
+        let loaded = EditHistory::from_document(document).unwrap();
+        assert_eq!(loaded.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(loaded.cursor(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(loaded.state(), &replay);
+    }
+
+    #[test]
+    fn checkpoint_integrity_after_pruning() {
+        let mut history = EditHistory::with_checkpoint_interval(state(), 4).unwrap();
+        for index in 0..45 {
+            commit_exposure(&mut history, index, index + 1);
+        }
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert_eq!(history.checkpoints().len(), 5);
+        let final_state = history.state().clone();
+        let mut loaded = EditHistory::from_document(history.document.clone()).unwrap();
+        assert_eq!(loaded.state(), &final_state);
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
+            loaded.undo().unwrap();
+        }
+        for _ in 0..MAX_INTERACTIVE_HISTORY {
+            loaded.redo().unwrap();
+        }
+        assert_eq!(loaded.state(), &final_state);
+    }
     #[test]
     fn m28_ten_thousand_entries_checkpoint_restore_undo_redo_and_branch_scale() {
         let mut history = EditHistory::with_checkpoint_interval(state(), 100).unwrap();
@@ -780,22 +1004,23 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(history.checkpoints().len(), 100);
+        assert_eq!(history.entries().len(), MAX_INTERACTIVE_HISTORY);
+        assert!(history.checkpoints().is_empty());
         let final_state = history.state().clone();
         let mut loaded = EditHistory::from_document(history.document).unwrap();
         assert_eq!(loaded.state(), &final_state);
         let snapshot = loaded.create_snapshot("10k final").unwrap();
-        for _ in 0..100 {
+        for _ in 0..20 {
             loaded.undo().unwrap();
         }
-        for _ in 0..50 {
+        for _ in 0..10 {
             loaded.redo().unwrap();
         }
         loaded
             .commit(
                 "Branch",
                 "tone",
-                set("/tone/exposure", json!(9_950), json!(42)),
+                set("/tone/exposure", json!(9_990), json!(42)),
             )
             .unwrap();
         assert!(!loaded.can_redo());
