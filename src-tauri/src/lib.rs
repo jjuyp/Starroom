@@ -3288,8 +3288,12 @@ fn native_preview_inner(
     } else {
         (rendered.data, rendered.width, rendered.height)
     };
+    let preview_quality = match request.interaction_phase {
+        PreviewInteractionPhase::Interactive => 88,
+        PreviewInteractionPhase::Final => 96,
+    };
     let jpeg = profiling::measure(ProfileStage::Encode, 0, || {
-        encode_jpeg_rgb8(&tile_data, tile_width, tile_height, 91, None)
+        encode_jpeg_rgb8(&tile_data, tile_width, tile_height, preview_quality, None)
     })
     .map_err(|error| format!("native preview encode failed: {error}"))?;
     let original_dimensions = match decoded.as_ref() {

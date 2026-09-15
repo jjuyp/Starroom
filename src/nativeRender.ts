@@ -455,7 +455,9 @@ export function nativePreviewViewportContract(zoom: 'fit' | '100', zoomScale: nu
   visible?: { centerX: number; centerY: number; widthFraction: number; heightFraction: number }, displayEdge = 1800) {
   void zoomScale // retained in the public contract; displayEdge is the authoritative pixel demand.
   const sourceEdge = Math.max(0, Math.trunc(sourceWidth), Math.trunc(sourceHeight))
-  const requestedEdge = Math.max(512, Math.min(4096, Math.ceil(Number.isFinite(displayEdge) ? displayEdge : 1800)))
+  // Preserve enough final-preview pixels for HiDPI scaling and modest window
+  // growth. A canvas-sized 700-1000 px JPEG becomes visibly soft when enlarged.
+  const requestedEdge = Math.max(1800, Math.min(4096, Math.ceil(Number.isFinite(displayEdge) ? displayEdge : 1800)))
   // A small wheel zoom must not trigger a full 24 MP decode. Pyramid previews stay sharp up to
   // 4096 display pixels; source-resolution tiles are reserved for true 1:1/deeper inspection.
   const highResolution = zoom === '100' || displayEdge > 4096
