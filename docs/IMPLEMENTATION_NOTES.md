@@ -1,4 +1,39 @@
 # Implementation Notes
+## 2026-09-15 GPU-resident creative preview and production dirty regions
+
+- `GpuRenderer` now owns a persistent wgpu Device/Queue, two compiled pipelines and reusable
+  source/working/output/staging/uniform/curve/mask allocations. Same-size slider frames update only
+  the compact creative uniform and curve LUT; the immutable source upload is fingerprinted and
+  reused. Production counters assert pipeline/resource reuse, source upload and one final readback.
+- The Native shared preview graph fuses encoded relative Temperature/Tint, Exposure, scene-linear
+  Tone, Master/R/G/B curves, OKLab/OKLCh Color Mixer, four-way Color Grading and HDR-safe Vignette
+  into one compute pass. Vignette follows the existing CPU finishing reference exactly and is
+  removed from the subsequent CPU detail call only when GPU execution succeeded, preventing a
+  double application. Export continues to use the authoritative shared CPU reference graph.
+- No parallel cache identity was introduced. `GpuStageCacheKeys` is a projection of the existing
+  canonical `StageStateIdentity` boundaries for source, input/WB, global creative, local composite,
+  geometry and display. Focused tests prove downstream edits preserve their upstream identities.
+- High-resolution Native viewport rendering now permits local mask layers. Full-source normalized
+  mask coordinates are evaluated against the decoded source region. Manual Clone/Heal with an
+  explicit source expands the region by target, source, radius, feather, scale and graph halo, then
+  remaps both points into the cropped working buffer. Auto-source and AI-inpaint Heal remain on the
+  explicit full-frame/typed-unavailable paths because a cropped search would change semantics.
+- The profiler now reports upload, final readback, fused creative duration, source/working texture
+  hits/misses and tile-cache hits/misses alongside existing queue/cancel/decode/ICC/encode stages.
+  The release fixture measured: cold JPEG Fit 2921.717 ms (baseline 1059.724), cached reopen 0.249
+  ms (0.395, -37.0%), RAW first Fit 125.716 ms (119.397, +5.3%), RAW cached 0.264 ms (0.316,
+  -16.5%), interactive 1024 106.170 ms (105.430, +0.7%), final refinement 416.602 ms (395.065,
+  +5.5%), 100% viewport 284.144 ms (220.163, +29.1%) and 200% viewport 128.208 ms (118.216,
+  +8.5%). These are honest single-run machine results; cold adapter/shader initialization and the
+  still-CPU CameraTransform, LittleCMS output transform and JPEG encode dominate the remaining
+  latency, so the aspirational 50/100/200 ms gates are not claimed as met.
+- The 24/45/60/100 MP production workflow remains green after the source-region changes. Measured
+  Fit/viewport/export at 100 MP were 2731.35/346.77/60964.02 ms with a 6,455,803,904-byte process
+  peak. MSVC produced the release executable and NSIS installer; clean install, hidden launch,
+  deterministic core self-test, real offline BiRefNet inference, legal-resource hashes and silent
+  uninstall all pass. The smoke harness now uses an explicitly waited GUI process with redirected
+  output files, avoiding PowerShell closing the GUI-subsystem self-test stdout pipe prematurely.
+
 ## 2026-09-10 rc.3 field image-quality, preview and workspace repair
 
 - Exact-file picker/drop now enters the same transactional Native Library import path as folder

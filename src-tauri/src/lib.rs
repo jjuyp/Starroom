@@ -19,7 +19,7 @@ use starroom_export::{
 };
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
-use starroom_heal::HealingOperation;
+use starroom_heal::{HealMode, HealingOperation, SourceMode};
 use starroom_history::{EditCommand, EditHistory, HistoryEntry, NamedSnapshot};
 use starroom_imageio::{
     DecodedSourceImage, decode_source, decode_source_preview, decode_source_region,
@@ -36,10 +36,10 @@ use starroom_look::{
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters,
-    RenderSettings, SkinRetouchSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample,
-    WhiteBalanceSettings, prepare_source_for_ai_denoise, render_source_export_to_srgb8,
-    render_source_preview_to_srgb8, render_source_preview_with_gpu_to_srgb8,
-    resolve_source_lens_profile, sample_source_color_band,
+    RenderSettings, SkinRetouchSettings, SourceRegion, ToneCurveSet, WhiteBalanceMode,
+    WhiteBalanceSample, WhiteBalanceSettings, prepare_source_for_ai_denoise,
+    render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
 };
 use starroom_portrait::{
     AiMaskError, AiMaskModelRegistry, AiMaskOnnxProvider, AiMaskProvider, AiMaskSemantic,
@@ -49,10 +49,13 @@ use starroom_portrait::{
 use starroom_project::{GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion};
 use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match_reference};
 use starroom_render::{
-    RenderGraph, StageId, StageStateIdentity,
+    GpuStageCacheKeys, PixelRect, RenderGraph, StageId, StageStateIdentity,
     gpu::{GpuBackendKind, GpuRenderer, GpuStatus, probe_gpu_status},
     profiling::{self, ProfileStage, RenderProfile},
-    scheduler::{Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport},
+    scheduler::{
+        Completion, DEFAULT_TILE_EDGE, RenderScheduler, SchedulerStatus, Viewport,
+        healing_dirty_bounds,
+    },
 };
 use starroom_session::{SessionOpen, SessionState};
 use std::path::{Path, PathBuf};
@@ -1243,12 +1246,14 @@ fn viewport_graph_is_tile_safe(settings: &RenderSettings) -> bool {
         )
         && !settings.optics.parameters.enabled
         && settings.geometry == GeometryParameters::default()
-        && settings.layers.is_empty()
-        && settings.portrait_masks.is_empty()
-        && settings.generated_masks.is_empty()
         && settings.skin_retouch.parameters == Default::default()
         && settings.skin_retouch.faces.is_empty()
-        && settings.healing_operations.is_empty()
+        && settings.healing_operations.iter().all(|operation| {
+            !operation.enabled
+                || (operation.mode != HealMode::AiInpaint
+                    && operation.source_mode == SourceMode::Manual
+                    && operation.source.is_some())
+        })
         && settings.grain.amount == 0.0
         && settings.vignette.amount == 0.0
 }
@@ -1776,6 +1781,34 @@ fn expand_viewport(
         y,
         width: right - x,
         height: bottom - y,
+    }
+}
+
+fn union_viewport_with_rect(
+    viewport: PreviewViewportRequest,
+    rect: PixelRect,
+) -> PreviewViewportRequest {
+    if rect.width == 0 || rect.height == 0 {
+        return viewport;
+    }
+    let x = viewport.x.min(rect.x);
+    let y = viewport.y.min(rect.y);
+    let right = viewport
+        .x
+        .saturating_add(viewport.width)
+        .max(rect.x.saturating_add(rect.width))
+        .min(viewport.source_width);
+    let bottom = viewport
+        .y
+        .saturating_add(viewport.height)
+        .max(rect.y.saturating_add(rect.height))
+        .min(viewport.source_height);
+    PreviewViewportRequest {
+        x,
+        y,
+        width: right.saturating_sub(x),
+        height: bottom.saturating_sub(y),
+        ..viewport
     }
 }
 
@@ -2871,7 +2904,7 @@ async fn native_preview(
 fn preview_stage_identity(
     source_identity: &str,
     settings: &RenderSettings,
-) -> Result<String, String> {
+) -> Result<GpuStageCacheKeys, String> {
     fn encoded<T: Serialize>(value: &T) -> Result<String, String> {
         serde_json::to_string(value).map_err(|error| format!("PreviewCacheIdentityFailed: {error}"))
     }
@@ -2954,10 +2987,8 @@ fn preview_stage_identity(
     );
     let identity = StageStateIdentity::build(&RenderGraph::default(), source_identity, &parameters)
         .map_err(|error| format!("PreviewCacheIdentityFailed: {error:?}"))?;
-    identity
-        .key(StageId::DisplayTransform)
-        .map(str::to_owned)
-        .ok_or_else(|| "PreviewCacheIdentityFailed: display stage is missing".into())
+    GpuStageCacheKeys::from_stage_identity(&identity)
+        .ok_or_else(|| "PreviewCacheIdentityFailed: required GPU boundary is missing".into())
 }
 
 fn native_preview_inner(
@@ -2972,7 +3003,9 @@ fn native_preview_inner(
     let mut settings = request.settings.validated()?;
     attach_portrait_masks(&mut settings, portrait_runtime)?;
     attach_generated_masks(&mut settings, ai_mask_runtime)?;
-    let graph_identity = preview_stage_identity(&source_identity, &settings)?;
+    let gpu_cache_keys = preview_stage_identity(&source_identity, &settings)?;
+    let graph_identity = gpu_cache_keys.display.clone();
+    settings.gpu_cache_keys = Some(gpu_cache_keys);
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let high_resolution = wants_high_resolution(request.resolution_mode, request.interaction_phase);
     let level = starroom_render::scheduler::PreviewLevel::for_requested_edge(requested_edge);
@@ -2991,12 +3024,29 @@ fn native_preview_inner(
         None
     };
     let region = if let Some(viewport) = declared_tile {
-        let expanded = expand_viewport(
+        let mut expanded = expand_viewport(
             viewport,
             viewport.source_width,
             viewport.source_height,
             RenderGraph::default().maximum_halo(),
         );
+        for operation in settings
+            .healing_operations
+            .iter()
+            .filter(|operation| operation.enabled)
+        {
+            let bounds = healing_dirty_bounds(
+                operation.source.map(|point| (point.x, point.y)),
+                (operation.target.x, operation.target.y),
+                operation.radius,
+                operation.feather,
+                operation.scale,
+                viewport.source_width,
+                viewport.source_height,
+                RenderGraph::default().maximum_halo(),
+            );
+            expanded = union_viewport_with_rect(expanded, bounds);
+        }
         let (source_width, source_height, image) = if is_raw_source(&request.source_path) {
             let full = if let Some(image) =
                 cached_decoded_source(scheduler, &source_identity, u32::MAX)?
@@ -3099,7 +3149,10 @@ fn native_preview_inner(
     let tile_optimized = tile_requested && region.is_some();
     let halo = RenderGraph::default().maximum_halo();
     let expanded = if tile_optimized {
-        expand_viewport(viewport, source_width, source_height, halo)
+        region
+            .as_ref()
+            .map(|(_, expanded, _)| *expanded)
+            .unwrap_or_else(|| expand_viewport(viewport, source_width, source_height, halo))
     } else {
         PreviewViewportRequest {
             source_width,
@@ -3110,6 +3163,14 @@ fn native_preview_inner(
             height: source_height,
         }
     };
+    if tile_optimized {
+        settings.source_region = Some(SourceRegion {
+            full_width: source_width,
+            full_height: source_height,
+            x: expanded.x,
+            y: expanded.y,
+        });
+    }
     let render_decoded = decoded.clone();
     let viewport_cache_key = format!(
         "{source_identity}:{graph_identity}:{}:{}:{}:{}:{tile_optimized}",
@@ -3124,8 +3185,10 @@ fn native_preview_inner(
             let entry = cache.remove(index).expect("located viewport cache entry");
             let frame = entry.1.clone();
             cache.push_back(entry);
+            profiling::record_tile_cache(true);
             return Ok(Response::new(frame));
         }
+        profiling::record_tile_cache(false);
     }
     starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
     attach_ai_denoise(
@@ -3158,7 +3221,11 @@ fn native_preview_inner(
             .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
             .cached_tile(&frame_tile.identity)
     {
+        profiling::record_tile_cache(true);
         return Ok(Response::new(frame));
+    }
+    if !high_resolution {
+        profiling::record_tile_cache(false);
     }
     let (rendered, backend_flags) = if request.prefer_gpu {
         let mut gpu = scheduler
@@ -4142,9 +4209,49 @@ mod tests {
     }
 
     #[test]
-    fn viewport_optimization_rejects_global_coordinate_stages_explicitly() {
+    fn viewport_optimization_accepts_local_composites_and_rejects_global_stages() {
         let base = settings().validated().expect("settings");
         assert!(viewport_graph_is_tile_safe(&base));
+        let mut local = base.clone();
+        local.layers.push(NativeAdjustmentLayer {
+            id: "tile-local".into(),
+            name: "Tile local".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: starroom_pipeline::LayerBlendMode::Normal,
+            mask: MaskDefinition::Radial {
+                x: 0.5,
+                y: 0.5,
+                width: 0.25,
+                height: 0.25,
+                rotation: 0.0,
+                feather: 0.2,
+                invert: false,
+            }
+            .into(),
+            adjustments: starroom_pipeline::LayerAdjustments::default(),
+        });
+        assert!(viewport_graph_is_tile_safe(&local));
+        let mut manual_heal = base.clone();
+        manual_heal.healing_operations.push(HealingOperation {
+            id: "tile-heal".into(),
+            enabled: true,
+            mode: HealMode::Heal,
+            target: starroom_heal::HealPoint { x: 0.6, y: 0.6 },
+            source: Some(starroom_heal::HealPoint { x: 0.4, y: 0.4 }),
+            radius: 12.0,
+            feather: 0.5,
+            opacity: 1.0,
+            rotation_degrees: 0.0,
+            scale: 1.0,
+            tone_adaptation: true,
+            texture_adaptation: true,
+            source_mode: SourceMode::Manual,
+            metadata: BTreeMap::new(),
+        });
+        assert!(viewport_graph_is_tile_safe(&manual_heal));
+        manual_heal.healing_operations[0].source_mode = SourceMode::Auto;
+        assert!(!viewport_graph_is_tile_safe(&manual_heal));
         let mut geometry = base.clone();
         geometry.geometry.rotation_degrees = 1.0;
         assert!(!viewport_graph_is_tile_safe(&geometry));
@@ -4231,34 +4338,36 @@ mod tests {
         let render =
             |request_id: &str, interaction_phase, resolution_mode, viewport, edit_settings| {
                 let started = std::time::Instant::now();
-                native_preview_inner(
-                    &scheduler,
-                    &portrait,
-                    &masks,
-                    &denoise,
-                    NativePreviewRequest {
-                        request_id: request_id.into(),
-                        source_path: source.clone(),
-                        max_edge: 1800,
-                        prefer_gpu: false,
-                        interaction_phase,
-                        resolution_mode,
-                        viewport,
-                        settings: edit_settings,
-                    },
-                )
-                .expect("native preview");
-                started.elapsed()
+                let (result, profile) = profiling::capture(|| {
+                    native_preview_inner(
+                        &scheduler,
+                        &portrait,
+                        &masks,
+                        &denoise,
+                        NativePreviewRequest {
+                            request_id: request_id.into(),
+                            source_path: source.clone(),
+                            max_edge: 1800,
+                            prefer_gpu: true,
+                            interaction_phase,
+                            resolution_mode,
+                            viewport,
+                            settings: edit_settings,
+                        },
+                    )
+                });
+                result.expect("native preview");
+                (started.elapsed(), profile)
             };
 
-        let first = render(
+        let (first, _) = render(
             "first-fit",
             PreviewInteractionPhase::Final,
             PreviewResolutionMode::Fit,
             None,
             settings(),
         );
-        let reopen = render(
+        let (reopen, _) = render(
             "cached-reopen",
             PreviewInteractionPhase::Final,
             PreviewResolutionMode::Fit,
@@ -4278,7 +4387,7 @@ mod tests {
                     request_id: request_id.into(),
                     source_path: raw_source.clone(),
                     max_edge: 1800,
-                    prefer_gpu: false,
+                    prefer_gpu: true,
                     interaction_phase: PreviewInteractionPhase::Final,
                     resolution_mode: PreviewResolutionMode::Fit,
                     viewport: None,
@@ -4299,21 +4408,21 @@ mod tests {
         );
         let mut dragged = settings();
         dragged.exposure = 1.0;
-        let interactive = render(
+        let (interactive, interactive_profile) = render(
             "interactive-exposure",
             PreviewInteractionPhase::Interactive,
             PreviewResolutionMode::Fit,
             None,
             dragged.clone(),
         );
-        let refine = render(
+        let (refine, refine_profile) = render(
             "final-exposure",
             PreviewInteractionPhase::Final,
             PreviewResolutionMode::Fit,
             None,
             dragged.clone(),
         );
-        let tile_100 = render(
+        let (tile_100, tile_100_profile) = render(
             "tile-100",
             PreviewInteractionPhase::Final,
             PreviewResolutionMode::HighResolution,
@@ -4327,7 +4436,7 @@ mod tests {
             }),
             dragged.clone(),
         );
-        let tile_200 = render(
+        let (tile_200, tile_200_profile) = render(
             "tile-200",
             PreviewInteractionPhase::Final,
             PreviewResolutionMode::HighResolution,
@@ -4348,7 +4457,7 @@ mod tests {
             "warmed interactive response {interactive:?} must beat cold open {first:?}"
         );
         eprintln!(
-            "RC2_PREVIEW_PERF jpeg_first_fit_ms={:.3} jpeg_cached_reopen_ms={:.3} raw_first_fit_ms={:.3} raw_cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
+            "GPU_RESIDENT_PREVIEW_PERF jpeg_first_fit_ms={:.3} jpeg_cached_reopen_ms={:.3} raw_first_fit_ms={:.3} raw_cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
             first.as_secs_f64() * 1000.0,
             reopen.as_secs_f64() * 1000.0,
             raw_first.as_secs_f64() * 1000.0,
@@ -4357,6 +4466,13 @@ mod tests {
             refine.as_secs_f64() * 1000.0,
             tile_100.as_secs_f64() * 1000.0,
             tile_200.as_secs_f64() * 1000.0,
+        );
+        eprintln!(
+            "GPU_RESIDENT_STAGE_BREAKDOWN interactive={} final={} tile100={} tile200={}",
+            serde_json::to_string(&interactive_profile).unwrap(),
+            serde_json::to_string(&refine_profile).unwrap(),
+            serde_json::to_string(&tile_100_profile).unwrap(),
+            serde_json::to_string(&tile_200_profile).unwrap(),
         );
         let _ = std::fs::remove_dir_all(root);
     }

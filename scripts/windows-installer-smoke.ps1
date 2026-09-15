@@ -37,8 +37,19 @@ function Assert-Launch([string]$Executable, [string]$Label, [string]$ProfileRoot
 
 function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
   if (Test-Path -LiteralPath $TestRoot) { throw "Release self-test target is not clean: $TestRoot" }
-  $output = & $Executable '--release-self-test' $TestRoot
-  if ($LASTEXITCODE -ne 0) { throw "Packaged release self-test failed with code $LASTEXITCODE" }
+  $stdout = [IO.Path]::GetTempFileName()
+  $stderr = [IO.Path]::GetTempFileName()
+  try {
+    # The release executable uses the Windows GUI subsystem. PowerShell's call operator does not
+    # reliably wait for GUI binaries and may close their stdout pipe before the self-test writes
+    # JSON. Start-Process provides an explicit waitable process and durable capture files.
+    $process = Start-Process -FilePath $Executable -ArgumentList @('--release-self-test', ('"{0}"' -f $TestRoot)) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
+    $output = Get-Content -LiteralPath $stdout -Raw
+    $diagnostic = Get-Content -LiteralPath $stderr -Raw
+    if ($process.ExitCode -ne 0) { throw "Packaged release self-test failed with code $($process.ExitCode): $diagnostic" }
+  } finally {
+    Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+  }
   $report = $output | ConvertFrom-Json
   if ($report.library -ne 'ok' -or $report.history -ne 'ok' -or $report.session -ne 'ok' -or
       $report.nativeExport -ne 'ok' -or -not $report.deterministicExport -or -not $report.sourceImmutable) {
@@ -60,8 +71,16 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
 }
 
 function Assert-ReleaseAiSelfTest([string]$Executable) {
-  $output = & $Executable '--release-ai-self-test'
-  if ($LASTEXITCODE -ne 0) { throw "Packaged release AI self-test failed with code $LASTEXITCODE" }
+  $stdout = [IO.Path]::GetTempFileName()
+  $stderr = [IO.Path]::GetTempFileName()
+  try {
+    $process = Start-Process -FilePath $Executable -ArgumentList '--release-ai-self-test' -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
+    $output = Get-Content -LiteralPath $stdout -Raw
+    $diagnostic = Get-Content -LiteralPath $stderr -Raw
+    if ($process.ExitCode -ne 0) { throw "Packaged release AI self-test failed with code $($process.ExitCode): $diagnostic" }
+  } finally {
+    Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
+  }
   $report = $output | ConvertFrom-Json
   if ($report.schemaVersion -ne 1 -or $report.subjectBackground -ne 'ok' -or
       $report.modelHash -ne '5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333' -or

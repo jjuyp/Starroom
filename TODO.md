@@ -1,5 +1,22 @@
 # Complete Internal Build Plan
 
+## RC3 GPU-resident preview completion (2026-09-15)
+
+- [x] Keep one process-wide wgpu Device/Queue, compiled pipeline set, parameter/LUT buffers and
+  size-stable source/working/output/readback/mask resources across slider frames.
+- [x] Execute relative WB, Exposure/Tone, four curves, OKLCh Color Mixer, four-way Grading and
+  Vignette in one production GPU compute pass with one final readback and CPU-reference parity.
+- [x] Project the existing `StageStateIdentity` boundaries into GPU source/working cache keys;
+  source edits and display-only changes no longer share one whole-settings invalidation key.
+- [x] Route high-resolution local masks and explicit-source manual Heal through source-region
+  rendering with conservative halo/source/target bounds; auto-source Heal retains the explicit
+  full-frame compatibility path for correctness.
+- [x] Extend production profiling with GPU transfer/creative/cache and tile-cache counters, and
+  record the same-fixture before/after/stage breakdown without lowering the 1024-edge contract.
+- [ ] Continue post-hotfix optimization of the measured CameraTransform, output ICC transform and
+  JPEG presentation costs; the GPU creative migration is correct but this machine measured
+  106.170 ms interactive and 416.602 ms final refinement, above the aspirational targets.
+
 ## RC3 field-quality and responsiveness hotfix (2026-09-11, release-qualified)
 
 - [x] Reproduce the installed close failure: `plugin:window|destroy not allowed by ACL`.

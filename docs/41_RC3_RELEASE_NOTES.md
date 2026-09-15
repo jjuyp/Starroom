@@ -17,19 +17,25 @@ prerelease; Preview and Export still share the same Native graph.
   slider latency while retaining final-quality and 1:1 source detail.
 - The preview no longer changes layout size as interactive/final rasters arrive.
 - The dark workspace now uses the requested blue frosted-glass hierarchy and visual Color controls.
+- Native preview now reuses persistent GPU resources and executes WB/Tone/four curves/Color Mixer/
+  Grading/Vignette as one production compute pass. High-resolution local masks and explicit-source
+  manual Heal render only the required source region plus conservative halo; correctness-sensitive
+  auto-source Heal remains an explicit full-frame path.
 
 ## Local release qualification
 
-- Warning-denied full workspace, 55 frontend tests, 11/11 Golden cases and all six public RAW
+- Warning-denied full workspace, 59 frontend tests, 11/11 Golden cases and all six public RAW
   fixtures pass on Windows MSVC.
-- Release interaction: 1024-edge adjustment preview 94.516 ms; cached reopen 0.253-0.282 ms;
-  final refinement 367.345 ms.
-- The real-pixel 24/45/60/100 MP gate passes. At 100 MP the Fit preview is 4.352 s, a requested
-  viewport tile is 392.62 ms and full export is 67.334 s; no proxy is presented as 1:1 detail.
+- GPU-resident release interaction: 1024-edge adjustment preview 106.170 ms; cached reopen 0.249
+  ms; final refinement 416.602 ms. This machine does not meet the aspirational 50/200 ms targets;
+  the stage report identifies CameraTransform, LittleCMS output and JPEG encode as remaining CPU
+  costs, and no resolution/ICC/creative stage was skipped to manufacture a passing number.
+- The real-pixel 24/45/60/100 MP gate passes. At 100 MP the Fit preview is 2.731 s, a requested
+  viewport tile is 346.77 ms and full export is 60.964 s; no proxy is presented as 1:1 detail.
 - The NSIS clean-install gate passes launch, deterministic export/reopen self-test, bundled offline
   Subject/Background inference, legal-resource hashes and silent uninstall.
-- Local candidate hashes: executable `4d1ef32bd8533860d7e89fdd845d4168d7517bbb9489b4b9a6b89fe0515b4775`;
-  installer `f41f4e0a2ecbc8b4f0f40ea0f15197fc1eee6a395ed74936fde09c072fa869a0`.
+- Local candidate hashes: executable `b78c53d1571945ed3b381ea537a9981a9dc8746813dc57318889266b5de78dcb`;
+  installer `f6366f055ac6b09224aad122d8559525230f2aa175685cae01e77870964409ef`.
 
 Publication still requires the same committed SHA to pass GitHub Blueprint and Release Candidate
 workflows; these local results are not substituted for CI.

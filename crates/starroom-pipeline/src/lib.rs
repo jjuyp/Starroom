@@ -24,7 +24,7 @@ use starroom_geometry::{
     GeometryParameters, UprightMode, analyze_upright, apply_geometry, apply_upright,
 };
 use starroom_grading::{GradingParameters, apply_grading};
-use starroom_heal::{HealingOperation, apply_operation};
+use starroom_heal::{HealPoint, HealingOperation, apply_operation};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
 use starroom_look::{GrainSettings, LookError, VignetteSettings, apply_finishing_effects};
 use starroom_optics::{
@@ -36,8 +36,11 @@ use starroom_project::{
     GeneratedMaskSemantic, MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion,
 };
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
-use starroom_render::gpu::{GpuError, GpuRenderer};
 use starroom_render::profiling::{self, ProfileStage};
+use starroom_render::{
+    GpuStageCacheKeys,
+    gpu::{GpuCreativeParameters, GpuError, GpuRenderer},
+};
 use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
@@ -299,6 +302,20 @@ pub struct RenderSettings {
     /// Native source identity makes grain stable across preview/export without exposing pixels.
     #[serde(skip)]
     pub image_identity: String,
+    /// Runtime-only mapping for source-resolution viewport tiles. Local masks continue to use
+    /// full-image normalized coordinates while only the visible tile is evaluated.
+    #[serde(skip)]
+    pub source_region: Option<SourceRegion>,
+    #[serde(skip)]
+    pub gpu_cache_keys: Option<GpuStageCacheKeys>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceRegion {
+    pub full_width: u32,
+    pub full_height: u32,
+    pub x: u32,
+    pub y: u32,
 }
 
 impl Default for RenderSettings {
@@ -330,6 +347,8 @@ impl Default for RenderSettings {
             grain: GrainSettings::default(),
             vignette: VignetteSettings::default(),
             image_identity: String::new(),
+            source_region: None,
+            gpu_cache_keys: None,
         }
     }
 }
@@ -1090,7 +1109,22 @@ fn apply_healing_stage(
         LinearImage::new(width, height, data).map_err(|_| PipelineError::DetailBuffer)?;
     for operation in &settings.healing_operations {
         checkpoint()?;
-        image = apply_operation(&image, operation).map_err(|error| {
+        let operation = settings.source_region.map_or_else(
+            || operation.clone(),
+            |region| {
+                let map_point = |point: HealPoint| HealPoint {
+                    x: (point.x * region.full_width.saturating_sub(1) as f32 - region.x as f32)
+                        / width.saturating_sub(1).max(1) as f32,
+                    y: (point.y * region.full_height.saturating_sub(1) as f32 - region.y as f32)
+                        / height.saturating_sub(1).max(1) as f32,
+                };
+                let mut local = operation.clone();
+                local.target = map_point(local.target);
+                local.source = local.source.map(map_point);
+                local
+            },
+        );
+        image = apply_operation(&image, &operation).map_err(|error| {
             PipelineError::InvalidMask(match error {
                 starroom_heal::HealError::InvalidOperation => "M18 healing operation is invalid",
                 starroom_heal::HealError::MissingManualSource => "M18 manual source is missing",
@@ -1103,6 +1137,112 @@ fn apply_healing_stage(
     Ok(image.data)
 }
 
+fn gpu_curve_luts(settings: &RenderSettings) -> [f32; 8192] {
+    let master = PreparedCurve::new(if settings.curves.master.len() >= 2 {
+        &settings.curves.master
+    } else {
+        &settings.curve
+    });
+    let curves = [
+        master,
+        PreparedCurve::new(&settings.curves.red),
+        PreparedCurve::new(&settings.curves.green),
+        PreparedCurve::new(&settings.curves.blue),
+    ];
+    let mut lut = [0.0; 8192];
+    for (channel, curve) in curves.iter().enumerate() {
+        for sample in 0..1024 {
+            let value = sample as f32 / 1023.0;
+            lut[channel * 1024 + sample] = curve.map(value);
+        }
+    }
+    lut[4096] = apply_tone(
+        LinearRgb {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        },
+        settings.tone,
+    )
+    .r;
+    for sample in 1..4096 {
+        let exponent = -24.0 + 40.0 * (sample - 1) as f32 / 4094.0;
+        let value = 2.0_f32.powf(exponent);
+        lut[4096 + sample] = apply_tone(
+            LinearRgb {
+                r: value,
+                g: value,
+                b: value,
+            },
+            settings.tone,
+        )
+        .r;
+    }
+    lut
+}
+
+fn gpu_creative_parameters(
+    settings: &RenderSettings,
+    pixel_count: usize,
+    width: usize,
+    height: usize,
+) -> GpuCreativeParameters {
+    let mut values = [[0.0; 4]; 20];
+    values[0] = [
+        settings.tone.exposure_ev,
+        settings.tone.contrast,
+        settings.tone.highlights,
+        settings.tone.shadows,
+    ];
+    values[1] = [
+        settings.tone.whites,
+        settings.tone.blacks,
+        settings.relative_color.temperature,
+        settings.relative_color.tint,
+    ];
+    values[2] = [
+        settings.relative_color.vibrance,
+        settings.relative_color.saturation,
+        settings.vignette.amount,
+        settings.vignette.midpoint,
+    ];
+    values[3] = [
+        settings.vignette.roundness,
+        settings.vignette.feather,
+        settings.vignette.highlight_protect,
+        0.0,
+    ];
+    values[4][0] = settings.color_mixer.band_width_degrees;
+    for (index, band) in settings.color_mixer.bands.iter().enumerate() {
+        values[5 + index] = [band.hue_degrees, band.chroma, band.lightness, 0.0];
+    }
+    for (index, wheel) in [
+        settings.grading.shadows,
+        settings.grading.midtones,
+        settings.grading.highlights,
+        settings.grading.global,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        values[13 + index] = [wheel.hue_degrees, wheel.chroma, wheel.lightness, 0.0];
+    }
+    values[17] = [
+        settings.grading.balance,
+        settings.grading.blending,
+        settings.grading.amount,
+        0.0,
+    ];
+    values[18] = [pixel_count as f32, width as f32, height as f32, 0.0];
+    values[19] = [
+        (!settings.curve.is_empty() || settings.curves != ToneCurveSet::default()) as u8 as f32,
+        (settings.color_mixer != ColorMixer::default()) as u8 as f32,
+        (settings.grading != GradingParameters::default()) as u8 as f32,
+        (settings.vignette.amount.abs() > f32::EPSILON) as u8 as f32,
+    ];
+    GpuCreativeParameters { values }
+}
+
 fn apply_creative_graph(
     pixels: Vec<[f32; 3]>,
     width: usize,
@@ -1110,14 +1250,13 @@ fn apply_creative_graph(
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
 ) -> Result<Vec<f32>, PipelineError> {
-    // The GPU accelerates the existing scene-linear Exposure node only. Subsequent stages keep
-    // the established CPU reference math until each earns its own parity gate; this avoids a
-    // second color-science implementation.
+    // Encoded relative-WB is prepared by the CPU color oracle. The complete global creative
+    // chain after that boundary is fused on GPU; local layers remain a separate cached composite.
     let pixel_count = pixels.len();
     checkpoint()?;
     let working_bytes = (pixel_count as u64).saturating_mul(3 * F32_BYTES);
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
-        if settings.relative_color == RelativeColorParameters::default() {
+        if gpu.is_some() || settings.relative_color == RelativeColorParameters::default() {
             pixels
                 .into_par_iter()
                 .map(|pixel| LinearRgb {
@@ -1142,19 +1281,27 @@ fn apply_creative_graph(
                 .collect::<Vec<_>>()
         }
     });
-    let (prepared, tone_parameters) = if let Some(renderer) = gpu {
+    let (prepared, tone_parameters, gpu_creative) = if let Some(renderer) = gpu {
         let input: Vec<[f32; 4]> = prepared
             .iter()
             .map(|rgb| [rgb.r, rgb.g, rgb.b, 1.0])
             .collect();
         let started = Instant::now();
+        let parameters = gpu_creative_parameters(settings, pixel_count, width, height);
+        let luts = gpu_curve_luts(settings);
         let exposed = profiling::measure(ProfileStage::Tone, working_bytes, || {
-            renderer.apply_exposure(&input, settings.tone.exposure_ev)
+            renderer.apply_creative(
+                &input,
+                &parameters,
+                &luts,
+                settings
+                    .gpu_cache_keys
+                    .as_ref()
+                    .map(|keys| keys.global_creative.as_str()),
+            )
         })?;
         let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         profiling::record_gpu(ProfileStage::Tone, elapsed);
-        let mut remainder = settings.tone;
-        remainder.exposure_ev = 0.0;
         (
             exposed
                 .into_iter()
@@ -1164,10 +1311,11 @@ fn apply_creative_graph(
                     b: pixel[2],
                 })
                 .collect::<Vec<_>>(),
-            remainder,
+            ToneParameters::default(),
+            true,
         )
     } else {
-        (prepared, settings.tone)
+        (prepared, settings.tone, false)
     };
     let mut prepared = prepared;
     checkpoint()?;
@@ -1180,7 +1328,9 @@ fn apply_creative_graph(
     });
     checkpoint()?;
     profiling::measure(ProfileStage::Curve, working_bytes, || {
-        if !settings.curve.is_empty() || settings.curves != ToneCurveSet::default() {
+        if !gpu_creative
+            && (!settings.curve.is_empty() || settings.curves != ToneCurveSet::default())
+        {
             let master = starroom_color::PreparedCurve::new(if settings.curves.master.len() >= 2 {
                 &settings.curves.master
             } else {
@@ -1198,7 +1348,7 @@ fn apply_creative_graph(
     });
     checkpoint()?;
     profiling::measure(ProfileStage::ColorMixer, working_bytes, || {
-        if settings.color_mixer != ColorMixer::default() {
+        if !gpu_creative && settings.color_mixer != ColorMixer::default() {
             prepared
                 .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_color_mixer(*rgb, settings.color_mixer));
@@ -1206,7 +1356,7 @@ fn apply_creative_graph(
     });
     checkpoint()?;
     profiling::measure(ProfileStage::ColorGrading, working_bytes, || {
-        if settings.grading != GradingParameters::default() {
+        if !gpu_creative && settings.grading != GradingParameters::default() {
             prepared
                 .par_iter_mut()
                 .for_each(|rgb| *rgb = apply_grading(*rgb, settings.grading));
@@ -1224,8 +1374,22 @@ fn apply_creative_graph(
                 if index % 4096 == 0 {
                     checkpoint()?;
                 }
-                let x = (index % width) as f32 / width.max(1) as f32;
-                let y = (index / width) as f32 / height.max(1) as f32;
+                let local_x = index % width;
+                let local_y = index / width;
+                let (x, y) = settings.source_region.map_or_else(
+                    || {
+                        (
+                            local_x as f32 / width.max(1) as f32,
+                            local_y as f32 / height.max(1) as f32,
+                        )
+                    },
+                    |region| {
+                        (
+                            (region.x as usize + local_x) as f32 / region.full_width.max(1) as f32,
+                            (region.y as usize + local_y) as f32 / region.full_height.max(1) as f32,
+                        )
+                    },
+                );
                 *rgb = apply_prepared_layers(
                     *rgb,
                     &layers,
@@ -1503,7 +1667,16 @@ fn render_prepared_working_graph(
     .map_err(|_| PipelineError::DetailBuffer)?;
     checkpoint()?;
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
-        apply_detail_stage(creative, settings)
+        if gpu.is_some() && settings.vignette.amount.abs() > f32::EPSILON {
+            // Vignette is part of the fused GPU creative pass. Keep grain and every other
+            // spatial/detail operation on the shared CPU reference path without applying the
+            // finishing vignette a second time.
+            let mut detail_settings = settings.clone();
+            detail_settings.vignette = VignetteSettings::default();
+            apply_detail_stage(creative, &detail_settings)
+        } else {
+            apply_detail_stage(creative, settings)
+        }
     })?;
     let mut pixels = detailed
         .data
@@ -1902,6 +2075,114 @@ mod tests {
     }
 
     #[test]
+    fn source_region_keeps_local_mask_coordinates_and_renders_only_requested_tile() {
+        let layer = NativeAdjustmentLayer {
+            id: "dirty-radial".into(),
+            name: "Dirty radial".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::Radial {
+                x: 0.5,
+                y: 0.5,
+                width: 0.45,
+                height: 0.45,
+                rotation: 0.0,
+                feather: 0.2,
+                invert: false,
+            }
+            .into(),
+            adjustments: LayerAdjustments {
+                tone: ToneParameters {
+                    exposure_ev: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        let mut full_settings = RenderSettings {
+            layers: vec![layer.clone()],
+            ..Default::default()
+        };
+        let source = vec![[0.18, 0.16, 0.14]; 16];
+        let full = apply_creative_graph(source.clone(), 4, 4, &full_settings, None).unwrap();
+        full_settings.source_region = Some(SourceRegion {
+            full_width: 4,
+            full_height: 4,
+            x: 1,
+            y: 1,
+        });
+        let crop = vec![source[5], source[6], source[9], source[10]];
+        let tile = apply_creative_graph(crop, 2, 2, &full_settings, None).unwrap();
+        let expected = [5usize, 6, 9, 10]
+            .into_iter()
+            .flat_map(|index| full[index * 3..index * 3 + 3].iter().copied())
+            .collect::<Vec<_>>();
+        assert_eq!(tile, expected);
+    }
+
+    #[test]
+    fn source_region_maps_manual_healing_coordinates_without_full_frame_work() {
+        let width = 12usize;
+        let height = 5usize;
+        let data = (0..width * height)
+            .flat_map(|index| {
+                let value = index as f32 / (width * height) as f32;
+                [value, value * 0.8, value * 0.6]
+            })
+            .collect::<Vec<_>>();
+        let operation = HealingOperation {
+            id: "tile-clone".into(),
+            enabled: true,
+            mode: starroom_heal::HealMode::Clone,
+            target: HealPoint { x: 0.72, y: 0.5 },
+            source: Some(HealPoint { x: 0.28, y: 0.5 }),
+            radius: 1.0,
+            feather: 0.0,
+            opacity: 1.0,
+            rotation_degrees: 0.0,
+            scale: 1.0,
+            tone_adaptation: false,
+            texture_adaptation: false,
+            source_mode: starroom_heal::SourceMode::Manual,
+            metadata: Default::default(),
+        };
+        let settings = RenderSettings {
+            healing_operations: vec![operation],
+            ..Default::default()
+        };
+        let full = apply_healing_stage(data.clone(), width, height, &settings).unwrap();
+        let crop_x = 1usize;
+        let crop_width = 10usize;
+        let crop = (0..height)
+            .flat_map(|y| {
+                let start = (y * width + crop_x) * 3;
+                data[start..start + crop_width * 3].iter().copied()
+            })
+            .collect::<Vec<_>>();
+        let tile_settings = RenderSettings {
+            source_region: Some(SourceRegion {
+                full_width: width as u32,
+                full_height: height as u32,
+                x: crop_x as u32,
+                y: 0,
+            }),
+            ..settings
+        };
+        let tile = apply_healing_stage(crop, crop_width, height, &tile_settings).unwrap();
+        for y in 0..height {
+            for x in 0..crop_width {
+                let full_index = (y * width + x + crop_x) * 3;
+                let tile_index = (y * crop_width + x) * 3;
+                assert_eq!(
+                    &tile[tile_index..tile_index + 3],
+                    &full[full_index..full_index + 3]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn m14_layer_rejects_invalid_opacity_and_non_finite_controls() {
         let mut invalid = NativeAdjustmentLayer {
             id: "bad".into(),
@@ -2234,6 +2515,135 @@ mod tests {
                 // Adapter-unavailable test hosts are a supported, explicit CPU fallback state.
                 assert!(!error.to_string().is_empty());
             }
+        }
+    }
+
+    #[test]
+    fn fused_gpu_creative_stages_match_cpu_oracle_before_spatial_processing() {
+        let pixels = [
+            LinearRgb {
+                r: 0.02,
+                g: 0.01,
+                b: 0.005,
+            },
+            LinearRgb {
+                r: 0.68,
+                g: 0.32,
+                b: 0.21,
+            },
+            LinearRgb {
+                r: 3.5,
+                g: 0.08,
+                b: 1.7,
+            },
+        ];
+        let settings = RenderSettings {
+            tone: ToneParameters {
+                exposure_ev: -0.65,
+                contrast: 0.25,
+                highlights: -0.3,
+                shadows: 0.2,
+                whites: 0.1,
+                blacks: -0.1,
+            },
+            curves: ToneCurveSet {
+                master: vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint { x: 0.5, y: 0.54 },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ],
+                red: vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint { x: 1.0, y: 0.95 },
+                ],
+                ..Default::default()
+            },
+            color_mixer: ColorMixer::default().with_band(
+                ColorBand::Orange,
+                BandAdjustment {
+                    hue_degrees: 4.0,
+                    chroma: 0.08,
+                    lightness: 0.03,
+                },
+            ),
+            grading: GradingParameters {
+                midtones: ColorWheel {
+                    hue_degrees: 32.0,
+                    chroma: 0.12,
+                    lightness: 0.02,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let input: Vec<[f32; 4]> = pixels.iter().map(|v| [v.r, v.g, v.b, 1.0]).collect();
+        let expected: Vec<LinearRgb> = pixels
+            .into_iter()
+            .map(|v| {
+                let v = apply_tone(v, settings.tone);
+                let v = apply_curve(v, &settings.curve, &settings.curves);
+                apply_grading(apply_color_mixer(v, settings.color_mixer), settings.grading)
+            })
+            .collect();
+        if let Ok(gpu) = GpuRenderer::try_new() {
+            let actual = gpu
+                .apply_creative(
+                    &input,
+                    &gpu_creative_parameters(&settings, input.len(), input.len(), 1),
+                    &gpu_curve_luts(&settings),
+                    None,
+                )
+                .expect("creative GPU");
+            for (index, (cpu, gpu)) in expected.iter().zip(actual).enumerate() {
+                let delta = (cpu.r - gpu[0])
+                    .abs()
+                    .max((cpu.g - gpu[1]).abs())
+                    .max((cpu.b - gpu[2]).abs());
+                assert!(
+                    delta <= 0.003,
+                    "pixel {index} delta {delta}: cpu={cpu:?} gpu={gpu:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fused_gpu_vignette_matches_shared_cpu_finishing_reference() {
+        let mut source = Vec::new();
+        for y in 0..7 {
+            for x in 0..11 {
+                source.push([
+                    0.08 + x as f32 * 0.035,
+                    0.12 + y as f32 * 0.045,
+                    0.22 + (x + y) as f32 * 0.015,
+                    1.0,
+                ]);
+            }
+        }
+        let decoded = DecodedSourceImage::Rendered(fixture(&source));
+        let settings = RenderSettings {
+            vignette: VignetteSettings {
+                amount: 0.72,
+                midpoint: 0.38,
+                roundness: -0.35,
+                feather: 0.47,
+                highlight_protect: 0.64,
+            },
+            ..Default::default()
+        };
+        let cpu = render_source_preview_to_srgb8(&decoded, &settings).expect("CPU vignette");
+        if let Ok(gpu) = GpuRenderer::try_new() {
+            let accelerated = render_source_preview_with_gpu_to_srgb8(&decoded, &settings, &gpu)
+                .expect("GPU vignette");
+            assert!(
+                accelerated
+                    .data
+                    .iter()
+                    .zip(&cpu.data)
+                    .all(
+                        |(actual, expected)| i16::from(*actual).abs_diff(i16::from(*expected)) <= 1
+                    )
+            );
         }
     }
 
@@ -3099,12 +3509,20 @@ mod tests {
                 let hybrid = render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
                     .expect("hybrid GPU graph");
                 assert_eq!((hybrid.width, hybrid.height), (cpu.width, cpu.height));
+                let maximum_delta = hybrid
+                    .data
+                    .iter()
+                    .zip(&cpu.data)
+                    .map(|(gpu, cpu)| i16::from(*gpu).abs_diff(i16::from(*cpu)))
+                    .max()
+                    .unwrap_or(0);
                 assert!(
                     hybrid
                         .data
                         .iter()
                         .zip(cpu.data)
-                        .all(|(gpu, cpu)| { i16::from(*gpu).abs_diff(i16::from(cpu)) <= 1 })
+                        .all(|(gpu, cpu)| { i16::from(*gpu).abs_diff(i16::from(cpu)) <= 1 }),
+                    "maximum CPU/GPU byte delta was {maximum_delta}"
                 );
             }
             Err(error) => assert!(!error.to_string().is_empty()),

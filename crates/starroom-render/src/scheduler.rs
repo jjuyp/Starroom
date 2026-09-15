@@ -66,6 +66,143 @@ pub struct Viewport {
     pub rect: PixelRect,
 }
 
+fn clipped_bounds(
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+    width: u32,
+    height: u32,
+) -> PixelRect {
+    let x = left.floor().max(0.0).min(width as f32) as u32;
+    let y = top.floor().max(0.0).min(height as f32) as u32;
+    let right = right.ceil().max(x as f32).min(width as f32) as u32;
+    let bottom = bottom.ceil().max(y as f32).min(height as f32) as u32;
+    PixelRect {
+        x,
+        y,
+        width: right.saturating_sub(x),
+        height: bottom.saturating_sub(y),
+    }
+}
+
+/// Full-image pixel bounds for a normalized brush segment, including feather and filter halo.
+pub fn brush_dirty_bounds(
+    points: &[(f32, f32)],
+    radius_fraction: f32,
+    feather: f32,
+    width: u32,
+    height: u32,
+    halo: u32,
+) -> PixelRect {
+    if points.is_empty() || width == 0 || height == 0 {
+        return PixelRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        };
+    }
+    let min_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let radius = radius_fraction.max(0.0) * width.max(height) as f32;
+    let padding = radius * (1.0 + feather.clamp(0.0, 1.0)) + halo as f32;
+    clipped_bounds(
+        min_x * width as f32 - padding,
+        min_y * height as f32 - padding,
+        max_x * width as f32 + padding,
+        max_y * height as f32 + padding,
+        width,
+        height,
+    )
+}
+
+/// Conservative rotated-ellipse bounds. It is intentionally conservative so feather pixels are
+/// never omitted from local-composite invalidation.
+#[allow(clippy::too_many_arguments)]
+pub fn radial_dirty_bounds(
+    center_x: f32,
+    center_y: f32,
+    radius_x: f32,
+    radius_y: f32,
+    rotation_degrees: f32,
+    feather: f32,
+    width: u32,
+    height: u32,
+    halo: u32,
+) -> PixelRect {
+    let angle = rotation_degrees.to_radians();
+    let rx = radius_x.abs() * width as f32 * (1.0 + feather.clamp(0.0, 1.0));
+    let ry = radius_y.abs() * height as f32 * (1.0 + feather.clamp(0.0, 1.0));
+    let extent_x = ((rx * angle.cos()).powi(2) + (ry * angle.sin()).powi(2)).sqrt();
+    let extent_y = ((rx * angle.sin()).powi(2) + (ry * angle.cos()).powi(2)).sqrt();
+    clipped_bounds(
+        center_x * width as f32 - extent_x - halo as f32,
+        center_y * height as f32 - extent_y - halo as f32,
+        center_x * width as f32 + extent_x + halo as f32,
+        center_y * height as f32 + extent_y + halo as f32,
+        width,
+        height,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn healing_dirty_bounds(
+    source: Option<(f32, f32)>,
+    target: (f32, f32),
+    radius_pixels: f32,
+    feather: f32,
+    scale: f32,
+    width: u32,
+    height: u32,
+    halo: u32,
+) -> PixelRect {
+    let mut points = vec![target];
+    if let Some(source) = source {
+        points.push(source);
+    }
+    let padding =
+        radius_pixels.max(0.0) * scale.max(1.0) * (1.0 + feather.clamp(0.0, 1.0)) + halo as f32;
+    let min_x = points
+        .iter()
+        .map(|point| point.0 * width as f32)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.0 * width as f32)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point.1 * height as f32)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.1 * height as f32)
+        .fold(f32::NEG_INFINITY, f32::max);
+    clipped_bounds(
+        min_x - padding,
+        min_y - padding,
+        max_x + padding,
+        max_y + padding,
+        width,
+        height,
+    )
+}
+
 impl Viewport {
     pub const fn full(width: u32, height: u32) -> Self {
         Self {
@@ -741,6 +878,87 @@ mod tests {
         let status = scheduler.status();
         assert_eq!(status.cache_misses, 1);
         assert_eq!(status.cache_hits, 1);
+    }
+
+    #[test]
+    fn production_dirty_bounds_cover_brush_radial_and_healing_halo() {
+        let brush = brush_dirty_bounds(&[(0.48, 0.5), (0.52, 0.5)], 0.02, 0.5, 4000, 3000, 32);
+        assert!(brush.x < 1920 && brush.x + brush.width > 2080);
+        assert!(brush.width < 1000 && brush.height < 1000);
+        let radial = radial_dirty_bounds(0.5, 0.5, 0.1, 0.2, 37.0, 0.25, 4000, 3000, 32);
+        assert!(radial.x < 2000 && radial.x + radial.width > 2000);
+        assert!(radial.y < 1500 && radial.y + radial.height > 1500);
+        let healing = healing_dirty_bounds(
+            Some((0.25, 0.25)),
+            (0.75, 0.75),
+            80.0,
+            0.5,
+            1.4,
+            4000,
+            3000,
+            32,
+        );
+        assert!(healing.x < 1000 && healing.x + healing.width > 3000);
+        assert!(healing.y < 750 && healing.y + healing.height > 2250);
+    }
+
+    #[test]
+    fn panning_reuses_overlapping_tile_identity_and_rejects_stale_publication() {
+        let mut scheduler = RenderScheduler::default();
+        let first = scheduler.schedule_preview(
+            "source",
+            "graph",
+            4096,
+            4096,
+            4096,
+            Viewport {
+                rect: PixelRect {
+                    x: 0,
+                    y: 0,
+                    width: 1024,
+                    height: 1024,
+                },
+            },
+            512,
+            32,
+        );
+        let overlap = first
+            .tiles
+            .iter()
+            .find(|tile| tile.tile.output.x == 512 && tile.tile.output.y == 0)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            scheduler.complete_tile(&overlap, vec![7], 16),
+            Completion::Stored
+        );
+        let second = scheduler.schedule_preview(
+            "source",
+            "graph",
+            4096,
+            4096,
+            4096,
+            Viewport {
+                rect: PixelRect {
+                    x: 512,
+                    y: 0,
+                    width: 1024,
+                    height: 1024,
+                },
+            },
+            512,
+            32,
+        );
+        let reused = second
+            .tiles
+            .iter()
+            .find(|tile| tile.tile.output == overlap.tile.output)
+            .unwrap();
+        assert_eq!(scheduler.cached_tile(&reused.identity), Some(vec![7]));
+        assert_eq!(
+            scheduler.complete_tile(&overlap, vec![9], 16),
+            Completion::Stale
+        );
     }
 
     #[test]

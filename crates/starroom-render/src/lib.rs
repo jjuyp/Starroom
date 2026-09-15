@@ -296,6 +296,31 @@ impl StageStateIdentity {
     }
 }
 
+/// GPU cache boundaries are projections of the canonical `StageStateIdentity`; there is no
+/// second settings hash that could disagree with preview/export invalidation semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuStageCacheKeys {
+    pub source_texture: String,
+    pub input_white_balance: String,
+    pub global_creative: String,
+    pub local_composite: String,
+    pub geometry: String,
+    pub display: String,
+}
+
+impl GpuStageCacheKeys {
+    pub fn from_stage_identity(identity: &StageStateIdentity) -> Option<Self> {
+        Some(Self {
+            source_texture: identity.key(StageId::Decode)?.to_owned(),
+            input_white_balance: identity.key(StageId::WhiteBalance)?.to_owned(),
+            global_creative: identity.key(StageId::ColorGrading)?.to_owned(),
+            local_composite: identity.key(StageId::Healing)?.to_owned(),
+            geometry: identity.key(StageId::Geometry)?.to_owned(),
+            display: identity.key(StageId::DisplayTransform)?.to_owned(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +424,39 @@ mod tests {
             baseline.key(StageId::DisplayTransform),
             display.key(StageId::DisplayTransform)
         );
+    }
+
+    #[test]
+    fn gpu_boundaries_project_existing_stage_identity_without_global_invalidation() {
+        let graph = RenderGraph::default();
+        let mut baseline_parameters = BTreeMap::new();
+        baseline_parameters.insert(StageId::Exposure, "0".into());
+        baseline_parameters.insert(StageId::Mask, "mask-a".into());
+        baseline_parameters.insert(StageId::DisplayTransform, "srgb".into());
+        let baseline = StageStateIdentity::build(&graph, "source-a", &baseline_parameters).unwrap();
+        let baseline = GpuStageCacheKeys::from_stage_identity(&baseline).unwrap();
+
+        let mut exposure_parameters = baseline_parameters.clone();
+        exposure_parameters.insert(StageId::Exposure, "1".into());
+        let exposure = StageStateIdentity::build(&graph, "source-a", &exposure_parameters).unwrap();
+        let exposure = GpuStageCacheKeys::from_stage_identity(&exposure).unwrap();
+        assert_eq!(baseline.source_texture, exposure.source_texture);
+        assert_eq!(baseline.input_white_balance, exposure.input_white_balance);
+        assert_ne!(baseline.global_creative, exposure.global_creative);
+
+        let mut mask_parameters = baseline_parameters.clone();
+        mask_parameters.insert(StageId::Mask, "mask-b".into());
+        let mask = StageStateIdentity::build(&graph, "source-a", &mask_parameters).unwrap();
+        let mask = GpuStageCacheKeys::from_stage_identity(&mask).unwrap();
+        assert_eq!(baseline.global_creative, mask.global_creative);
+        assert_ne!(baseline.local_composite, mask.local_composite);
+
+        let mut display_parameters = baseline_parameters;
+        display_parameters.insert(StageId::DisplayTransform, "p3".into());
+        let display = StageStateIdentity::build(&graph, "source-a", &display_parameters).unwrap();
+        let display = GpuStageCacheKeys::from_stage_identity(&display).unwrap();
+        assert_eq!(baseline.geometry, display.geometry);
+        assert_ne!(baseline.display, display.display);
     }
 
     #[test]

@@ -49,7 +49,20 @@ pub struct RenderProfile {
     pub cancel_latency_nanoseconds: Option<u64>,
     /// Interactive preview uses one upload and one final presentation readback at most.
     pub gpu_upload_nanoseconds: u64,
+    /// Time for the single final GPU-to-CPU presentation transfer.
+    pub gpu_final_readback_nanoseconds: u64,
+    /// Backward-compatible name retained for existing performance reports.
     pub gpu_readback_nanoseconds: u64,
+    pub gpu_creative_nanoseconds: u64,
+    pub gpu_mask_nanoseconds: u64,
+    pub gpu_spatial_nanoseconds: u64,
+    pub gpu_display_nanoseconds: u64,
+    pub source_texture_hits: u64,
+    pub source_texture_misses: u64,
+    pub working_texture_hits: u64,
+    pub working_texture_misses: u64,
+    pub tile_cache_hits: u64,
+    pub tile_cache_misses: u64,
     pub working_set_before_bytes: Option<u64>,
     pub working_set_after_bytes: Option<u64>,
     /// Operating-system process peak. Windows reports this for the process lifetime, so consumers
@@ -163,6 +176,78 @@ pub fn record_gpu(stage: ProfileStage, elapsed_nanoseconds: u64) {
                     .unwrap_or(0)
                     .saturating_add(elapsed_nanoseconds),
             );
+            if matches!(
+                stage,
+                ProfileStage::WhiteBalance
+                    | ProfileStage::Tone
+                    | ProfileStage::Curve
+                    | ProfileStage::ColorMixer
+                    | ProfileStage::ColorGrading
+            ) {
+                active.report.gpu_creative_nanoseconds = active
+                    .report
+                    .gpu_creative_nanoseconds
+                    .saturating_add(elapsed_nanoseconds);
+            }
+        }
+    });
+}
+
+pub fn record_gpu_cache_delta(
+    source_hits: u64,
+    source_misses: u64,
+    working_hits: u64,
+    working_misses: u64,
+) {
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            active.report.source_texture_hits = active
+                .report
+                .source_texture_hits
+                .saturating_add(source_hits);
+            active.report.source_texture_misses = active
+                .report
+                .source_texture_misses
+                .saturating_add(source_misses);
+            active.report.working_texture_hits = active
+                .report
+                .working_texture_hits
+                .saturating_add(working_hits);
+            active.report.working_texture_misses = active
+                .report
+                .working_texture_misses
+                .saturating_add(working_misses);
+        }
+    });
+}
+
+pub fn record_gpu_transfer(upload_nanoseconds: u64, readback_nanoseconds: u64) {
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            active.report.gpu_upload_nanoseconds = active
+                .report
+                .gpu_upload_nanoseconds
+                .saturating_add(upload_nanoseconds);
+            active.report.gpu_readback_nanoseconds = active
+                .report
+                .gpu_readback_nanoseconds
+                .saturating_add(readback_nanoseconds);
+            active.report.gpu_final_readback_nanoseconds = active
+                .report
+                .gpu_final_readback_nanoseconds
+                .saturating_add(readback_nanoseconds);
+        }
+    });
+}
+
+pub fn record_tile_cache(hit: bool) {
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            if hit {
+                active.report.tile_cache_hits = active.report.tile_cache_hits.saturating_add(1);
+            } else {
+                active.report.tile_cache_misses = active.report.tile_cache_misses.saturating_add(1);
+            }
         }
     });
 }
