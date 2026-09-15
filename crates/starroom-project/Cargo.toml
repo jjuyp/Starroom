@@ -10,3 +10,4 @@ serde.workspace = true
 serde_json.workspace = true
 starroom-core = { path = "../starroom-core" }
 thiserror.workspace = true
+tempfile = "3"

@@ -15,6 +15,17 @@
       }
     },
     "globalAdjustments": {"type": "object"},
+    "cameraProfile": {
+      "type": ["object", "null"],
+      "required": ["id", "version", "hash", "status"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "status": {"enum": ["resolved", "generic"]}
+      },
+      "additionalProperties": false
+    },
     "masks": {"type": "array"},
     "ai": {"type": "object"}
   },

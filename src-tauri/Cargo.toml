@@ -14,6 +14,28 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 serde.workspace = true
-tauri = { version = "2", features = [] }
+serde_json.workspace = true
+sha2.workspace = true
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
 starroom-core = { path = "../crates/starroom-core" }
 starroom-project = { path = "../crates/starroom-project" }
+starroom-color = { path = "../crates/starroom-color" }
+starroom-advisor = { path = "../crates/starroom-advisor" }
+starroom-render = { path = "../crates/starroom-render" }
+starroom-imageio = { path = "../crates/starroom-imageio" }
+starroom-optics = { path = "../crates/starroom-optics" }
+starroom-geometry = { path = "../crates/starroom-geometry" }
+starroom-pipeline = { path = "../crates/starroom-pipeline" }
+starroom-detail = { path = "../crates/starroom-detail" }
+starroom-grading = { path = "../crates/starroom-grading" }
+starroom-color-management = { path = "../crates/starroom-color-management" }
+starroom-portrait = { path = "../crates/starroom-portrait" }
+starroom-heal = { path = "../crates/starroom-heal" }
+starroom-ai-denoise = { path = "../crates/starroom-ai-denoise" }
+starroom-reference = { path = "../crates/starroom-reference" }
+starroom-look = { path = "../crates/starroom-look" }
+starroom-library = { path = "../crates/starroom-library" }
+starroom-history = { path = "../crates/starroom-history" }
+starroom-export = { path = "../crates/starroom-export" }
+starroom-session = { path = "../crates/starroom-session" }

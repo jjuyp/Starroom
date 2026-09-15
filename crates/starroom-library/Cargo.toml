@@ -1,0 +1,16 @@
+[package]
+name = "starroom-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
+rusqlite = { version = "0.37", features = ["bundled", "serde_json"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+starroom-imageio = { path = "../starroom-imageio" }
+starroom-pipeline = { path = "../starroom-pipeline" }
+thiserror.workspace = true

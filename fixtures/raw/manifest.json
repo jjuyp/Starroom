@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "name": "raw.pixls.us",
+    "repositoryUrl": "https://raw.pixls.us/data.lfs.git",
+    "repositoryCommit": "6f997cac925e9fe7dbf2a41d8e242398d8c9d4d4",
+    "project": "PIXLS.US raw camera sample archive",
+    "author": "Individual raw.pixls.us CC0 contributors (names are not published per file)",
+    "license": "CC0-1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "submissionPolicyUrl": "https://raw.pixls.us/"
+  },
+  "fixtures": [
+    {
+      "id": "nikon-d1-nef",
+      "path": "sources/nikon-d1.nef",
+      "upstreamPath": "Nikon/D1/RAW_NIKON_D1.NEF",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Nikon",
+      "cameraModel": "D1",
+      "format": "NEF",
+      "sensorLayout": "bayer",
+      "sha256": "7886d8b0e1257897faa7404b98fe1086ee2d95606531b6285aed83a0939b768f",
+      "byteLength": 4055474,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic"]
+    },
+    {
+      "id": "sony-dslr-a100-arw",
+      "path": "sources/sony-dslr-a100.arw",
+      "upstreamPath": "Sony/DSLR-A100/_DSC0258.ARW",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Sony",
+      "cameraModel": "DSLR-A100",
+      "format": "ARW",
+      "sensorLayout": "bayer",
+      "sha256": "4df7981ac4baec9648b4f106751ea4b09a6e27bc70a15f8ef09bec051fec362d",
+      "byteLength": 10137572,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic"]
+    },
+    {
+      "id": "canon-powershot-s2-is-cr2",
+      "path": "sources/canon-powershot-s2-is.cr2",
+      "upstreamPath": "Canon/Canon PowerShot S2 IS/IMG_1107.CR2",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Canon",
+      "cameraModel": "PowerShot S2 IS",
+      "format": "CR2",
+      "sensorLayout": "bayer",
+      "sha256": "445764716df165a1facd37c01d67ede44ca49671ed1a6112dd8ff7426324c757",
+      "byteLength": 6611520,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic"]
+    },
+    {
+      "id": "canon-powershot-g5x-mk2-cr3",
+      "path": "sources/canon-powershot-g5x-mk2.cr3",
+      "upstreamPath": "Canon/PowerShot G5 X Mark II/Canon_-_PowerShot_G5_X_Mark_II_-_CRAW_(16:9).CR3",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Canon",
+      "cameraModel": "PowerShot G5 X Mark II",
+      "format": "CR3",
+      "sensorLayout": "bayer",
+      "sha256": "71b2f703c09be153e48ff0075772f19ea0a2c2e81acc08d11e0a979ba79f07ce",
+      "byteLength": 15358076,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic"]
+    },
+    {
+      "id": "apple-iphone-se-dng",
+      "path": "sources/apple-iphone-se.dng",
+      "upstreamPath": "Apple/iPhone SE/A4973FFB-9CBD-4ED8-805D-E30F4AE08A95.dng",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Apple",
+      "cameraModel": "iPhone SE",
+      "format": "DNG",
+      "sensorLayout": "bayer",
+      "sha256": "7a2a9747a0cb1537007233ce7e8b7233c5ee641d683b7b3da29e22387994a0d7",
+      "byteLength": 11115746,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic", "dngMetadata"]
+    },
+    {
+      "id": "fujifilm-x-pro1-raf",
+      "path": "sources/fujifilm-x-pro1.raf",
+      "upstreamPath": "Fujifilm/X-Pro1/DSCF2131.RAF",
+      "sourceUrl": "https://raw.pixls.us/data.lfs.git",
+      "cameraMake": "Fujifilm",
+      "cameraModel": "X-Pro1",
+      "format": "RAF",
+      "sensorLayout": "xTrans",
+      "sha256": "0b1046c299d9eb222a8f003bd047f2a34f507da0d1704ac32cefbc82f799d121",
+      "byteLength": 26146816,
+      "license": "CC0-1.0",
+      "tests": ["sensorDecode", "metadata", "blackWhiteLevel", "cfa", "asShotWb", "demosaic", "xTrans"]
+    }
+  ]
+}

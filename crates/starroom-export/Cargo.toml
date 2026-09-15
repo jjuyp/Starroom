@@ -1,0 +1,25 @@
+[package]
+name = "starroom-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "tiff"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+starroom-color-management = { path = "../starroom-color-management" }
+starroom-imageio = { path = "../starroom-imageio" }
+starroom-pipeline = { path = "../starroom-pipeline" }
+starroom-render = { path = "../starroom-render" }
+thiserror.workspace = true
+
+[dev-dependencies]
+kamadak-exif = "=0.6.1"
+starroom-history = { path = "../starroom-history" }
+starroom-heal = { path = "../starroom-heal" }
+starroom-library = { path = "../starroom-library" }
+starroom-project = { path = "../starroom-project" }
+starroom-session = { path = "../starroom-session" }
