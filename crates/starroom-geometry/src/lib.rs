@@ -405,8 +405,19 @@ pub fn apply_geometry(
         parameters.crop_aspect_width,
         parameters.crop_aspect_height,
     );
-    let output_width = ((crop.right - crop.left) * width as f32).round().max(1.0) as usize;
-    let output_height = ((crop.bottom - crop.top) * height as f32).round().max(1.0) as usize;
+    let cropped_width = ((crop.right - crop.left) * width as f32).round().max(1.0) as usize;
+    let cropped_height = ((crop.bottom - crop.top) * height as f32).round().max(1.0) as usize;
+    // Quarter turns change the output orientation. Keeping the source dimensions
+    // here stretched a landscape image back into a landscape canvas after a 90°
+    // rotation. Arbitrary straighten angles intentionally keep the crop canvas.
+    let normalized_rotation = parameters.rotation_degrees.rem_euclid(360.0);
+    let swaps_axes =
+        (normalized_rotation - 90.0).abs() < 1.0e-3 || (normalized_rotation - 270.0).abs() < 1.0e-3;
+    let (output_width, output_height) = if swaps_axes {
+        (cropped_height, cropped_width)
+    } else {
+        (cropped_width, cropped_height)
+    };
     let transform = build_transform(parameters);
     let inverse = transform
         .inverse()
@@ -729,6 +740,27 @@ mod tests {
         .expect("geometry");
         assert_eq!(result.width, result.height);
         assert!(result.data.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn quarter_turn_swaps_landscape_output_dimensions_without_stretching() {
+        let width = 6;
+        let height = 4;
+        let data = vec![0.5_f32; width * height * 3];
+        for rotation_degrees in [-90.0, 90.0] {
+            let result = apply_geometry(
+                width,
+                height,
+                &data,
+                GeometryParameters {
+                    rotation_degrees,
+                    ..Default::default()
+                },
+            )
+            .expect("quarter turn");
+            assert_eq!((result.width, result.height), (height, width));
+            assert!(result.data.iter().all(|value| value.is_finite()));
+        }
     }
 
     #[test]

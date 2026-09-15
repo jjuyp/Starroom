@@ -1355,12 +1355,12 @@ export function App() {
   }, [nativeHistoryState, selected.libraryAsset?.id])
   const activeLayer = selected.layers.find((layer) => layer.id === selectedLayerId)
   const activeLayerIsBrush = Boolean(activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'brush')
-  const filteredPhotos = useMemo(() => photos.filter((photo) => {
-    if (filter === 'recent') return photo.imported
-    if (filter === 'five-star') return photo.rating === 5
-    if (filter === 'edited') return hasPhotoEdits(photo)
-    return true
-  }), [filter, photos])
+  // The Develop filmstrip is the current working set, independent of the last
+  // Library smart-album filter. Otherwise opening Develop from Five Stars (or
+  // an empty smart album) incorrectly produced an empty filmstrip.
+  const filmstripPhotos = useMemo(() => nativeRuntimeAvailable()
+    ? photos.filter((photo) => Boolean(photo.libraryAsset))
+    : photos, [photos])
 
   const counts = useMemo(() => {
     const nativePhotos = photos.filter((photo) => photo.libraryAsset)
@@ -2396,7 +2396,7 @@ export function App() {
           <div ref={filmstripRef} className="filmstrip" aria-label="Filmstrip" onWheel={(event) => {
             if (scrollFilmstripFromWheel(event.currentTarget, event.deltaX, event.deltaY)) event.preventDefault()
           }}>
-            {filteredPhotos.length ? filteredPhotos.map((photo) => <div key={photo.id} className="thumb-shell" data-photo-id={photo.id}>
+            {filmstripPhotos.length ? filmstripPhotos.map((photo) => <div key={photo.id} className="thumb-shell" data-photo-id={photo.id}>
               <button className={photo.id === selected.id ? 'thumb active' : 'thumb'} onClick={() => { selectPhoto(photo.id); setBefore(false) }} title={photo.name}>
                 <img src={photo.src} alt={photo.name} /><span>{photo.rating === 5 ? '★' : hasPhotoEdits(photo) ? 'E' : ''}</span>
               </button>
