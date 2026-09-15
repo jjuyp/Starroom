@@ -18,6 +18,24 @@
   box-shadow: inset 0 1px 1px rgba(233,243,255,.22),0 8px 30px rgba(4,17,35,.14);
   backdrop-filter: blur(22px); overflow: hidden;
 }
+/* The library itself is the viewport. Keep the glass clipping on the other
+   panels, but allow a large catalogue to scroll inside its rounded frame. */
+.theme-dark .library-browser {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-4) transparent;
+}
+.theme-dark .library-browser::-webkit-scrollbar { width: 10px; }
+.theme-dark .library-browser::-webkit-scrollbar-track { background: transparent; }
+.theme-dark .library-browser::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--surface-4);
+  background-clip: padding-box;
+}
 .theme-dark .canvas-area { grid-template-rows: 42px minmax(0,1fr) 30px 112px; }
 .theme-dark .canvas-toolbar, .theme-dark .canvas-footer { background: rgba(157,182,216,.06); }
 .theme-dark .photo-stage { margin: 0 8px; padding: 12px; background: var(--canvas); border-radius: 9px; }
