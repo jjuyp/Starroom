@@ -13,7 +13,7 @@ const rustLabels = {
 
 const rules = {
   desktop: [/^src-tauri\//],
-  web: [/^src\//, /^src-tauri\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./],
+  web: [/^src\//, /^src-tauri\//, /^scripts\/tests\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./],
   library: [/^crates\/starroom-library\//],
   history: [/^crates\/starroom-history\//],
   export: [/^crates\/starroom-export\//],

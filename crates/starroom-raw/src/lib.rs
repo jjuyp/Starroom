@@ -9,7 +9,7 @@ mod profile;
 pub use profile::{
     CAMERA_PROFILE_RESOLVER_VERSION, CalibrationIlluminant, CameraFamily, CameraProfileDescriptor,
     CameraProfileInput, CameraProfileResolver, CameraProfileSource, CameraProfileStatus,
-    DngMatrixSet,
+    DngMatrixSet, estimated_as_shot_kelvin,
 };
 
 use serde::{Deserialize, Serialize};
@@ -115,6 +115,8 @@ pub struct RawMetadata {
     pub channel_black_levels: [u32; 4],
     pub white_level: u32,
     pub as_shot_multipliers: [f32; 4],
+    /// Correlated color temperature derived from RAW camera-neutral metadata.
+    pub as_shot_kelvin: Option<f32>,
     pub camera_neutral: [f32; 4],
     pub pre_multipliers: [f32; 4],
     pub dng_color: [DngMatrixSet; 2],
@@ -343,14 +345,16 @@ fn decode_inner(
     let model = bridge_text(&bridge.model);
     let neutral = camera_neutral(bridge.camera_multipliers);
     let dng_color = [bridge_dng_set(&bridge, 0), bridge_dng_set(&bridge, 1)];
-    let camera_profile = CameraProfileResolver::resolve(&CameraProfileInput {
+    let profile_input = CameraProfileInput {
         make: make.clone(),
         model: model.clone(),
         dng_version: bridge.dng_version,
         libraw_cam_xyz: bridge_cam_xyz(&bridge),
         camera_neutral: neutral,
         dng: dng_color.clone(),
-    });
+    };
+    let as_shot_kelvin = estimated_as_shot_kelvin(&profile_input);
+    let camera_profile = CameraProfileResolver::resolve(&profile_input);
     let mut rgb = Vec::with_capacity(source.len());
     for camera in source.as_chunks::<3>().0 {
         let xyz = camera_profile.camera_rgb_to_xyz_d65([
@@ -407,6 +411,7 @@ fn decode_inner(
             channel_black_levels: bridge.cblack,
             white_level: bridge.maximum,
             as_shot_multipliers: bridge.camera_multipliers,
+            as_shot_kelvin,
             camera_neutral: neutral,
             pre_multipliers: bridge.pre_multipliers,
             dng_color,

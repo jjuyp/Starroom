@@ -450,3 +450,102 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - Retired the obsolete `lensBrightness` adjustment from the current editor contract. Lens correction remains the Lensfun-backed Native optics state; vignette remains the explicit finishing control.
 - Removed Browser Canvas creative rendering and browser JPEG export from the application production bundle. Non-Tauri demo assets display their original pixels with an explicit Native-desktop requirement; all real edits and exports use the Rust shared graph.
 - Added a local-only YuNet + BiSeNet setup flow. Users choose both ONNX files, Rust verifies the pinned SHA-256 identities before copying them into the per-user application-data model directory, and Face/Skin becomes available only after both installed copies verify. No model is downloaded, uploaded or committed to the public repository.
+
+# Edit Workspace UI V2 (2026-09-19)
+
+- Rebuilt the Edit workspace visual hierarchy around centralized `--sr-*` design tokens, bounded
+  glass surfaces and module-level Bento grouping. Persistent blur remains limited to the three
+  major workspace surfaces; sliders and individual controls do not create nested blur layers.
+- Added semantic color tracks for Temperature, Tint, saturation and all eight target-aware OKLCh
+  Hue/Chroma/Lightness controls. The controls transport existing edit state and do not perform
+  image processing in React.
+- Added a state-connected, keyboard-accessible OKLab grading wheel for Global/Shadows/Midtones/
+  Highlights while retaining precise numeric controls and the Native grading graph.
+- RAW decode now records correlated as-shot Kelvin derived from real camera-neutral/profile data.
+  A read-only Tauri command exposes that estimate from a background blocking worker, rather than
+  pausing the UI thread. A unit test caught and corrected the McCamy denominator sign for a D65
+  neutral. If the matrix is absent or decoding fails, the UI explicitly reports that no reliable
+  Kelvin estimate is available. Rendered RGB sources remain labeled relative, not fabricated K.
+- Added actual current-photo camera, resolution, lens, shutter and ISO display when library
+  metadata exists. Existing Histogram, Curve, Masks, History, AI, Filmstrip, Preview and Export
+  state/actions remain connected to their prior implementations. The left Presets tab now exposes
+  only real saved custom curves and portable `.srlook` load/save actions, with an explicit empty
+  state rather than fabricated preset cards; the filmstrip shows filename and real rating.
+- Browser layout audits at 1920x1080 and 2560x1440 found no page-level horizontal scroll or
+  numeric editor overflow. The signed text input avoids browser number-field sanitization and
+  native spinner overlap. These screenshots use the explicit low-resolution Browser demo asset,
+  not a native RAW photo, so they establish UI layout rather than native image-quality acceptance.
+
+## Field repair: preview reliability, edit history and glass inspector (2026-10-01)
+
+- Native GPU preview now catches device/driver panics inside the cache boundary and clears an
+  already-poisoned cache. A failed GPU request is visibly labelled Native CPU rather than leaving
+  every subsequent photo in `PreviewGpuFailed: poisoned device cache` state. Wgpu validation scopes
+  now cover both exposure and creative pipeline construction; oversize dispatches are rejected as
+  typed GPU errors before submission. Export remains on the shared authoritative Rust graph.
+- Native History commands are serialized. Commits use the last backend-acknowledged state, and
+  editing is held while the selected asset's persisted history opens, preventing the observed
+  stale-`before` `InvalidHistoryEntry` race on rapid slider changes/photo switches.
+- The duplicate Presets/History strip under the photo was removed. The inspector now owns one
+  scrollable tool region, a working disclosure button, RGB display histogram, single-column Color
+  layout at normal widths, and legible glass/mask surfaces. RGB histogram code analyzes only
+  already-rendered preview bytes and never participates in color science or export.
+- The private per-user model installer verifies fixed SHA-256 values for YuNet, BiSeNet, BiRefNet,
+  SegFormer and NAFNet before copying existing local files. It does not download or publish them;
+  the public Windows installer still bundles only the redistribution-approved BiRefNet weight.
+- A manually invoked local-only smoke test initializes all private ONNX Runtime providers and
+  executes YuNet detection, BiSeNet parsing, SegFormer sky masking and a NAFNet denoise tile.
+  The public release self-test separately executes BiRefNet Subject inference. The local-only
+  smoke is intentionally ignored by public CI because its required weights cannot be checked in.
+- Browser checks cover 1280 and 1920 widths, Color overflow, inspector disclosure and AI action
+  routing. A browser demo cannot prove native RAW quality or GPU recovery; those require the
+  rebuilt desktop executable and real-photo field validation.
+
+## Field verification and catalog repair (2026-10-02)
+
+- Presets/Looks and History now have exactly one production JSX owner, the left sidebar. The
+  retired center strip and its CSS/grid rows are removed, not merely hidden. Structural guards
+  ensure the central photo workspace cannot accidentally regain preset/history action paths.
+- The mask workspace exposes selected-layer radial, linear, brush, luminance and color-range
+  tools, visibility/opacity/order/duplicate/delete/invert, manual refinement and shared Native
+  local tone. Canvas radial/linear edits retain feather and operate on the selected layer; the
+  optional overlay is a Native preview-only intent, never exported into the image.
+- Portrait/generated mask rasters are validated once at the shared-graph boundary instead of
+  rescanning the full raster for every sample. Sampling remains bounds/shape/finite checked.
+  A 512x512 regression took 0.016 s in debug; the old quadratic path exceeded 164 CPU seconds
+  before completion. Unsampled NaN/Inf and malformed buffers are still rejected by both graphs.
+- UI request epochs reject stale AI, reference, look, color-sample and optics completions after
+  photo changes. Snapshot rename/delete flush and serialize history, and cannot replace another
+  selected photo's history. Duplicate IDs are created before React schedules an updater. Brush
+  and healing capacity errors preserve all previous edits rather than silently slicing them.
+- Native header and Develop keyboard ratings persist to the catalog; Library rating commands
+  still use the batch path. Library metadata/keyword controls have a real disclosure/300px track,
+  and export settings are reachable from both workspaces and the shared command dispatcher.
+  Supported compact widths retain workspace navigation. Browser originals are explicitly
+  read-only: disabled/inert edit controls and a state-update guard prevent non-rendering edits.
+- LibRaw active-area dimensions and orientation, not the 32-pixel metadata preview or doubled
+  half-size estimate, now populate RAW Library metadata. `library_refresh_metadata` repairs only
+  a selected legacy record on a blocking worker, outside the catalog mutex. Fingerprints and
+  catalog source identity are checked before/after decode and again before metadata merge;
+  relink/file-change races are typed errors. Ratings, keywords and history remain untouched.
+  Real Nikon RAW regression repairs 32x21 to 2012x1324, checks reopen/source hash/history bytes,
+  and verifies workflow updates interleaved with decode are not overwritten.
+- Full local Windows MSVC validation: 298 Rust tests pass, four opt-in tests remain explicitly
+  ignored in the ordinary suite; all doc-test runners, format and warning-denied Clippy pass.
+  Frontend has 91 tests (77 behavior/unit plus 14 production TSX/CSS structural guards), lint,
+  TypeScript and production build. Golden manifest is 11/11 with five immutable photographic
+  sources and six public CC0 RAW fixtures. JSON/schema and license/release validators pass.
+- The separately invoked private-model regression executes actual YuNet/BiSeNet inference,
+  Skin shared-graph preview/export, SegFormer sky and tiled NAFNet residual application on the
+  photographic NASA fixture. Debug CPU inclusive timings were 4.066/5.944/2.391/6.350 s;
+  these are initialization/inference test timings, not slider latency or human image-quality
+  acceptance. Private weights remain ignored and are never part of the public installer.
+- All installer launch/self-test paths explicitly use the installed model root and working
+  directory, preventing private AppData/cwd weights from contaminating a clean-install test.
+  Public resource inventory requires exactly the pinned MIT BiRefNet model; Face/Skin, Sky and
+  NAFNet must report typed-unavailable there. This machine's five verified local weights are
+  automatically discovered without selecting them for each photo.
+- The desktop test tool launched a same-name older executable, so that screen was rejected as
+  evidence. Launching the uniquely named fresh executable then timed out at app approval. No
+  shell/UI automation bypass was used. New-version interactive/screenshot acceptance remains
+  pending authorization; automated Native/installer tests do not substitute for that gate.

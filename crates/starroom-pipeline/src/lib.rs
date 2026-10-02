@@ -211,35 +211,107 @@ pub struct SkinRetouchSettings {
 }
 
 impl PortraitMaskRaster {
+    fn validate(&self) -> Result<(), PipelineError> {
+        validate_soft_raster(
+            self.width,
+            self.height,
+            &self.values,
+            "portrait raster is malformed",
+        )
+    }
+
     fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
-        if self.width == 0
-            || self.height == 0
-            || self.values.len() != self.width as usize * self.height as usize
-            || self.values.iter().any(|value| !value.is_finite())
-        {
-            return Err(PipelineError::InvalidMask("portrait raster is malformed"));
-        }
-        let px = (x.clamp(0.0, 1.0) * self.width.saturating_sub(1) as f32).round() as usize;
-        let py = (y.clamp(0.0, 1.0) * self.height.saturating_sub(1) as f32).round() as usize;
-        Ok(self.values[py * self.width as usize + px].clamp(0.0, 1.0))
+        sample_soft_raster(
+            self.width,
+            self.height,
+            &self.values,
+            x,
+            y,
+            "portrait raster is malformed",
+        )
     }
 }
 
 impl GeneratedMaskRaster {
-    fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
-        if self.width == 0
-            || self.height == 0
-            || self.values.len() != self.width as usize * self.height as usize
-            || self.values.iter().any(|value| !value.is_finite())
-        {
-            return Err(PipelineError::InvalidMask(
-                "generated AI raster is malformed",
-            ));
-        }
-        let px = (x.clamp(0.0, 1.0) * self.width.saturating_sub(1) as f32).round() as usize;
-        let py = (y.clamp(0.0, 1.0) * self.height.saturating_sub(1) as f32).round() as usize;
-        Ok(self.values[py * self.width as usize + px].clamp(0.0, 1.0))
+    fn validate(&self) -> Result<(), PipelineError> {
+        validate_soft_raster(
+            self.width,
+            self.height,
+            &self.values,
+            "generated AI raster is malformed",
+        )
     }
+
+    fn weight_at(&self, x: f32, y: f32) -> Result<f32, PipelineError> {
+        sample_soft_raster(
+            self.width,
+            self.height,
+            &self.values,
+            x,
+            y,
+            "generated AI raster is malformed",
+        )
+    }
+}
+
+fn soft_raster_has_valid_shape(width: u32, height: u32, values: &[f32]) -> bool {
+    width > 0 && height > 0 && (width as usize).checked_mul(height as usize) == Some(values.len())
+}
+
+/// Validate every cell once at the shared graph boundary, including cells outside the current
+/// viewport. Scanning a full mask from each pixel sample previously made Face/Skin/AI O(N²).
+fn validate_soft_raster(
+    width: u32,
+    height: u32,
+    values: &[f32],
+    reason: &'static str,
+) -> Result<(), PipelineError> {
+    if !soft_raster_has_valid_shape(width, height, values) {
+        return Err(PipelineError::InvalidMask(reason));
+    }
+    for chunk in values.chunks(65_536) {
+        checkpoint()?;
+        if chunk.iter().any(|value| !value.is_finite()) {
+            return Err(PipelineError::InvalidMask(reason));
+        }
+    }
+    Ok(())
+}
+
+/// Sampling remains O(1). Shape and the selected cell are checked defensively, without weakening
+/// the complete finite-data validation performed before a production graph starts sampling.
+fn sample_soft_raster(
+    width: u32,
+    height: u32,
+    values: &[f32],
+    x: f32,
+    y: f32,
+    reason: &'static str,
+) -> Result<f32, PipelineError> {
+    if !soft_raster_has_valid_shape(width, height, values) || !x.is_finite() || !y.is_finite() {
+        return Err(PipelineError::InvalidMask(reason));
+    }
+    let px = (x.clamp(0.0, 1.0) * width.saturating_sub(1) as f32).round() as usize;
+    let py = (y.clamp(0.0, 1.0) * height.saturating_sub(1) as f32).round() as usize;
+    let value = values
+        .get(py * width as usize + px)
+        .copied()
+        .filter(|value| value.is_finite())
+        .ok_or(PipelineError::InvalidMask(reason))?;
+    Ok(value.clamp(0.0, 1.0))
+}
+
+fn validate_mask_rasters(
+    portrait: &[PortraitMaskRaster],
+    generated: &[GeneratedMaskRaster],
+) -> Result<(), PipelineError> {
+    for raster in portrait {
+        raster.validate()?;
+    }
+    for raster in generated {
+        raster.validate()?;
+    }
+    Ok(())
 }
 
 fn layer_enabled() -> bool {
@@ -1027,6 +1099,7 @@ fn apply_layers(
     portrait_masks: &[PortraitMaskRaster],
     generated_masks: &[GeneratedMaskRaster],
 ) -> Result<LinearRgb, PipelineError> {
+    validate_mask_rasters(portrait_masks, generated_masks)?;
     let prepared = layers
         .iter()
         .map(PreparedLayer::new)
@@ -1250,6 +1323,7 @@ fn apply_creative_graph(
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
 ) -> Result<Vec<f32>, PipelineError> {
+    validate_mask_rasters(&settings.portrait_masks, &settings.generated_masks)?;
     // Encoded relative-WB is prepared by the CPU color oracle. The complete global creative
     // chain after that boundary is fused on GPU; local layers remain a separate cached composite.
     let pixel_count = pixels.len();
@@ -3138,6 +3212,99 @@ mod tests {
         assert_eq!(preview, export);
         assert_eq!(preview.color.input, InputProfileSource::AssumedSrgb);
         assert_eq!(preview.color.output, OutputProfileSource::Srgb);
+    }
+
+    #[test]
+    fn mask_raster_validation_rejects_unsampled_non_finite_cells_before_render() {
+        // A one-pixel image samples only cell zero of a two-cell native raster. Validation must
+        // still reject corrupt cell one before either Preview or Export enters the graph.
+        let decoded = fixture(&[[0.4, 0.25, 0.18, 1.0]]);
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let portrait = RenderSettings {
+                portrait_masks: vec![PortraitMaskRaster {
+                    cache_key: "real-cache".into(),
+                    face_id: "face-a".into(),
+                    region: PortraitMaskRegion::Skin,
+                    width: 2,
+                    height: 1,
+                    values: vec![1.0, invalid],
+                }],
+                ..Default::default()
+            };
+            for result in [
+                render_preview_to_srgb8(&decoded, &portrait),
+                render_export_to_srgb8(&decoded, &portrait),
+            ] {
+                assert!(matches!(
+                    result,
+                    Err(PipelineError::InvalidMask("portrait raster is malformed"))
+                ));
+            }
+            let generated = RenderSettings {
+                generated_masks: vec![GeneratedMaskRaster {
+                    cache_identity: "real-ai-cache".into(),
+                    semantic: GeneratedMaskSemantic::Subject,
+                    width: 2,
+                    height: 1,
+                    values: vec![1.0, invalid],
+                }],
+                ..Default::default()
+            };
+            for result in [
+                render_preview_to_srgb8(&decoded, &generated),
+                render_export_to_srgb8(&decoded, &generated),
+            ] {
+                assert!(matches!(
+                    result,
+                    Err(PipelineError::InvalidMask(
+                        "generated AI raster is malformed"
+                    ))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn mask_raster_shape_errors_remain_typed_and_sampling_is_exact() {
+        for (width, height, values) in [
+            (0, 1, vec![]),
+            (1, 0, vec![]),
+            (2, 1, vec![0.5]),
+            (u32::MAX, u32::MAX, vec![0.5]),
+        ] {
+            assert!(matches!(
+                validate_soft_raster(width, height, &values, "bad shape"),
+                Err(PipelineError::InvalidMask("bad shape"))
+            ));
+            assert!(matches!(
+                sample_soft_raster(width, height, &values, 0.0, 0.0, "bad shape"),
+                Err(PipelineError::InvalidMask("bad shape"))
+            ));
+        }
+        let raster = PortraitMaskRaster {
+            cache_key: "sampling".into(),
+            face_id: "face".into(),
+            region: PortraitMaskRegion::Skin,
+            width: 512,
+            height: 512,
+            values: (0..512 * 512)
+                .map(|index| (index % 512) as f32 / 511.0)
+                .collect(),
+        };
+        raster.validate().unwrap();
+        let started = Instant::now();
+        for y in 0..512 {
+            for x in 0..512 {
+                let sampled = raster
+                    .weight_at(x as f32 / 511.0, y as f32 / 511.0)
+                    .unwrap();
+                assert_eq!(sampled, raster.values[y * 512 + x]);
+            }
+        }
+        eprintln!(
+            "512² validated mask sampling: {:.3}s",
+            started.elapsed().as_secs_f64()
+        );
     }
 
     #[test]

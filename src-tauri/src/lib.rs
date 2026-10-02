@@ -26,8 +26,8 @@ use starroom_imageio::{
     encode_jpeg_rgb8, is_raw_source,
 };
 use starroom_library::{
-    AssetFlag, AssetRecord, CollectionKind, CollectionRecord, ColorLabel, ImportResult, Library,
-    LibraryQuery, SmartCollectionRuleV1, ThumbnailSize,
+    AssetFlag, AssetMetadata, AssetRecord, CollectionKind, CollectionRecord, ColorLabel,
+    ImportResult, Library, LibraryQuery, SmartCollectionRuleV1, ThumbnailSize,
 };
 use starroom_look::{
     GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
@@ -263,6 +263,94 @@ fn library_query_ids(
         .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
         .query_ids(&query)
         .map_err(|error| error.to_string())
+}
+
+fn library_metadata_refresh_snapshot(
+    runtime: &NativeLibraryRuntime,
+    asset_id: i64,
+) -> Result<AssetRecord, String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    let library = guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
+    library
+        .asset(asset_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("MissingSource: {asset_id}"))
+}
+
+fn apply_library_metadata_refresh(
+    runtime: &NativeLibraryRuntime,
+    snapshot: &AssetRecord,
+    metadata: &AssetMetadata,
+) -> Result<AssetRecord, String> {
+    let guard = runtime
+        .library
+        .lock()
+        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+    let library = guard
+        .as_ref()
+        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
+    let current = library
+        .asset(snapshot.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("MissingSource: {}", snapshot.id))?;
+    if current.source_path != snapshot.source_path
+        || current.content_fingerprint != snapshot.content_fingerprint
+        || current.source_identity != snapshot.source_identity
+    {
+        return Err("MetadataRefreshSourceChanged: source changed during metadata refresh".into());
+    }
+    // Update only descriptive metadata. Ratings, keywords, project/history identity and newer
+    // workflow choices made during the unlocked decode remain authoritative in the catalog.
+    library
+        .update_metadata(snapshot.id, metadata)
+        .map_err(|error| error.to_string())?;
+    library
+        .asset(snapshot.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("MissingSource: {}", snapshot.id))
+}
+
+fn library_refresh_metadata_inner(
+    runtime: &NativeLibraryRuntime,
+    asset_id: i64,
+) -> Result<AssetRecord, String> {
+    let snapshot = library_metadata_refresh_snapshot(runtime, asset_id)?;
+    if snapshot.missing || !snapshot.source_path.is_file() {
+        return Err(format!("MissingSource: {asset_id}"));
+    }
+    // File identity and LibRaw work deliberately run without the SQLite mutex. One selected
+    // legacy record is repaired lazily; never clear a catalog or decode the whole Library.
+    let before = starroom_library::fingerprint_file(&snapshot.source_path)
+        .map_err(|error| error.to_string())?;
+    if before.digest != snapshot.content_fingerprint || before.byte_length != snapshot.file_size {
+        return Err(
+            "MetadataRefreshSourceChanged: source no longer matches catalog identity".into(),
+        );
+    }
+    let metadata =
+        Library::extract_metadata(&snapshot.source_path).map_err(|error| error.to_string())?;
+    let after = starroom_library::fingerprint_file(&snapshot.source_path)
+        .map_err(|error| error.to_string())?;
+    if after.digest != before.digest || after.byte_length != before.byte_length {
+        return Err("MetadataRefreshSourceChanged: source changed during metadata decode".into());
+    }
+    apply_library_metadata_refresh(runtime, &snapshot, &metadata)
+}
+
+#[tauri::command]
+async fn library_refresh_metadata(
+    runtime: State<'_, NativeLibraryRuntime>,
+    asset_id: i64,
+) -> Result<AssetRecord, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || library_refresh_metadata_inner(&runtime, asset_id))
+        .await
+        .map_err(|error| format!("MetadataReadFailed: metadata worker failed: {error}"))?
 }
 
 #[derive(Debug, Deserialize)]
@@ -1671,6 +1759,34 @@ fn native_sample_color(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NativeWhiteBalanceInfo {
+    source: &'static str,
+    as_shot_kelvin: Option<f32>,
+}
+
+/// Exposes only truthful source WB metadata. Rendered RGB files remain explicitly relative.
+#[tauri::command]
+async fn native_white_balance_info(source_path: PathBuf) -> Result<NativeWhiteBalanceInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let decoded = decode_source_preview(&source_path, 256)
+            .map_err(|error| format!("native white-balance metadata decode failed: {error}"))?;
+        Ok(match decoded {
+            DecodedSourceImage::Raw(raw) => NativeWhiteBalanceInfo {
+                source: "rawMetadata",
+                as_shot_kelvin: raw.metadata.as_shot_kelvin,
+            },
+            DecodedSourceImage::Rendered(_) => NativeWhiteBalanceInfo {
+                source: "renderedRelative",
+                as_shot_kelvin: None,
+            },
+        })
+    })
+    .await
+    .map_err(|error| format!("native white-balance metadata task failed: {error}"))?
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NativeExportResult {
     output_path: PathBuf,
     width: u32,
@@ -1857,6 +1973,33 @@ fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
     }
 }
 
+/// Keep driver/validation panics inside the GPU boundary while the cache guard remains alive.
+/// A previously poisoned device is discarded; the caller can continue on the labelled CPU graph.
+fn recoverable_gpu_attempt<T>(
+    cache: &Mutex<Option<Result<GpuRenderer, String>>>,
+    operation: impl FnOnce(&mut Option<Result<GpuRenderer, String>>) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = Some(Err(
+                "GPU device cache recovered after a driver failure".into()
+            ));
+            cache.clear_poison();
+            guard
+        }
+    };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(&mut guard))) {
+        Ok(result) => result,
+        Err(_) => {
+            let reason = "GPU device failure; using the Native CPU render graph".to_owned();
+            *guard = Some(Err(reason.clone()));
+            Err(reason)
+        }
+    }
+}
+
 fn resolve_local_model_root(
     configured: Option<std::ffi::OsString>,
     executable: Option<&Path>,
@@ -1888,7 +2031,35 @@ fn local_model_root() -> PathBuf {
 }
 
 fn local_portrait_models() -> PortraitModelRegistry {
-    PortraitModelRegistry::local_default(local_model_root())
+    let mut registry = PortraitModelRegistry::local_default(local_model_root());
+    registry.detector.path = local_model_file("face_detection_yunet_2026may.onnx");
+    registry.parser.path = local_model_file("bisenet_resnet18.onnx");
+    registry
+}
+
+fn local_model_file(name: &str) -> PathBuf {
+    let local = local_model_root().join(name);
+    // Installed GUI uses AppData for personal models, but approved bundled models stay
+    // available per file. Never mask an invalid user model by substituting a bundled one.
+    let bundled = resolve_local_model_root(
+        None,
+        std::env::current_exe().ok().as_deref(),
+        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    )
+    .join(name);
+    choose_local_model_file(
+        local,
+        bundled,
+        std::env::var_os("STARROOM_LOCAL_MODELS").is_some(),
+    )
+}
+
+fn choose_local_model_file(local: PathBuf, bundled: PathBuf, explicit_root: bool) -> PathBuf {
+    if local.is_file() || explicit_root {
+        local
+    } else {
+        bundled
+    }
 }
 
 #[tauri::command]
@@ -1929,11 +2100,14 @@ fn portrait_models_install_local(
 }
 
 fn local_ai_mask_models() -> AiMaskModelRegistry {
-    AiMaskModelRegistry::local_default(local_model_root())
+    let mut registry = AiMaskModelRegistry::local_default(local_model_root());
+    registry.foreground.path = local_model_file("BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx");
+    registry.scene.path = local_model_file("segformer-b0-ade20k-489d5cd.onnx");
+    registry
 }
 
 fn local_nafnet_model() -> PathBuf {
-    local_model_root().join("nafnet-sidd-width32-512-opset20.onnx")
+    local_model_file("nafnet-sidd-width32-512-opset20.onnx")
 }
 
 fn infer_ai_denoise_with_fallback(
@@ -3228,33 +3402,25 @@ fn native_preview_inner(
         profiling::record_tile_cache(false);
     }
     let (rendered, backend_flags) = if request.prefer_gpu {
-        let mut gpu = scheduler
-            .gpu
-            .lock()
-            .map_err(|_| "PreviewGpuFailed: poisoned device cache".to_owned())?;
-        let renderer =
-            gpu.get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()));
-        match renderer {
-            Ok(renderer) => {
-                match render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer)
-                {
-                    Ok(rendered) => {
-                        let flag = match renderer.status().backend {
-                            GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
-                            GpuBackendKind::CpuFallback => 0x0010,
-                        };
-                        (rendered, flag)
-                    }
-                    Err(error) => {
-                        let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
-                        .map_err(|fallback| format!("native GPU preview failed ({error}); CPU reference fallback also failed: {fallback}"))?;
-                        (rendered, 0x0010)
-                    }
-                }
-            }
-            Err(_) => {
+        match recoverable_gpu_attempt(&scheduler.gpu, |gpu| {
+            let renderer = gpu
+                .get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()))
+                .as_ref()
+                .map_err(Clone::clone)?;
+            let rendered =
+                render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer)
+                    .map_err(|error| error.to_string())?;
+            let flag = match renderer.status().backend {
+                GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
+                GpuBackendKind::CpuFallback => 0x0010,
+            };
+            Ok((rendered, flag))
+        }) {
+            Ok(result) => result,
+            Err(error) => {
                 let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
-                    .map_err(|error| format!("native CPU preview graph failed after GPU initialization fallback: {error}"))?;
+                    .map_err(|fallback| format!("native GPU preview failed ({error}); CPU reference fallback also failed: {fallback}"))?;
+                // Binary contract explicitly marks the shared Native CPU graph, never Browser math.
                 (rendered, 0x0010)
             }
         }
@@ -3927,6 +4093,7 @@ pub fn run() {
             ai_mask_cancel,
             ai_denoise_cancel,
             native_sample_color,
+            native_white_balance_info,
             native_optics_status,
             native_reference_match,
             native_look_save,
@@ -3937,6 +4104,7 @@ pub fn run() {
             library_cancel_import,
             library_query,
             library_query_ids,
+            library_refresh_metadata,
             library_set_workflow,
             library_add_keywords,
             library_remove_keywords,
@@ -3969,6 +4137,658 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lazy_raw_metadata_refresh_repairs_legacy_dimensions_without_workflow_loss() {
+        let root =
+            std::env::temp_dir().join(format!("starroom-lazy-raw-metadata-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/raw/sources/nikon-d1.nef");
+        let source_hash = source_content_hash(&source).unwrap();
+        let mut library = Library::open(root.join("library.sqlite")).unwrap();
+        let id = library
+            .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        let mut legacy = Library::extract_metadata(&source).unwrap();
+        legacy.width = Some(32);
+        legacy.height = Some(21);
+        library.update_metadata(id, &legacy).unwrap();
+        library
+            .set_workflow(
+                &[id],
+                Some(4),
+                Some(AssetFlag::Pick),
+                Some(ColorLabel::Purple),
+            )
+            .unwrap();
+        library
+            .add_keywords(&[id], &["原生 RAW 測試".into()])
+            .unwrap();
+        library
+            .set_project_reference(id, Some("projects/non-destructive.starroom.json"))
+            .unwrap();
+        let before = library.asset(id).unwrap().unwrap();
+        let history_path = root.join(format!("asset-{id}.history.json"));
+        let initial = serde_json::json!({"exposure": 0.0});
+        let mut history = EditHistory::new(initial.clone()).unwrap();
+        history
+            .commit(
+                "Exposure",
+                "Tone",
+                EditCommand::ReplaceState {
+                    before: initial,
+                    after: serde_json::json!({"exposure": 0.5}),
+                },
+            )
+            .unwrap();
+        history.persist(&history_path).unwrap();
+        let history_before = std::fs::read(&history_path).unwrap();
+        let runtime = NativeLibraryRuntime {
+            library: Arc::new(Mutex::new(Some(library))),
+            ..Default::default()
+        };
+
+        let refreshed = library_refresh_metadata_inner(&runtime, id).unwrap();
+        assert_eq!(
+            (refreshed.metadata.width, refreshed.metadata.height),
+            (Some(2012), Some(1324))
+        );
+        assert_eq!(refreshed.id, before.id);
+        assert_eq!(refreshed.source_path, before.source_path);
+        assert_eq!(refreshed.source_identity, before.source_identity);
+        assert_eq!(refreshed.content_fingerprint, before.content_fingerprint);
+        assert_eq!(refreshed.rating, before.rating);
+        assert_eq!(refreshed.flag, before.flag);
+        assert_eq!(refreshed.color_label, before.color_label);
+        assert_eq!(refreshed.keywords, before.keywords);
+        assert_eq!(refreshed.project_reference, before.project_reference);
+        assert_eq!(std::fs::read(&history_path).unwrap(), history_before);
+        assert_eq!(source_content_hash(&source).unwrap(), source_hash);
+
+        // Another UI action can change workflow while LibRaw works outside the lock. Applying
+        // the metadata must return the current workflow, never restore the stale snapshot.
+        let snapshot = library_metadata_refresh_snapshot(&runtime, id).unwrap();
+        runtime
+            .library
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .set_workflow(&[id], Some(5), None, None)
+            .unwrap();
+        let merged =
+            apply_library_metadata_refresh(&runtime, &snapshot, &refreshed.metadata).unwrap();
+        assert_eq!(merged.rating, 5);
+        drop(runtime);
+        let reopened = Library::open(root.join("library.sqlite")).unwrap();
+        assert_eq!(reopened.asset(id).unwrap().unwrap(), merged);
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lazy_metadata_refresh_rejects_relink_and_fingerprint_races() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-lazy-metadata-races-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("original.png");
+        let relocated = root.join("relocated.png");
+        let encoded = starroom_imageio::encode_png_rgb8(&[80, 60, 40], 1, 1, None).unwrap();
+        std::fs::write(&source, &encoded).unwrap();
+        std::fs::write(&relocated, &encoded).unwrap();
+        let mut library = Library::open(root.join("library.sqlite")).unwrap();
+        let id = library
+            .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        let runtime = NativeLibraryRuntime {
+            library: Arc::new(Mutex::new(Some(library))),
+            ..Default::default()
+        };
+        let snapshot = library_metadata_refresh_snapshot(&runtime, id).unwrap();
+        let metadata = Library::extract_metadata(&source).unwrap();
+        runtime
+            .library
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .relink(id, &relocated)
+            .unwrap();
+        let before = library_metadata_refresh_snapshot(&runtime, id).unwrap();
+        assert!(
+            apply_library_metadata_refresh(&runtime, &snapshot, &metadata)
+                .unwrap_err()
+                .starts_with("MetadataRefreshSourceChanged:")
+        );
+        assert_eq!(
+            library_metadata_refresh_snapshot(&runtime, id).unwrap(),
+            before
+        );
+
+        let mut wrong_fingerprint = before.clone();
+        wrong_fingerprint.content_fingerprint = "stale-content".into();
+        assert!(
+            apply_library_metadata_refresh(&runtime, &wrong_fingerprint, &metadata)
+                .unwrap_err()
+                .starts_with("MetadataRefreshSourceChanged:")
+        );
+        // Replacing the on-disk source before decoding is also explicit, not a hidden relink.
+        std::fs::write(&relocated, b"changed source").unwrap();
+        assert!(
+            library_refresh_metadata_inner(&runtime, id)
+                .unwrap_err()
+                .starts_with("MetadataRefreshSourceChanged:")
+        );
+        assert_eq!(
+            library_metadata_refresh_snapshot(&runtime, id).unwrap(),
+            before
+        );
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn gpu_cache_poison_and_render_panic_become_recoverable_errors() {
+        let poisoned: Arc<Mutex<Option<Result<GpuRenderer, String>>>> = Arc::new(Mutex::new(None));
+        let worker_cache = Arc::clone(&poisoned);
+        let _ = std::thread::spawn(move || {
+            let _guard = worker_cache.lock().unwrap();
+            panic!("simulated driver panic");
+        })
+        .join();
+        assert!(poisoned.is_poisoned());
+        let error = recoverable_gpu_attempt(&poisoned, |cache| {
+            cache
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .map(|_| ())
+                .map_err(Clone::clone)
+        })
+        .unwrap_err();
+        assert!(error.contains("recovered"));
+        assert!(!poisoned.is_poisoned());
+
+        let error =
+            recoverable_gpu_attempt::<()>(&poisoned, |_| panic!("render panic")).unwrap_err();
+        assert!(error.contains("Native CPU render graph"));
+        assert!(!poisoned.is_poisoned());
+        assert!(recoverable_gpu_attempt(&poisoned, |_| Ok::<_, String>(())).is_ok());
+    }
+
+    #[test]
+    fn poisoned_gpu_cache_still_renders_an_edited_native_preview() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-poisoned-gpu-preview-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("gradient.png");
+        let mut gradient = Vec::with_capacity(128 * 128 * 3);
+        for _ in 0..128 {
+            for x in 0..128 {
+                let value = (x * 255 / 127) as u8;
+                gradient.extend_from_slice(&[value; 3]);
+            }
+        }
+        let encoded = starroom_imageio::encode_png_rgb8(&gradient, 128, 128, None).unwrap();
+        std::fs::write(&source, encoded).unwrap();
+        let source_hash = source_content_hash(&source).unwrap();
+        let scheduler = Arc::new(NativePreviewScheduler::default());
+        let worker = Arc::clone(&scheduler);
+        let _ = std::thread::spawn(move || {
+            let _guard = worker.gpu.lock().unwrap();
+            panic!("simulate a failed GPU device");
+        })
+        .join();
+
+        let render = |request_id: &str, edit: NativeEditSettings, prefer_gpu: bool| {
+            let response = native_preview_inner(
+                &scheduler,
+                &NativePortraitRuntime::default(),
+                &NativeAiMaskRuntime::default(),
+                &NativeAiDenoiseRuntime::default(),
+                NativePreviewRequest {
+                    request_id: request_id.into(),
+                    source_path: source.clone(),
+                    max_edge: 128,
+                    prefer_gpu,
+                    interaction_phase: PreviewInteractionPhase::Final,
+                    resolution_mode: PreviewResolutionMode::Fit,
+                    viewport: None,
+                    settings: edit,
+                },
+            )
+            .expect("CPU graph must render after GPU cache poison");
+            let frame = match tauri::ipc::IpcResponse::body(response).unwrap() {
+                tauri::ipc::InvokeResponseBody::Raw(bytes) => bytes,
+                tauri::ipc::InvokeResponseBody::Json(_) => panic!("preview must use binary IPC"),
+            };
+            assert_eq!(&frame[0..4], b"SRP3");
+            assert_eq!(
+                u16::from_le_bytes(frame[6..8].try_into().unwrap()) & 0x0010,
+                0x0010,
+                "the CPU fallback must be explicit in the result contract"
+            );
+            let profile_len = u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize;
+            let payload_len = u32::from_le_bytes(frame[36..40].try_into().unwrap()) as usize;
+            let payload_start = 40 + profile_len;
+            assert_eq!(frame.len(), payload_start + payload_len);
+            // Compare decoded payload pixels, never different backend flags/profile headers.
+            let payload_path = root.join(format!("{request_id}.jpg"));
+            std::fs::write(&payload_path, &frame[payload_start..]).unwrap();
+            let image = starroom_imageio::decode_rendered(&payload_path).unwrap();
+            assert_eq!((image.width, image.height), (128, 128));
+            image
+                .rgba
+                .chunks_exact(4)
+                .flat_map(|pixel| pixel[..3].iter().map(|value| (value * 255.0).round() as u8))
+                .collect::<Vec<_>>()
+        };
+        let original = render("original", neutral_settings(), true);
+        type ControlEdit = fn(&mut NativeEditSettings);
+        let controls: [(&str, ControlEdit); 6] = [
+            ("exposure", |edit| edit.exposure = 1.0),
+            ("contrast", |edit| edit.contrast = 75.0),
+            ("highlights", |edit| edit.highlights = -75.0),
+            ("shadows", |edit| edit.shadows = 75.0),
+            ("whites", |edit| edit.whites = -75.0),
+            ("blacks", |edit| edit.blacks = 75.0),
+        ];
+        for (name, change) in controls {
+            let mut edit = neutral_settings();
+            change(&mut edit);
+            let adjusted = render(name, edit.clone(), true);
+            let changed_samples = original
+                .iter()
+                .zip(&adjusted)
+                .filter(|(before, after)| before.abs_diff(**after) > 1)
+                .count();
+            assert!(
+                changed_samples > 128,
+                "{name} must visibly change Native pixels"
+            );
+            assert_eq!(
+                adjusted,
+                render(&format!("{name}-cpu"), edit, false),
+                "{name}: recovered GPU request must use the identical CPU graph"
+            );
+        }
+
+        let masks = [
+            (
+                "radial",
+                MaskDefinition::Radial {
+                    x: 0.5,
+                    y: 0.5,
+                    width: 0.25,
+                    height: 0.25,
+                    rotation: 0.0,
+                    feather: 0.2,
+                    invert: false,
+                },
+            ),
+            (
+                "linear",
+                MaskDefinition::Linear {
+                    start_x: 0.2,
+                    start_y: 0.5,
+                    end_x: 0.8,
+                    end_y: 0.5,
+                    feather: 0.2,
+                    invert: false,
+                },
+            ),
+            (
+                "brush",
+                MaskDefinition::Brush {
+                    points: vec![starroom_project::BrushPoint {
+                        x: 0.5,
+                        y: 0.5,
+                        pressure: 1.0,
+                    }],
+                    radius: 0.2,
+                    feather: 0.2,
+                    flow: 1.0,
+                    erase: false,
+                },
+            ),
+            (
+                "luminance",
+                MaskDefinition::Luminance {
+                    minimum: 0.05,
+                    maximum: 0.4,
+                    feather: 0.05,
+                    invert: false,
+                },
+            ),
+            (
+                "color-range",
+                MaskDefinition::ColorRange {
+                    reference: [0.25; 3],
+                    tolerance: 0.15,
+                    feather: 0.1,
+                    invert: false,
+                },
+            ),
+        ];
+        for (name, mask) in masks {
+            let mut edit = neutral_settings();
+            edit.layers.push(NativeAdjustmentLayer {
+                id: name.into(),
+                name: name.into(),
+                enabled: true,
+                opacity: 1.0,
+                blend_mode: starroom_pipeline::LayerBlendMode::Normal,
+                mask: mask.into(),
+                adjustments: starroom_pipeline::LayerAdjustments {
+                    tone: ToneParameters {
+                        exposure_ev: 1.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            });
+            let adjusted = render(name, edit.clone(), true);
+            let changed_samples = original
+                .iter()
+                .zip(&adjusted)
+                .filter(|(before, after)| before.abs_diff(**after) > 1)
+                .count();
+            assert!(
+                changed_samples > 128,
+                "{name} local edit must affect actual Native pixels"
+            );
+            assert_eq!(
+                adjusted,
+                render(&format!("{name}-cpu"), edit.clone(), false)
+            );
+            edit.layers[0].enabled = false;
+            assert_eq!(
+                original,
+                render(&format!("{name}-disabled"), edit.clone(), true)
+            );
+            edit.layers[0].enabled = true;
+            edit.layers[0].opacity = 0.0;
+            assert_eq!(original, render(&format!("{name}-transparent"), edit, true));
+        }
+        assert_eq!(source_content_hash(&source).unwrap(), source_hash);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_model_selection_never_hides_an_existing_personal_model() {
+        let root =
+            std::env::temp_dir().join(format!("starroom-model-selection-{}", std::process::id()));
+        let personal = root.join("personal").join("model.onnx");
+        let bundled = root.join("bundled").join("model.onnx");
+        std::fs::create_dir_all(personal.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"approved bundle").unwrap();
+        assert_eq!(
+            choose_local_model_file(personal.clone(), bundled.clone(), false),
+            bundled
+        );
+        std::fs::write(&personal, b"invalid personal weight").unwrap();
+        assert_eq!(
+            choose_local_model_file(personal.clone(), bundled.clone(), false),
+            personal
+        );
+        std::fs::remove_file(&personal).unwrap();
+        assert_eq!(
+            choose_local_model_file(personal.clone(), bundled, true),
+            personal
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Run explicitly with STARROOM_LOCAL_MODELS pointing at privately installed weights.
+    /// Public CI cannot run this because BiSeNet, SegFormer and NAFNet are not redistributable.
+    #[test]
+    #[ignore = "requires privately installed, hash-verified AI weights"]
+    fn private_local_ai_providers_load_and_run_offline() {
+        let total_started = Instant::now();
+        let stage_started = Instant::now();
+        let mut portrait_registry = local_portrait_models();
+        portrait_registry.execution_provider = starroom_portrait::ExecutionProvider::Cpu;
+        let mut portrait = PortraitOnnxProvider::initialize(portrait_registry).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let original_hash = source_content_hash(&source).unwrap();
+        let (width, height, rgba, identity) = source_rgba_for_portrait(&source).unwrap();
+        let faces = portrait
+            .detect(width, height, &rgba, 1.0, &identity)
+            .expect("YuNet must detect the real NASA portrait, not a synthetic face");
+        assert_eq!(
+            faces.len(),
+            1,
+            "the public NASA fixture contains one portrait"
+        );
+        let face = &faces[0];
+        assert!(face.confidence.is_finite() && face.confidence > 0.8);
+        assert!(face.bounds.left < 0.45 && face.bounds.right > 0.45);
+        assert!(face.bounds.top < 0.24 && face.bounds.bottom > 0.24);
+        assert!(
+            face.landmarks
+                .iter()
+                .all(|point| point.x.is_finite() && point.y.is_finite())
+        );
+        let parsing = portrait
+            .parse(width, height, &rgba, face, &identity)
+            .unwrap();
+        eprintln!(
+            "private NASA512² YuNet + BiSeNet detection/parsing: {:.3}s",
+            stage_started.elapsed().as_secs_f64()
+        );
+        assert_eq!(parsing.face_id, face.id);
+        assert!(parsing.regions.values().all(|mask| {
+            mask.width == width
+                && mask.height == height
+                && mask.values.len() == width as usize * height as usize
+                && mask
+                    .values
+                    .iter()
+                    .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        }));
+        for region in [
+            PortraitRegion::Skin,
+            PortraitRegion::Eyes,
+            PortraitRegion::Hair,
+        ] {
+            let occupied = parsing.regions[&region]
+                .values
+                .iter()
+                .filter(|value| **value > 0.1)
+                .count();
+            assert!(
+                occupied > 20,
+                "real {region:?} parsing cannot be an empty placeholder"
+            );
+            assert!(
+                occupied < width as usize * height as usize / 2,
+                "real {region:?} parsing cannot cover the whole photo"
+            );
+        }
+
+        // Resolve the real parser artifacts into the same production Skin stage used by export.
+        let stage_started = Instant::now();
+        let cache_key = format!(
+            "{}:{}",
+            parsing.cache_key.face_id, parsing.cache_key.crop_transform_hash
+        );
+        let mut skin_settings = RenderSettings::default();
+        for (region, project_region) in [
+            (PortraitRegion::Skin, PortraitMaskRegion::Skin),
+            (PortraitRegion::Eyes, PortraitMaskRegion::Eyes),
+            (PortraitRegion::Brows, PortraitMaskRegion::Brows),
+            (PortraitRegion::Lips, PortraitMaskRegion::Lips),
+            (PortraitRegion::Hair, PortraitMaskRegion::Hair),
+        ] {
+            let raster = &parsing.regions[&region];
+            skin_settings.portrait_masks.push(PortraitMaskRaster {
+                cache_key: cache_key.clone(),
+                face_id: face.id.clone(),
+                region: project_region,
+                width,
+                height,
+                values: raster.values.clone(),
+            });
+        }
+        skin_settings
+            .skin_retouch
+            .faces
+            .push(starroom_pipeline::SkinRetouchFaceReference {
+                face_id: face.id.clone(),
+                cache_key,
+            });
+        skin_settings.skin_retouch.parameters = starroom_portrait::SkinRetouchParameters {
+            smooth: 0.5,
+            tone_evenness: 0.3,
+            exposure_ev: 0.3,
+            ..Default::default()
+        };
+        let decoded = decode_source(&source).unwrap();
+        let original = render_source_export_to_srgb8(&decoded, &RenderSettings::default()).unwrap();
+        let retouched = render_source_export_to_srgb8(&decoded, &skin_settings).unwrap();
+        assert_eq!((retouched.width, retouched.height), (width, height));
+        assert!(
+            original
+                .data
+                .iter()
+                .zip(&retouched.data)
+                .filter(|(before, after)| before.abs_diff(**after) > 1)
+                .count()
+                > 60,
+            "real parsed skin must change actual production graph pixels"
+        );
+        let preview = render_source_preview_to_srgb8(&decoded, &skin_settings).unwrap();
+        assert_eq!(
+            preview.data, retouched.data,
+            "real Face/Skin Preview and Export share one graph"
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), original_hash);
+        eprintln!(
+            "private NASA512² Skin preview/export/identity: {:.3}s",
+            stage_started.elapsed().as_secs_f64()
+        );
+
+        let stage_started = Instant::now();
+        let mut mask_registry = local_ai_mask_models();
+        mask_registry.execution_provider = starroom_portrait::ExecutionProvider::Cpu;
+        let mut sky =
+            AiMaskOnnxProvider::initialize_for(mask_registry, AiMaskSemantic::Sky).unwrap();
+        let sky_result = sky
+            .generate(
+                width,
+                height,
+                &rgba,
+                &identity,
+                AiMaskSemantic::Sky,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(
+            sky_result.mask.values.len(),
+            sky_result.mask.width as usize * sky_result.mask.height as usize
+        );
+        assert!(sky_result.mask.width > 0 && sky_result.mask.height > 0);
+        assert!(
+            sky_result
+                .mask
+                .values
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        );
+        let mut sky_settings = RenderSettings::default();
+        sky_settings.generated_masks.push(GeneratedMaskRaster {
+            cache_identity: sky_result.cache_identity.clone(),
+            semantic: GeneratedMaskSemantic::Sky,
+            width: sky_result.mask.width,
+            height: sky_result.mask.height,
+            values: sky_result.mask.values.clone(),
+        });
+        sky_settings.layers.push(NativeAdjustmentLayer {
+            id: "actual-sky".into(),
+            name: "Actual sky".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: starroom_pipeline::LayerBlendMode::Normal,
+            mask: MaskDefinition::Generated {
+                provider_id: sky_result.provider_id.clone(),
+                model_id: sky_result.model_id.clone(),
+                model_version: sky_result.model_version.clone(),
+                model_hash: sky_result.model_hash.clone(),
+                semantic_class: GeneratedMaskSemantic::Sky,
+                threshold: 0.5,
+                feather: 0.1,
+                invert: false,
+                cache_identity: sky_result.cache_identity.clone(),
+                metadata: BTreeMap::new(),
+            }
+            .into(),
+            adjustments: starroom_pipeline::LayerAdjustments {
+                tone: ToneParameters {
+                    exposure_ev: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+        let sky_preview = render_source_preview_to_srgb8(&decoded, &sky_settings).unwrap();
+        let sky_export = render_source_export_to_srgb8(&decoded, &sky_settings).unwrap();
+        assert_eq!(sky_preview.data, sky_export.data);
+        eprintln!(
+            "private NASA512² SegFormer + native mask parity: {:.3}s",
+            stage_started.elapsed().as_secs_f64()
+        );
+
+        let stage_started = Instant::now();
+        let mut denoise =
+            NafNetOnnxProvider::initialize(local_nafnet_model(), DenoiseExecutionProvider::Cpu)
+                .unwrap();
+        let working = prepare_source_for_ai_denoise(&decoded, &RenderSettings::default()).unwrap();
+        let residual = infer_tiled(
+            &mut denoise,
+            &working,
+            &identity,
+            &AtomicBool::new(false),
+            DenoiseExecutionProvider::Cpu,
+        )
+        .unwrap();
+        assert_eq!(residual.values.len(), working.data.len());
+        assert!(residual.values.iter().all(|value| value.is_finite()));
+        assert!(
+            residual.values.iter().any(|value| value.abs() > 1.0e-6),
+            "real photo inference cannot be an identity placeholder"
+        );
+        let denoise_settings = RenderSettings {
+            ai_denoise: AiDenoiseParameters {
+                enabled: true,
+                amount: 0.5,
+                ..Default::default()
+            },
+            ai_denoise_residual: Some(residual),
+            ..Default::default()
+        };
+        let denoise_preview = render_source_preview_to_srgb8(&decoded, &denoise_settings).unwrap();
+        let denoise_export = render_source_export_to_srgb8(&decoded, &denoise_settings).unwrap();
+        assert_eq!(denoise_preview.data, denoise_export.data);
+        assert_ne!(
+            denoise_export.data, original.data,
+            "real NAFNet changes production pixels"
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), original_hash);
+        eprintln!(
+            "private NASA512² NAFNet + native denoise parity: {:.3}s; total: {:.3}s",
+            stage_started.elapsed().as_secs_f64(),
+            total_started.elapsed().as_secs_f64()
+        );
+    }
 
     #[test]
     fn preview_worker_pool_allows_before_after_without_global_serialization() {
@@ -4086,6 +4906,18 @@ mod tests {
             healing_operations: Vec::new(),
             grain: GrainSettings::default(),
             vignette: VignetteSettings::default(),
+        }
+    }
+
+    fn neutral_settings() -> NativeEditSettings {
+        NativeEditSettings {
+            exposure: 0.0,
+            contrast: 0.0,
+            highlights: 0.0,
+            shadows: 0.0,
+            temperature: 0.0,
+            tint: 0.0,
+            ..settings()
         }
     }
 

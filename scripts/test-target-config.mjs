@@ -141,7 +141,7 @@ export const targets = {
   },
   web: {
     rust: [],
-    web: ['src'],
+    web: ['src', 'scripts/tests'],
     golden: ['tone', 'curve'],
   },
 }

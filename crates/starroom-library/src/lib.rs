@@ -1119,10 +1119,18 @@ fn read_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
         }
         DecodedSourceImage::Raw(image) => {
             let raw = &image.metadata;
+            // LibRaw records the full active sensor area before half-size development. The
+            // image buffer here is only a 32px metadata preview and must never become the
+            // persistent source resolution. Match LibRaw's processed-image orientation rule.
+            let (width, height) = oriented_raw_active_dimensions(
+                raw.active_width,
+                raw.active_height,
+                raw.orientation,
+            );
             AssetMetadata {
                 file_type: extension,
-                width: Some(image.width),
-                height: Some(image.height),
+                width: Some(width),
+                height: Some(height),
                 orientation: Some(raw.orientation),
                 capture_time: None,
                 camera_make: some(raw.make.clone()),
@@ -1136,6 +1144,16 @@ fn read_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
             }
         }
     })
+}
+
+fn oriented_raw_active_dimensions(width: u32, height: u32, orientation: i32) -> (u32, u32) {
+    // The LibRaw flip field is not EXIF Orientation. Bit 2 transposes the axes, as in
+    // LibRaw 0.22.2 src/postprocessing/mem_image.cpp::get_mem_image_format; bits 0/1 only flip.
+    if orientation & 4 != 0 {
+        (height, width)
+    } else {
+        (width, height)
+    }
 }
 
 fn quick_metadata(path: &Path) -> Result<AssetMetadata, LibraryError> {
@@ -1441,6 +1459,82 @@ mod tests {
     fn png(path: &Path, color: [u8; 3]) {
         let image = image::RgbImage::from_pixel(4, 3, image::Rgb(color));
         image.save(path).unwrap();
+    }
+
+    #[test]
+    fn raw_active_dimensions_follow_libraw_orientation_without_preview_scaling() {
+        for orientation in 0..4 {
+            assert_eq!(
+                oriented_raw_active_dimensions(6033, 4033, orientation),
+                (6033, 4033)
+            );
+        }
+        for orientation in 4..8 {
+            assert_eq!(
+                oriented_raw_active_dimensions(6033, 4033, orientation),
+                (4033, 6033)
+            );
+        }
+    }
+
+    #[test]
+    fn nikon_raw_catalog_metadata_persists_source_dimensions_not_tiny_preview() {
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/raw/sources/nikon-d1.nef");
+        let original = fs::read(&source).unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&original)),
+            "7886d8b0e1257897faa7404b98fe1086ee2d95606531b6285aed83a0939b768f"
+        );
+        let DecodedSourceImage::Raw(preview) = decode_source_preview(&source, 32).unwrap() else {
+            panic!("the legal Nikon fixture must use the real RAW sensor provider");
+        };
+        assert_eq!(preview.width.max(preview.height), 32);
+        assert!(preview.preview_half_size);
+        let expected = oriented_raw_active_dimensions(
+            preview.metadata.active_width,
+            preview.metadata.active_height,
+            preview.metadata.orientation,
+        );
+        assert!(expected.0 > 1000 && expected.1 > 1000);
+        let full = starroom_imageio::decode_source(&source).unwrap();
+        assert_eq!(
+            (full.width(), full.height()),
+            expected,
+            "source dimensions must agree with full-resolution LibRaw development"
+        );
+
+        let metadata = Library::extract_metadata(&source).unwrap();
+        assert_eq!(
+            (metadata.width, metadata.height),
+            (Some(expected.0), Some(expected.1))
+        );
+        assert_eq!(metadata.camera_make.as_deref(), Some("Nikon"));
+        assert_eq!(metadata.camera_model.as_deref(), Some("D1"));
+        let root = temp("raw-source-metadata");
+        let database = root.join("library.sqlite");
+        let mut library = Library::open(&database).unwrap();
+        let imported = library
+            .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+            .unwrap();
+        let id = imported.imported[0];
+        library.update_metadata(id, &metadata).unwrap();
+        drop(library);
+        let reopened = Library::open(&database).unwrap();
+        let persisted = reopened.asset(id).unwrap().unwrap().metadata;
+        assert_eq!(
+            (persisted.width, persisted.height),
+            (Some(expected.0), Some(expected.1))
+        );
+        assert_ne!(
+            (persisted.width, persisted.height),
+            (Some(preview.width), Some(preview.height))
+        );
+        assert_eq!(original, fs::read(&source).unwrap());
+        eprintln!(
+            "Nikon RAW preview {}x{}; persisted source {}x{}",
+            preview.width, preview.height, expected.0, expected.1
+        );
     }
 
     #[test]

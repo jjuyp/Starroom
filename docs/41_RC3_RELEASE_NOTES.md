@@ -22,7 +22,10 @@ prerelease; Preview and Export still share the same Native graph.
   manual Heal render only the required source region plus conservative halo; correctness-sensitive
   auto-source Heal remains an explicit full-frame path.
 
-## Local release qualification
+## Historical local qualification (prior field-fix snapshot)
+
+The counts, timings and binary hashes below describe the earlier snapshot, not the October
+field-repair source or newly rebuilt installer. They are retained as baseline evidence only.
 
 - Warning-denied full workspace, 59 frontend tests, 11/11 Golden cases and all six public RAW
   fixtures pass on Windows MSVC.
@@ -46,3 +49,21 @@ workflows; these local results are not substituted for CI.
 - Subject/Background remains the bundled offline BiRefNet capability.
 - Sky and AI Denoise remain explicit optional local capabilities.
 - This is not Starroom v1.0 Final. PR #2 remains Open/Draft and `main` remains unmerged.
+
+## October field-repair verification
+
+- GPU poison recovery, queued History, RGB histogram, responsive glass/Color inspector,
+  selected-layer mask controls and sidebar-only Presets/History are implemented with regressions.
+- RAW catalog dimensions come from LibRaw active area/orientation, with identity-checked
+  selected-record repair for older tiny metadata. No source photo or history sidecar is changed.
+- Local source gate: 298 Rust tests, 91 frontend tests, format, warning-denied Clippy, doc-test
+  runners, lint, TypeScript/build, JSON/schema, 11/11 Golden manifest and six CC0 RAW fixtures.
+  Private real-model AI inference/preview-export parity is an additional manually run gate, not
+  a public-CI test. Current license inventory is 561 Rust/6 production npm/269 notice texts.
+- Final installer hashes and same-SHA CI links are recorded with the dated deliverable report,
+  not substituted with the historical hashes above. No new release tag is authorized by local
+  source tests alone.
+- Newly built desktop GUI interaction/screenshot acceptance remains unverified: the test-tool
+  launch approval expired. Older installed-app screenshots were rejected. This must be resumed
+  with app-launch authorization before claiming all nine field requests have full visual and
+  interactive acceptance. A second computer still requires independent field validation.

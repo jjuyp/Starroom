@@ -1,5 +1,16 @@
 # Complete Internal Build Plan
 
+## Edit workspace UI V2 field redesign (2026-09-19)
+
+- [x] Apply shared navy glass design tokens and module-level Bento grouping to the real editor.
+- [x] Connect color-aware sliders, eight-band mixer, four-zone grading wheel and numeric controls
+  to the existing Native edit state; preserve the Rust preview/export graph.
+- [x] Show an estimated RAW as-shot Kelvin only when camera-neutral/profile data validates it;
+  otherwise show explicit relative/unknown state, never fabricate physical Kelvin for RGB files.
+- [x] Review 1920x1080 and 2560x1440 browser layout/overflow with real interactive controls.
+- [ ] Validate the installed Tauri build with real RAW/JPEG camera files and monitor DPI changes;
+  the browser demo screenshot alone cannot qualify native render quality or Windows packaging.
+
 ## RC3 GPU-resident preview completion (2026-09-15)
 
 - [x] Keep one process-wide wgpu Device/Queue, compiled pipeline set, parameter/LUT buffers and
@@ -554,3 +565,22 @@ Preferred foundation: darktable `ashift` and proven projective math.
 The foundation wins before novelty.
 
 Do not call Starroom production-ready if its RAW, tone, color, denoise, sharpening, optics, or perspective baseline is materially worse than the mature open-source foundation selected for that stage, even if advanced Starroom features are already impressive.
+
+## October field usability verification
+
+- [x] Remove the duplicate center Presets/History strip; keep those controls in the left panel.
+- [x] Recover a poisoned GPU device cache with explicitly labelled Native CPU fallback and add regression coverage.
+- [x] Serialize Native History commands and reject edits until persisted history is ready.
+- [x] Add RGB display histogram, responsive Color inspector, functional disclosure control and glass/mask polish.
+- [x] Install the already-owned, hash-verified AI weights into this machine's private app-data directory without publishing them.
+- [x] Validate stored RAW source dimensions from LibRaw active area/orientation; lazily repair selected legacy 32-pixel metadata without clearing the catalog or changing workflow/history/source pixels.
+- [x] Reject stale selection-scoped AI/Reference/Look completions; preserve complete brush/healing operations at capacity rather than silently truncating.
+- [x] Restore reachable Library metadata/keyword controls and batch export settings; keep navigation available at supported compact widths and Browser demo explicitly read-only.
+- [x] Run production Native pixel regressions for recovered GPU preview, six Light controls, five manual mask types, and local real-model Skin/Sky/Denoise preview/export parity.
+- [ ] Verify GPU/CPU preview switching, History Undo/Redo, and AI inference using real Native photos in the rebuilt installed executable.
+- [ ] Confirm every high-use edit tool, export format and mask workflow in a fresh interactive desktop session; Browser demo coverage does not count as Native acceptance.
+- [ ] Validate the updated installer on a second clean computer. The public package intentionally cannot include non-redistributable Face/Skin, Sky or NAFNet weights.
+
+Native desktop interaction/screenshot acceptance is not replaced by AST tests or the Browser demo.
+The explicit newly built desktop executable launch was denied by an expired app-approval prompt;
+resume that gate only after desktop-tool launch authorization is granted. This is not a product-test pass.

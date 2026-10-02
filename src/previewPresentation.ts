@@ -38,3 +38,17 @@ export function calculateHistogram(imageData: ImageData, bins = 48) {
   const maximum = Math.max(...values, 1)
   return values.map((value) => value / maximum)
 }
+
+export interface DisplayHistogram { luminance: number[]; red: number[]; green: number[]; blue: number[] }
+/** Display-channel counts only: this never changes or color-transforms image pixels. */
+export function calculateDisplayHistogram(imageData: ImageData, bins = 128): DisplayHistogram {
+  const channels = [0, 1, 2].map(() => Array.from({ length: bins }, () => 0))
+  const stride = Math.max(4, Math.floor(imageData.data.length / 300_000 / 4) * 4)
+  for (let index = 0; index < imageData.data.length; index += stride) {
+    if (imageData.data[index + 3] === 0) continue
+    channels.forEach((channel, component) => { channel[Math.min(bins - 1, Math.floor(imageData.data[index + component] * bins / 256))] += 1 })
+  }
+  const maximum = Math.max(1, ...channels.flat())
+  const [red, green, blue] = channels.map((channel) => channel.map((value) => value / maximum))
+  return { red, green, blue, luminance: calculateHistogram(imageData, bins) }
+}

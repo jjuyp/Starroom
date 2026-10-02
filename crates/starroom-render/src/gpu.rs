@@ -263,6 +263,7 @@ impl GpuRenderer {
             .map_err(|error| GpuError::Device(error.to_string()))?;
         let device = Arc::new(device);
         let queue = Arc::new(queue);
+        let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let exposure_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("starroom-m12-exposure-layout"),
             entries: &[
@@ -307,7 +308,6 @@ impl GpuRenderer {
             label: Some("starroom-m12-exposure-wgsl"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(EXPOSURE_WGSL)),
         });
-        let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let exposure_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("starroom-m12-exposure-pipeline"),
             layout: Some(&pipeline_layout),
@@ -319,6 +319,7 @@ impl GpuRenderer {
         if let Some(error) = validation_scope.pop().await {
             return Err(GpuError::Shader(error.to_string()));
         }
+        let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let creative_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("starroom-creative-layout"),
             entries: &[
@@ -355,6 +356,9 @@ impl GpuRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        if let Some(error) = validation_scope.pop().await {
+            return Err(GpuError::Shader(error.to_string()));
+        }
         Ok(Self {
             _instance: instance,
             device,
@@ -474,6 +478,13 @@ impl GpuRenderer {
             || !pixels.iter().flatten().all(|value| value.is_finite())
         {
             return Err(GpuError::InvalidPixels);
+        }
+        if pixels.len().div_ceil(64)
+            > self.device.limits().max_compute_workgroups_per_dimension as usize
+        {
+            return Err(GpuError::Unsupported(
+                "exposure dispatch exceeds adapter workgroup limit".into(),
+            ));
         }
         let byte_len = std::mem::size_of_val(pixels) as u64;
         if byte_len > self.device.limits().max_storage_buffer_binding_size {
@@ -640,6 +651,13 @@ impl GpuRenderer {
             || !curve_luts.iter().all(|value| value.is_finite())
         {
             return Err(GpuError::InvalidPixels);
+        }
+        if pixels.len().div_ceil(64)
+            > self.device.limits().max_compute_workgroups_per_dimension as usize
+        {
+            return Err(GpuError::Unsupported(
+                "creative dispatch exceeds adapter workgroup limit".into(),
+            ));
         }
         let byte_len = std::mem::size_of_val(pixels) as u64;
         if byte_len > self.device.limits().max_storage_buffer_binding_size {

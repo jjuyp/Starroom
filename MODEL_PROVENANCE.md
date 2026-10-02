@@ -29,9 +29,17 @@ Place reviewed binaries in the ignored local directory (or set
 models/local/face_detection_yunet_2026may.onnx
 models/local/bisenet_resnet18.onnx
 models/local/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx
+models/local/segformer-b0-ade20k-489d5cd.onnx
 models/local/nafnet-sidd-width32-512-opset20.onnx
 ```
 
 The application verifies the hashes above. Any changed file reports `modelHashMismatch` rather
 than silently accepting a different model. A no-model workstation reports an explicit unavailable
 state and continues safely without portrait detection.
+
+Installed GUI builds also discover reviewed private models in
+`%LOCALAPPDATA%\studio.starroom.app\models\local`. The local installation script verifies each
+hash before copying; no runtime download is performed. Approved bundled BiRefNet is resolved
+per file when no personal copy exists. An invalid personal model is reported, never silently
+replaced. Only BiRefNet is included in the public installer; BiSeNet, SegFormer and NAFNet
+remain private/local-only under the decisions above.

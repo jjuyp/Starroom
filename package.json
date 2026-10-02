@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/windows-safe-build.mjs",
-    "build:desktop": "tauri build --bundles nsis",
+    "build:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-release-models.ps1 -RepositoryRoot . && npm run build:desktop:rc2",
     "build:desktop:rc2": "tauri build --bundles nsis --config src-tauri/tauri.rc2.conf.json",
     "build:web": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "lint": "eslint .",

@@ -18,13 +18,15 @@ function Assert-Launch([string]$Executable, [string]$Label, [string]$ProfileRoot
     APPDATA = $env:APPDATA
     LOCALAPPDATA = $env:LOCALAPPDATA
     WEBVIEW2_USER_DATA_FOLDER = $env:WEBVIEW2_USER_DATA_FOLDER
+    STARROOM_LOCAL_MODELS = $env:STARROOM_LOCAL_MODELS
   }
   $env:APPDATA = $roaming
   $env:LOCALAPPDATA = $local
   $env:WEBVIEW2_USER_DATA_FOLDER = $webview
+  $env:STARROOM_LOCAL_MODELS = Join-Path (Split-Path -Parent $Executable) 'models\local'
   $process = $null
   try {
-    $process = Start-Process -FilePath $Executable -WindowStyle Hidden -PassThru
+    $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 8
     if ($process.HasExited) { throw "$Label exited during runtime smoke with code $($process.ExitCode)" }
   } finally {
@@ -32,6 +34,7 @@ function Assert-Launch([string]$Executable, [string]$Label, [string]$ProfileRoot
     $env:APPDATA = $previous.APPDATA
     $env:LOCALAPPDATA = $previous.LOCALAPPDATA
     $env:WEBVIEW2_USER_DATA_FOLDER = $previous.WEBVIEW2_USER_DATA_FOLDER
+    $env:STARROOM_LOCAL_MODELS = $previous.STARROOM_LOCAL_MODELS
   }
 }
 
@@ -39,15 +42,18 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
   if (Test-Path -LiteralPath $TestRoot) { throw "Release self-test target is not clean: $TestRoot" }
   $stdout = [IO.Path]::GetTempFileName()
   $stderr = [IO.Path]::GetTempFileName()
+  $previousModels = $env:STARROOM_LOCAL_MODELS
+  $env:STARROOM_LOCAL_MODELS = Join-Path (Split-Path -Parent $Executable) 'models\local'
   try {
     # The release executable uses the Windows GUI subsystem. PowerShell's call operator does not
     # reliably wait for GUI binaries and may close their stdout pipe before the self-test writes
     # JSON. Start-Process provides an explicit waitable process and durable capture files.
-    $process = Start-Process -FilePath $Executable -ArgumentList @('--release-self-test', ('"{0}"' -f $TestRoot)) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
+    $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -ArgumentList @('--release-self-test', ('"{0}"' -f $TestRoot)) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
     $output = Get-Content -LiteralPath $stdout -Raw
     $diagnostic = Get-Content -LiteralPath $stderr -Raw
     if ($process.ExitCode -ne 0) { throw "Packaged release self-test failed with code $($process.ExitCode): $diagnostic" }
   } finally {
+    $env:STARROOM_LOCAL_MODELS = $previousModels
     Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
   }
   $report = $output | ConvertFrom-Json
@@ -61,8 +67,10 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
       throw "Packaged release self-test returned an invalid $model state: $($report.$model)"
     }
   }
-  if ($report.faceSkin -ne 'typed-unavailable') {
-    throw "Public rc.2 must keep local-only BiSeNet out of the installer: $($report.faceSkin)"
+  foreach ($privateCapability in @('faceSkin', 'sky', 'aiDenoise')) {
+    if ($report.$privateCapability -ne 'typed-unavailable') {
+      throw "Public installer must exclude private-only $privateCapability weights: $($report.$privateCapability)"
+    }
   }
   if ($report.subjectBackground -ne 'available') {
     throw "Public rc.2 must provide the verified bundled Subject/Background model: $($report.subjectBackground)"
@@ -73,12 +81,15 @@ function Assert-ReleaseSelfTest([string]$Executable, [string]$TestRoot) {
 function Assert-ReleaseAiSelfTest([string]$Executable) {
   $stdout = [IO.Path]::GetTempFileName()
   $stderr = [IO.Path]::GetTempFileName()
+  $previousModels = $env:STARROOM_LOCAL_MODELS
+  $env:STARROOM_LOCAL_MODELS = Join-Path (Split-Path -Parent $Executable) 'models\local'
   try {
-    $process = Start-Process -FilePath $Executable -ArgumentList '--release-ai-self-test' -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
+    $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path -Parent $Executable) -ArgumentList '--release-ai-self-test' -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
     $output = Get-Content -LiteralPath $stdout -Raw
     $diagnostic = Get-Content -LiteralPath $stderr -Raw
     if ($process.ExitCode -ne 0) { throw "Packaged release AI self-test failed with code $($process.ExitCode): $diagnostic" }
   } finally {
+    $env:STARROOM_LOCAL_MODELS = $previousModels
     Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
   }
   $report = $output | ConvertFrom-Json
@@ -146,6 +157,10 @@ $installedResources = @(
   Assert-BundledResource 'docs\36_M30_DEPENDENCY_LICENSE_REPORT.json'
   Assert-BundledResource 'release-models\BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx'
 )
+$installedModels = @(Get-ChildItem -LiteralPath $installRoot -Filter '*.onnx' -File -Recurse)
+if ($installedModels.Count -ne 1 -or $installedModels[0].Name -ne 'BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx') {
+  throw 'Public installer model inventory must contain exactly the approved BiRefNet weight'
+}
 Assert-Launch $installedExe.FullName 'clean-installed executable' (Join-Path $runnerTemp 'starroom-rc-installed-profile')
 Assert-ReleaseSelfTest $installedExe.FullName (Join-Path $runnerTemp 'starroom-rc-production-self-test')
 Assert-ReleaseAiSelfTest $installedExe.FullName

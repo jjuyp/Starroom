@@ -61,6 +61,7 @@ export interface NativeSessionOpen { state: NativeSessionState | null; recoveryA
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
+export interface NativeWhiteBalanceInfo { source: 'rawMetadata' | 'renderedRelative'; asShotKelvin: number | null }
 export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoint[]; green: ToneCurvePoint[]; blue: ToneCurvePoint[] }
 export type NativeColorBand = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta'
 export interface NativeBandAdjustment { hueDegrees: number; chroma: number; lightness: number }
@@ -509,6 +510,10 @@ export async function renderNativePreview(
   return parseNativePreviewFrame(frame)
 }
 
+export async function queryNativeWhiteBalanceInfo(sourcePath: string) {
+  return invoke<NativeWhiteBalanceInfo>('native_white_balance_info', { sourcePath })
+}
+
 export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,
   curve: ToneCurvePoint[], whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
   toneCurves: NativeToneCurves, opticsState: NativeOpticsState = defaultNativeOpticsState): Promise<NativeColorBand | null> {
@@ -589,6 +594,10 @@ export async function nativeLibraryCollectionAssets(collectionId: number, limit 
 export async function nativeLibraryThumbnail(assetId: number, size: 'small256' | 'medium512' | 'large1024' = 'medium512') {
   const path = await invoke<string>('library_thumbnail', { assetId, size })
   return convertFileSrc(path)
+}
+
+export async function refreshNativeLibraryMetadata(assetId: number) {
+  return invoke<NativeLibraryAsset>('library_refresh_metadata', { assetId })
 }
 
 export async function openNativeHistory(assetId: number, initialState: NativeEditSettings) {

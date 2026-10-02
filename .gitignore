@@ -1,6 +1,8 @@
 node_modules/
 dist/
 target/
+src-tauri/gen/
+.playwright-cli/
 *.log
 *.tsbuildinfo
 vite.config.js

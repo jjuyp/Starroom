@@ -339,7 +339,8 @@ fn interpolate_dng_candidates(
     )
 }
 
-fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
+/// Estimates correlated color temperature from real RAW camera-neutral metadata.
+pub fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
     let matrix = libraw_camera_to_xyz(input.libraw_cam_xyz)?;
     let neutral = Xyz {
         x: input.camera_neutral[0],
@@ -356,7 +357,9 @@ fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
     }
     let x = xyz.x / sum;
     let y = xyz.y / sum;
-    let denominator = 0.1858 - y;
+    // McCamy's approximation uses n = (x - 0.3320) / (y - 0.1858).
+    // Reversing the denominator sign shifts a D65 neutral toward roughly 4600 K.
+    let denominator = y - 0.1858;
     if denominator.abs() < 1.0e-6 {
         return None;
     }
@@ -487,6 +490,18 @@ mod tests {
         for (actual, expected) in white.into_iter().zip([D65.x, D65.y, D65.z]) {
             assert!((actual - expected).abs() < 1.0e-5);
         }
+    }
+
+    #[test]
+    fn as_shot_kelvin_comes_from_camera_neutral_and_profile_matrix() {
+        let mut value = input();
+        value.camera_neutral = [1.0; 4];
+        value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        let kelvin = estimated_as_shot_kelvin(&value).expect("valid RAW WB metadata");
+        assert!((6_000.0..=7_000.0).contains(&kelvin));
+
+        value.libraw_cam_xyz = [[0.0; 3]; 4];
+        assert_eq!(estimated_as_shot_kelvin(&value), None);
     }
 
     #[test]
