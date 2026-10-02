@@ -56,7 +56,7 @@ workflows; these local results are not substituted for CI.
   selected-layer mask controls and sidebar-only Presets/History are implemented with regressions.
 - RAW catalog dimensions come from LibRaw active area/orientation, with identity-checked
   selected-record repair for older tiny metadata. No source photo or history sidecar is changed.
-- Local source gate: 298 Rust tests, 91 frontend tests, format, warning-denied Clippy, doc-test
+- Local source gate: 299 Rust tests, 92 frontend tests, format, warning-denied Clippy, doc-test
   runners, lint, TypeScript/build, JSON/schema, 11/11 Golden manifest and six CC0 RAW fixtures.
   Private real-model AI inference/preview-export parity is an additional manually run gate, not
   a public-CI test. Current license inventory is 561 Rust/6 production npm/269 notice texts.

@@ -530,11 +530,19 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
   relink/file-change races are typed errors. Ratings, keywords and history remain untouched.
   Real Nikon RAW regression repairs 32x21 to 2012x1324, checks reopen/source hash/history bytes,
   and verifies workflow updates interleaved with decode are not overwritten.
-- Full local Windows MSVC validation: 298 Rust tests pass, four opt-in tests remain explicitly
+- Full local Windows MSVC validation: 299 Rust tests pass, four opt-in tests remain explicitly
   ignored in the ordinary suite; all doc-test runners, format and warning-denied Clippy pass.
-  Frontend has 91 tests (77 behavior/unit plus 14 production TSX/CSS structural guards), lint,
+  Frontend has 92 tests (77 behavior/unit plus 15 production TSX/CSS structural guards), lint,
   TypeScript and production build. Golden manifest is 11/11 with five immutable photographic
   sources and six public CC0 RAW fixtures. JSON/schema and license/release validators pass.
+- The current GitHub stable compiler deprecated `AtomicU64::fetch_update`. Import batch tokens
+  now use a standard compare-exchange loop compatible with both release Rust 1.97.1 and newer
+  stable Rust, without suppressing warnings or changing the CI toolchain. The returned token is
+  the successfully committed new value; a fixed-clock, backward-clock and 2,048-token concurrent
+  regression also prevents the old-value reuse bug. Library tests and warning-denied Clippy pass.
+- RGB histogram channels have shared base fill/stroke styles for gray and light themes as well
+  as the dark glass overrides. A cross-theme structural guard prevents SVG default-black paths;
+  the histogram remains display analysis and does not alter source or rendered image pixels.
 - The separately invoked private-model regression executes actual YuNet/BiSeNet inference,
   Skin shared-graph preview/export, SegFormer sky and tiled NAFNet residual application on the
   photographic NASA fixture. Debug CPU inclusive timings were 4.066/5.944/2.391/6.350 s;

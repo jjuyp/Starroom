@@ -1228,13 +1228,18 @@ fn next_batch_id() -> i64 {
         .unwrap_or_default()
         .as_micros()
         .min(i64::MAX as u128) as u64;
-    let id = IMPORT_BATCH_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous| {
-            Some(clock.max(previous.saturating_add(1)))
-        })
-        .unwrap_or_default()
-        .max(clock);
-    id as i64
+    next_batch_token(&IMPORT_BATCH_ID, clock) as i64
+}
+
+fn next_batch_token(counter: &AtomicU64, clock: u64) -> u64 {
+    let mut previous = counter.load(Ordering::Relaxed);
+    loop {
+        let next = clock.max(previous.saturating_add(1));
+        match counter.compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(observed) => previous = observed,
+        }
+    }
 }
 fn system_time(value: SystemTime) -> i64 {
     value
@@ -1567,6 +1572,51 @@ mod tests {
             Err(LibraryError::CorruptDatabase(_))
         ));
         assert_eq!(fs::read(database).unwrap(), corrupt);
+    }
+
+    #[test]
+    fn import_batch_tokens_are_unique_under_fixed_clock_and_thread_contention() {
+        use std::sync::{Arc, Barrier};
+
+        let sequential = AtomicU64::new(0);
+        for expected in 1000..1010 {
+            assert_eq!(next_batch_token(&sequential, 1000), expected);
+            assert_eq!(sequential.load(Ordering::Relaxed), expected);
+        }
+        assert_eq!(
+            next_batch_token(&sequential, 999),
+            1010,
+            "a backward clock must not reuse an earlier import batch"
+        );
+
+        const THREADS: usize = 8;
+        const BATCHES: usize = 256;
+        const CLOCK: u64 = 10_000;
+        let counter = Arc::new(AtomicU64::new(0));
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let counter = Arc::clone(&counter);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (0..BATCHES)
+                        .map(|_| next_batch_token(&counter, CLOCK))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let mut tokens: Vec<_> = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect();
+        tokens.sort_unstable();
+        assert_eq!(
+            tokens,
+            (CLOCK..CLOCK + (THREADS * BATCHES) as u64).collect::<Vec<_>>(),
+            "every thread must return the distinct token actually committed by its CAS"
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), *tokens.last().unwrap());
     }
 
     #[test]

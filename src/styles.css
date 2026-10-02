@@ -192,6 +192,11 @@ button:disabled { opacity: .35; cursor: default; }
 .histogram-wrap { padding: 10px 12px 7px; border-bottom: 1px solid var(--border); }
 .histogram { height: 79px; display: flex; align-items: end; gap: 2px; padding: 5px 8px 0; background: linear-gradient(180deg, rgba(173,186,255,.035), transparent), repeating-linear-gradient(90deg, transparent 0 24%, var(--border) 24.3% 24.6%); border-radius: var(--radius-sm); overflow: hidden; }
 .histogram i { flex: 1; min-width: 2px; opacity: .8; background: linear-gradient(to top, #d3a8ff, #8ad2ff); clip-path: polygon(0 100%, 15% 50%, 50% 0, 85% 45%, 100% 100%); }
+.histogram-channel { stroke-width: .8; }
+.histogram-channel.red { fill: rgba(209,52,82,.42); stroke: rgb(185,32,60); }
+.histogram-channel.green { fill: rgba(20,148,90,.40); stroke: rgb(12,119,68); }
+.histogram-channel.blue { fill: rgba(45,106,216,.46); stroke: rgb(30,80,185); }
+.histogram-channel.luminance { fill: rgba(90,75,155,.42); stroke: rgb(73,58,134); }
 .histogram-wrap > div:last-child { display: flex; justify-content: space-between; padding-top: 6px; color: var(--text-3); font: 9px "Cascadia Mono", monospace; }
 .tool-layout { min-height: 0; flex: 1 1 auto; display: grid; grid-template-columns: 46px minmax(0, 1fr); }
 .tool-rail { padding: 7px 4px; border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 3px; }

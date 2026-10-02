@@ -46,7 +46,8 @@
 - [x] Apply the requested blue frosted-glass workspace and put visual Temperature/Tint/Vibrance/
   Saturation controls before advanced Color Mixer/Grading controls.
 - [x] Complete full warning-denied/RAW/Golden/performance regression, package and installed-app
-  field workflow validation on the final immutable candidate SHA.
+  field workflow validation on that historical September snapshot only; this is not acceptance
+  for the October field fixes or their rebuilt installer.
 - [ ] Pass same-SHA Blueprint and Windows installer/runtime gates, then publish `v1.0.0-rc.3`
   without replacing rc.2, merging `main`, closing Draft PR #2, or starting M31.
 
@@ -577,6 +578,7 @@ Do not call Starroom production-ready if its RAW, tone, color, denoise, sharpeni
 - [x] Reject stale selection-scoped AI/Reference/Look completions; preserve complete brush/healing operations at capacity rather than silently truncating.
 - [x] Restore reachable Library metadata/keyword controls and batch export settings; keep navigation available at supported compact widths and Browser demo explicitly read-only.
 - [x] Run production Native pixel regressions for recovered GPU preview, six Light controls, five manual mask types, and local real-model Skin/Sky/Denoise preview/export parity.
+- [x] Repair latest-stable compiler compatibility without warning suppression; verify unique import batch tokens under fixed/backward clocks and concurrent imports.
 - [ ] Verify GPU/CPU preview switching, History Undo/Redo, and AI inference using real Native photos in the rebuilt installed executable.
 - [ ] Confirm every high-use edit tool, export format and mask workflow in a fresh interactive desktop session; Browser demo coverage does not count as Native acceptance.
 - [ ] Validate the updated installer on a second clean computer. The public package intentionally cannot include non-redistributable Face/Skin, Sky or NAFNet weights.

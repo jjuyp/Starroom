@@ -339,4 +339,22 @@ describe('production workspace UI structure', () => {
     expect(fixedCpuLabels).toHaveLength(0)
     expect(identifier(badge, 'renderBackend')).toBe(true)
   })
+
+  it('provides distinct RGB histogram colors in all themes, not only dark glass', () => {
+    const fills: string[] = [], strokes: string[] = []
+    for (const channel of ['red', 'green', 'blue']) {
+      // Unscoped production rules apply to gray/light as well as dark; the
+      // glass theme may layer brighter colors over this shared base.
+      const selector = `.histogram-channel.${channel}`
+      const fill = winningValue(selector, 'fill'), stroke = winningValue(selector, 'stroke')
+      expect(fill, `${channel} must have a shared fill outside .theme-dark`).toBeDefined()
+      expect(stroke, `${channel} must have a shared stroke outside .theme-dark`).toBeDefined()
+      expect(rulesFor(selector).every((rule) => rule.parent?.type === 'root')).toBe(true)
+      fills.push(fill!); strokes.push(stroke!)
+      expect(winningValue(`.theme-dark ${selector}`, 'fill')).toBeDefined()
+    }
+    expect(new Set(fills).size).toBe(3)
+    expect(new Set(strokes).size).toBe(3)
+    expect(winningValue('.histogram-channel.luminance', 'fill')).toBeDefined()
+  })
 })
