@@ -4386,7 +4386,9 @@ mod tests {
             assert_eq!((image.width, image.height), (128, 128));
             image
                 .rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|pixel| pixel[..3].iter().map(|value| (value * 255.0).round() as u8))
                 .collect::<Vec<_>>()
         };

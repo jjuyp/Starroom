@@ -543,6 +543,14 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
 - RGB histogram channels have shared base fill/stroke styles for gray and light themes as well
   as the dark glass overrides. A cross-theme structural guard prevents SVG default-black paths;
   the histogram remains display analysis and does not alter source or rendered image pixels.
+- Rust 1.99 stable additionally linted the decoded-preview test's constant pixel chunk size.
+  The regression now uses `as_chunks::<4>()` with the same pixel sequence and assertions; it
+  passes on release Rust 1.97.1 without allowing or disabling the new lint. The GPU recovery
+  pixel regression and full warning-denied Clippy pass locally.
+- CI's npm audit surfaced development-only Vitest/mocker path traversal and brace-expansion
+  denial-of-service advisories. Vitest is now exactly 4.1.11, brace-expansion resolves to 5.0.12,
+  the license lock identity is regenerated, and npm audit reports zero known vulnerabilities.
+  All 92 frontend tests still pass. Product/runtime dependencies and image processing are unchanged.
 - The separately invoked private-model regression executes actual YuNet/BiSeNet inference,
   Skin shared-graph preview/export, SegFormer sky and tiled NAFNet residual application on the
   photographic NASA fixture. Debug CPU inclusive timings were 4.066/5.944/2.391/6.350 s;

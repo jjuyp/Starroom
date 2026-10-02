@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "policy": "GPL-3.0-or-later combined work; preserve file-level and notice obligations",
   "cargoLockSha256": "485376c6c0601776bad9644da4f022e5fe144c3d1c8268089042b7a4f5770dfc",
-  "packageLockSha256": "370ad9a40a6ae5ac95affc71ffd8efeb45c29c3f2d7ff59752c1bd12eb4e411f",
+  "packageLockSha256": "c0e584e73ec8c6974102d2d1f26fec99d4820be7798c30be192d49a020de4e51",
   "rust": [
     {
       "name": "adler2",

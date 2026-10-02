@@ -92,6 +92,21 @@ The authoritative resolved versions are in `Cargo.lock`. “Direct” means decl
 
 There is currently **no third-party JavaScript image-processing dependency**. The browser fallback uses platform `CanvasRenderingContext2D`, `Image`, `ImageData`, Blob and object-URL APIs in `src/imagePipeline.ts` and `src/App.tsx`; real desktop-photo processing enters the Rust graph. The official Tauri JS packages listed above provide transport/dialog bindings only. React, Lucide, Vite and test/lint packages are UI/tooling dependencies, not image algorithms. Their exact versions remain pinned by `package-lock.json` and require the normal release notice audit, but they are outside this image-foundation inventory.
 
+## October development-tool security repair (2026-10-02)
+
+These MIT dependencies are development/test tools, not image algorithms and not shipped in the
+desktop executable or production JavaScript. `package-lock.json` records resolved URLs and
+integrity hashes; the release license report is regenerated after this lockfile change.
+
+| Dependency | Upstream | Locked version | Purpose / derivation | Security repair / distribution |
+|---|---|---|---|---|
+| `vitest` and `@vitest/*` | [vitest-dev/vitest](https://github.com/vitest-dev/vitest) | 4.1.11 (exact direct pin) | Test runner; public API only, no port | [Official GHSA-82fw-gwwq-j7x9](https://github.com/vitest-dev/vitest/security/advisories/GHSA-82fw-gwwq-j7x9) fixes redirect-mock path traversal. Not bundled. |
+| `brace-expansion` | [isaacs/brace-expansion](https://github.com/isaacs/brace-expansion) | 5.0.12 | ESLint/minimatch transitive glob tooling; no port | Addresses reported nested-brace/expansion denial-of-service advisories. Not bundled. |
+
+The post-update npm audit reports zero known vulnerabilities; this is a time-specific dependency
+registry check, not a guarantee that future advisories cannot exist. No Rust or production npm
+dependency changed.
+
 ## Provenance rule for future integrations
 
 Every new adapter or port must add: upstream file/module, immutable tag/SHA, original license header, integration mode (`link`, `adapter`, `behavioral reference`, `direct port`, or `generated reference data`), Starroom destination files, binary/data packaging, modifications, and external-distribution decision. “Looked at upstream” is not enough to classify a direct translation as independent work.
