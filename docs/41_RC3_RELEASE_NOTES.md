@@ -83,3 +83,7 @@ The follow-up state-change scheduling repair adds three frontend regressions (13
 requires a new immutable candidate. R18 joins the ledger; no old green run is reused to claim
 acceptance for the newly rebuilt GUI. Render/RAW/model dependencies and pixel semantics remain
 the verified previous batch, with no added dependency or licensing change.
+
+The last canonical-JSON closure adds two ordering/optional-field regressions (137 frontend total).
+It prevents Rust-sorted JSON from becoming a phantom no-op History command on focus/reopen while
+preserving the original persisted JSON/hash chain. Both scheduling and commit paths use it.

@@ -28,7 +28,7 @@ Status vocabulary is intentionally closed: `OPEN`, `FIXED`, `VERIFIED`, `EXTERNA
 | M30-R15 | FIXED | Local manual/AI/portrait masks use UI field names incompatible with the real Native request. | Shared complete fixtures pass frontend and production request deserialization; recursive mask/tone round trips and private Skin inference/graph parity pass. Actual rebuilt mask/Skin controls remain required. |
 | M30-R16 | FIXED | Undo/Redo, Snapshot and Look hydration drops existing graph intent or duplicates the legacy radial layer. | Full-family, hidden constants, local extensions, legacy defaults/curves and radial regressions pass locally. Exact rebuilt rotation Undo/Redo and deterministic export remain required. |
 | M30-R17 | FIXED | Tool switches retain the previous inspector scroll and sticky translucent title overlaps controls. | Tool-only scroll reset, preserved slider scroll and readable glass disclosure implemented and structurally tested; actual narrow/wide desktop remains required. |
-| M30-R18 | FIXED | Focus-only debounce consumes delayed numeric edits or paused slider continuations before History can record their real state. | Production state-change scheduling and three targeted regressions implemented; delayed input -> Undo -> Redo -> close/reopen in the exact rebuilt GUI plus same-SHA Full/Release remains required. |
+| M30-R18 | FIXED | Focus-only debounce consumes delayed numeric edits or paused slider continuations before History can record their real state. | Production state-change scheduling, canonical JSON comparison and five targeted regressions implemented; delayed input -> Undo -> Redo -> close/reopen in the exact rebuilt GUI plus same-SHA Full/Release remains required. |
 
 ## Gate discipline
 

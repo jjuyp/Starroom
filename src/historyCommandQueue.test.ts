@@ -46,4 +46,16 @@ describe('Native history command ordering', () => {
     expect(nativeHistoryStateChanged(undefined, { rotation: 90 }, false)).toBe(false)
     expect(nativeHistoryStateChanged({ rotation: 0 }, { rotation: 90 }, true)).toBe(false)
   })
+  it('treats sorted Rust JSON and UI insertion order as the same acknowledged state', () => {
+    const native = { curve: [{ x: 0, y: 0 }, { x: 1, y: 1 }], exposure: 0, layer: { opacity: 1, tone: { exposure_ev: 1, shadows: 0 } } }
+    const ui = { layer: { tone: { shadows: 0, exposure_ev: 1 }, opacity: 1 }, exposure: 0, curve: [{ y: 0, x: 0 }, { y: 1, x: 1 }] }
+    expect(nativeHistoryStateChanged(native, ui, false)).toBe(false)
+    expect(nativeHistoryStateChanged(native, { ...ui, curve: [...ui.curve].reverse() }, false)).toBe(true)
+  })
+  it('does not create a phantom edit for omitted JSON optional fields', () => {
+    const native: Record<string, unknown> = { layers: [], exposure: 0 }
+    const ui: Record<string, unknown> = { exposure: 0, futureOptional: undefined, layers: [] }
+    expect(nativeHistoryStateChanged(native, ui, false)).toBe(false)
+    expect(nativeHistoryStateChanged(native, { ...ui, exposure: 0.1 }, false)).toBe(true)
+  })
 })

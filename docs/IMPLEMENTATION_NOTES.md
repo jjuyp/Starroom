@@ -637,3 +637,7 @@ cover delayed numeric commit/Undo/Redo, paused drag continuation, and open/resto
 The acknowledged JSON/hash chain and serial command architecture are unchanged. This is an
 interaction/persistence bug fix, not image math, a schema migration or a dependency change.
 The final rebuilt GUI must repeat delayed numeric input, Undo/Redo and close/reopen before delivery.
+The state comparison is canonical JSON (sorted object keys, preserved array order and omitted
+undefined optionals), since Rust serde_json::Value does not preserve JavaScript insertion order.
+Both debounce scheduling and queued commits use the same comparison; two further regressions
+prevent focus-only phantom commands without altering acknowledged JSON or persistent hashes.

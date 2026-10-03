@@ -1386,7 +1386,7 @@ export function App() {
     if (scheduled) {
       void historyCommands.current.run(async () => {
         const before = acknowledgedHistory.current.get(scheduled.assetId)
-        if (!before || JSON.stringify(before) === JSON.stringify(scheduled.state)) return
+        if (!before || !nativeHistoryStateChanged(before, scheduled.state, false)) return
         const result = await commitNativeHistory(scheduled.assetId, '調整照片', 'sharedGraph', before, scheduled.state)
         acknowledgedHistory.current.set(scheduled.assetId, result.state)
         if (selectedHistoryAsset.current === scheduled.assetId) setNativeHistory(result)

@@ -3,7 +3,15 @@
  * Restored state is already acknowledged and must never create a new history command.
  */
 export function nativeHistoryStateChanged<T>(acknowledged: T | undefined, current: T, restoring: boolean): boolean {
-  return !restoring && acknowledged !== undefined && JSON.stringify(acknowledged) !== JSON.stringify(current)
+  // serde_json::Value returns sorted object keys; JavaScript insertion order is not edit intent.
+  // Preserve array order and JSON's omission of undefined optional properties.
+  const canonicalJson = (value: T) => JSON.stringify(value, (_key, child: unknown) => {
+    if (child !== null && typeof child === 'object' && !Array.isArray(child)) {
+      return Object.fromEntries(Object.entries(child).sort(([left], [right]) => left.localeCompare(right)))
+    }
+    return child
+  })
+  return !restoring && acknowledged !== undefined && canonicalJson(acknowledged) !== canonicalJson(current)
 }
 
 /** Serialize native history commands so each commit uses the acknowledged server state. */
