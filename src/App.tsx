@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { selectLibraryRange } from './librarySelection'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
-import { HistoryCommandQueue } from './historyCommandQueue'
+import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
@@ -1577,13 +1577,19 @@ export function App() {
 
   useEffect(() => {
     const assetId = selected.libraryAsset?.id
-    const before = pendingNativeBefore.current
-    if (!assetId || !before || applyingNativeHistory.current) return
+    if (!assetId || applyingNativeHistory.current) return
     if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current)
+    nativeHistoryTimer.current = null
+    // Focus/pointer-down alone is not an edit. Conversely, every actual changed state
+    // must persist even when typing or a paused drag outlives the 220 ms debounce.
+    if (!nativeHistoryStateChanged(acknowledgedHistory.current.get(assetId), nativeHistoryState, false)) {
+      scheduledHistory.current = null
+      return
+    }
+    scheduledHistory.current = { assetId, state: nativeHistoryState }
     nativeHistoryTimer.current = window.setTimeout(() => {
       void flushNativeHistory()
     }, 220)
-    scheduledHistory.current = { assetId, state: nativeHistoryState }
     return () => { if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current) }
   }, [nativeHistoryState, selected.libraryAsset?.id, flushNativeHistory])
   const activeLayer = selected.layers.find((layer) => layer.id === selectedLayerId)

@@ -596,3 +596,5 @@ release blockers until fixed and requalified in the rebuilt desktop executable:
   legacy radial layer from applying twice after History/Snapshot restore.
 - [ ] Reset inspector scroll only when switching tools and prevent translucent sticky titles
   from overlapping scrolled control labels.
+- [ ] Verify delayed numeric commits and paused slider continuations remain in Native History;
+  focus-only debounce must not consume later edits. Repair and regression coverage are implemented.

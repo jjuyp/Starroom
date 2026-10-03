@@ -76,3 +76,10 @@ validation and private real-model inference/graph parity locally. It fixes shado
 tone folding, downstream zone ordering, actual local IPC schemas and full saved-intent hydration.
 R14-R17 are `FIXED`, not `VERIFIED`, until the exact rebuilt candidate passes interactions and
 same-SHA Full/Release qualification. The dated deliverable report records that final evidence.
+
+`8e48dc7` passed Full/Release, clean installed runtime and 24-100 MP gates, but the real numeric
+editor exposed delayed-input History loss. Its GUI is therefore not the final deliverable.
+The follow-up state-change scheduling repair adds three frontend regressions (135 total) and
+requires a new immutable candidate. R18 joins the ledger; no old green run is reused to claim
+acceptance for the newly rebuilt GUI. Render/RAW/model dependencies and pixel semantics remain
+the verified previous batch, with no added dependency or licensing change.

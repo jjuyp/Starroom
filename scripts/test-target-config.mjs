@@ -17,7 +17,7 @@ export const targets = {
   },
   history: {
     rust: [['test', '--locked', '-p', 'starroom-history']],
-    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts'],
+    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts', 'src/historyCommandQueue.test.ts'],
     golden: [],
   },
   export: {

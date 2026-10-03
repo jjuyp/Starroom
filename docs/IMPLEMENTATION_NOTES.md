@@ -623,3 +623,17 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
   SegFormer 1.828 s, NAFNet 5.288 s inclusive debug CPU measurements, not slider latency).
   Exact rebuilt UI and same-SHA release qualification remain required and are recorded in the
   dated deliverable report when complete, not inferred from source tests.
+
+## Native numeric-edit history debounce repair (2026-10-03)
+
+The rebuilt `8e48dc7` GUI proved local-mask IPC and natural Shadows +49 rendering, but a delayed
+numeric edit exposed an additional History bug: focus/pointer-down created an unchanged-state
+debounce, which consumed the gesture token before the user committed a value. The photograph
+changed, yet Undo/Redo restored the preceding recorded state. Native persistence now schedules
+every actual render-state change against the last acknowledged Native state, independent of
+gesture lifetime. Focus-only state creates no command; restore/open do not create synthetic
+commands; a paused slider continuation still persists. Three additional production-helper tests
+cover delayed numeric commit/Undo/Redo, paused drag continuation, and open/restore suppression.
+The acknowledged JSON/hash chain and serial command architecture are unchanged. This is an
+interaction/persistence bug fix, not image math, a schema migration or a dependency change.
+The final rebuilt GUI must repeat delayed numeric input, Undo/Redo and close/reopen before delivery.
