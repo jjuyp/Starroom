@@ -1,0 +1,40 @@
+{
+  "sharpness": 5,
+  "noiseReduction": 80,
+  "sharpenSettings": { "amount": 0.9, "radius": 1.4, "detail": 0.6, "masking": 0.2, "haloProtection": 0.8, "threshold": 0.007 },
+  "denoiseSettings": { "luminance": 0.12, "chroma": 0.22, "radius": 1.5, "detailProtection": 0.7, "highIso": 0.3 },
+  "colorMixer": {
+    "bands": [
+      { "hueDegrees": 8, "chroma": 0.1, "lightness": -0.05 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": -5, "chroma": -0.1, "lightness": 0.02 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 }
+    ],
+    "hueLock": false,
+    "bandWidthDegrees": 63
+  },
+  "grain": { "amount": 0.21, "size": 0.55, "roughness": 0.4, "color": 0.3, "seed": 123456 },
+  "aiDenoiseProvider": "cpu",
+  "skinRetouch": {
+    "parameters": { "smooth": 0.45, "texture": 0.7, "toneEvenness": 0.25, "hueDegrees": 8, "chroma": -0.15, "exposureEv": 0.3 },
+    "faces": [{ "faceId": "face-contract-1", "cacheKey": "portrait-contract:face-crop-1" }]
+  },
+  "healingOperations": [
+    {
+      "id": "heal-contract", "enabled": true, "mode": "heal", "target": { "x": 0.5, "y": 0.4 },
+      "source": null, "radius": 24, "feather": 0.55, "opacity": 0.85,
+      "rotationDegrees": 12, "scale": 1.1, "toneAdaptation": true, "textureAdaptation": true,
+      "sourceMode": "auto", "metadata": { "interaction": "brush", "coordinateSpace": "source-normalized" }
+    },
+    {
+      "id": "clone-contract", "enabled": true, "mode": "clone", "target": { "x": 0.3, "y": 0.6 },
+      "source": { "x": 0.7, "y": 0.3 }, "radius": 18, "feather": 0.4, "opacity": 0.75,
+      "rotationDegrees": -8, "scale": 0.9, "toneAdaptation": false, "textureAdaptation": false,
+      "sourceMode": "manual", "metadata": { "interaction": "manual", "coordinateSpace": "source-normalized" }
+    }
+  ]
+}

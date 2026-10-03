@@ -4,6 +4,7 @@ import { selectLibraryRange } from './librarySelection'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import { HistoryCommandQueue } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
+import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
@@ -26,7 +27,7 @@ import {
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   queryNativeAiAvailability, installLocalPortraitModels, type NativeAiAvailability,
-  applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings,
+  applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, defaultNativeRenderConstants, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings, type NativeRenderConstants,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
   openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
   refreshNativeLibraryMetadata,
@@ -72,6 +73,7 @@ interface PhotoItem {
   layers: NativeAdjustmentLayer[]
   skinRetouch: NativeSkinRetouchSettings
   healingOperations: NativeHealingOperation[]
+  nativeRenderConstants?: NativeRenderConstants
   history: EditSnapshot[]
   future: EditSnapshot[]
 }
@@ -87,6 +89,7 @@ interface EditSnapshot {
   layers: NativeAdjustmentLayer[]
   skinRetouch: NativeSkinRetouchSettings
   healingOperations: NativeHealingOperation[]
+  nativeRenderConstants?: NativeRenderConstants
 }
 
 const defaultCurvePoints: ToneCurvePoint[] = [
@@ -102,7 +105,7 @@ const copyCurve = (points: ToneCurvePoint[]) => points.map((point) => ({ ...poin
 const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaultCurvePoints), red: [], green: [], blue: [] })
 const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
 const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: '局部調整', enabled: true, opacity: 1, blendMode: 'normal', mask: { type: 'none' }, adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
-const copyLayers = (layers: NativeAdjustmentLayer[]) => layers.map((layer) => ({ ...layer, mask: structuredClone(layer.mask), adjustments: { tone: { ...layer.adjustments.tone } } }))
+const copyLayers = (layers: NativeAdjustmentLayer[]) => structuredClone(layers)
 const copySkinRetouch = (value: NativeSkinRetouchSettings): NativeSkinRetouchSettings => ({ parameters: { ...value.parameters }, faces: value.faces.map((face) => ({ ...face })) })
 const copyHealingOperations = (operations: NativeHealingOperation[]) => operations.map((operation) => structuredClone(operation))
 const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange'): NativeAdjustmentLayer['mask'] => {
@@ -229,7 +232,7 @@ function MaskWorkspacePanel({ layers, selectedId, overlay, onSelect, onAdd, onUp
         </details>
         <div className="mask-local-tone"><strong>局部光線</strong>{([
           ['曝光', 'exposureEv', -5, 5, .05, ' EV'], ['對比', 'contrast', -100, 100, 1, ''], ['高光', 'highlights', -100, 100, 1, ''], ['陰影', 'shadows', -100, 100, 1, ''], ['白色', 'whites', -100, 100, 1, ''], ['黑色', 'blacks', -100, 100, 1, ''],
-        ] as const).map(([label, key, min, max, step, suffix]) => <Slider key={key} label={label} value={key === 'exposureEv' ? layer.adjustments.tone[key] : layer.adjustments.tone[key] * 100} min={min} max={max} step={step} suffix={suffix} onBeginEdit={onBeginEdit} onChange={(value) => onUpdate(layer.id, (current) => ({ ...current, adjustments: { tone: { ...current.adjustments.tone, [key]: key === 'exposureEv' ? value : value / 100 } } }), false)} onReset={() => onUpdate(layer.id, (current) => ({ ...current, adjustments: { tone: { ...current.adjustments.tone, [key]: 0 } } }))} />)}</div>
+        ] as const).map(([label, key, min, max, step, suffix]) => <Slider key={key} label={label} value={key === 'exposureEv' ? layer.adjustments.tone[key] : layer.adjustments.tone[key] * 100} min={min} max={max} step={step} suffix={suffix} onBeginEdit={onBeginEdit} onChange={(value) => onUpdate(layer.id, (current) => ({ ...current, adjustments: { ...current.adjustments, tone: { ...current.adjustments.tone, [key]: key === 'exposureEv' ? value : value / 100 } } }), false)} onReset={() => onUpdate(layer.id, (current) => ({ ...current, adjustments: { ...current.adjustments, tone: { ...current.adjustments.tone, [key]: 0 } } }))} />)}</div>
       </div>}
     </article>)}</div>
   </section>
@@ -241,6 +244,7 @@ const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
   layers: copyLayers(photo.layers),
   skinRetouch: copySkinRetouch(photo.skinRetouch),
   healingOperations: copyHealingOperations(photo.healingOperations),
+  nativeRenderConstants: { ...(photo.nativeRenderConstants ?? defaultNativeRenderConstants) },
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
@@ -249,16 +253,19 @@ const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   layers: copyLayers(snapshot.layers),
   skinRetouch: copySkinRetouch(snapshot.skinRetouch),
   healingOperations: copyHealingOperations(snapshot.healingOperations),
+  nativeRenderConstants: { ...(snapshot.nativeRenderConstants ?? defaultNativeRenderConstants) },
 })
 const hasCurveEdits = (points: ToneCurvePoint[]) => points.length !== defaultCurvePoints.length
   || points.some((point, index) => Math.abs(point.x - defaultCurvePoints[index].x) > .0001 || Math.abs(point.y - defaultCurvePoints[index].y) > .0001)
 const hasMaskGeometryEdits = (mask: RadialMask) => (Object.keys(defaultMask) as Array<keyof RadialMask>)
   .some((key) => Math.abs(mask[key] - defaultMask[key]) > .0001)
 const hasPhotoEdits = (photo: PhotoItem) => hasAdjustments(photo.adjustments) || hasCurveEdits(photo.curvePoints) || hasMaskGeometryEdits(photo.mask)
+  || countAdditionalEditIntent(photo) > 0
   || photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity !== null || photo.layers.length > 0 || photo.skinRetouch.faces.length > 0 || photo.healingOperations.length > 0
 const countPhotoEdits = (photo: PhotoItem) => (Object.keys(defaultAdjustments) as AdjustmentKey[])
   .filter((key) => photo.adjustments[key] !== defaultAdjustments[key]).length
   + (hasCurveEdits(photo.curvePoints) ? 1 : 0) + (hasMaskGeometryEdits(photo.mask) ? 1 : 0)
+  + countAdditionalEditIntent(photo)
   + (photo.opticsState.matchMode !== 'auto' || photo.opticsState.manualIdentity ? 1 : 0)
   + photo.layers.length + (photo.skinRetouch.faces.length ? 1 : 0) + photo.healingOperations.length
 
@@ -553,10 +560,12 @@ const libraryPhoto = (asset: NativeLibraryAsset, thumbnail: string): PhotoItem =
 
 const applyNativeHistoryState = (photo: PhotoItem, state: NativeEditSettings): PhotoItem => {
   const mapped = fromNativeSettings(photo.adjustments, state)
-  return { ...photo, adjustments: mapped.adjustments, curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
-    whiteBalanceMode: state.whiteBalanceMode, whiteBalanceSample: state.whiteBalanceSample,
-    opticsState: { matchMode: state.optics.matchMode, manualIdentity: state.optics.manualIdentity },
-    layers: state.layers, skinRetouch: state.skinRetouch, healingOperations: state.healingOperations }
+  const settings = mapped.settings
+  return { ...photo, adjustments: mapped.adjustments, mask: mapped.mask ?? photo.mask, curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
+    whiteBalanceMode: settings.whiteBalanceMode, whiteBalanceSample: settings.whiteBalanceSample,
+    opticsState: { matchMode: settings.optics.matchMode, manualIdentity: settings.optics.manualIdentity },
+    layers: mapped.layers, skinRetouch: settings.skinRetouch, healingOperations: settings.healingOperations,
+    nativeRenderConstants: mapped.renderConstants }
 }
 
 function CurveChannelTabs({ value, onChange }: { value: keyof NativeToneCurves; onChange: (value: keyof NativeToneCurves) => void }) {
@@ -773,7 +782,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
             before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
-            viewport.resolutionMode, viewport.viewport)
+            viewport.resolutionMode, viewport.viewport, before ? defaultNativeRenderConstants : photo.nativeRenderConstants)
           nativeResult = result
           if (activePhotoId.current === photo.id) {
             nativeDimensions.current = { id: photo.id, width: result.sourceWidth, height: result.sourceHeight }
@@ -872,7 +881,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
       window.cancelAnimationFrame(frameRequest)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.renderBackend, photo.sourcePath, photo.src,
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants, photo.renderBackend, photo.sourcePath, photo.src,
     photo.libraryAsset?.metadata.width, photo.libraryAsset?.metadata.height,
     maskPreview, interactionPhase, zoom, zoomScale, pan.x, pan.y, onDisplayScale, photo.id])
 
@@ -1186,6 +1195,11 @@ export function App() {
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const panStart = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
   const filmstripRef = useRef<HTMLDivElement | null>(null)
+  const inspectorScrollRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    // A new tool starts at its first control; slider rerenders preserve scroll position.
+    if (inspectorScrollRef.current) inspectorScrollRef.current.scrollTop = 0
+  }, [tool])
   const [histogram, setHistogram] = useState<DisplayHistogram>(() => ({ red: [], green: [], blue: [], luminance: [] }))
   const [renderStatus, setRenderStatus] = useState('就緒')
   const [dimensions, setDimensions] = useState('—')
@@ -1536,7 +1550,7 @@ export function App() {
   const nativeHistoryState = useMemo(() => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
     selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
-    selected.skinRetouch, selected.healingOperations,
+    selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants,
   ), [selected])
   const comparedSnapshot = nativeHistory?.snapshots.find((snapshot) => snapshot.id === snapshotCompareId) ?? null
   const snapshotComparePhoto = comparedSnapshot ? applyNativeHistoryState(selected, comparedSnapshot.state) : null
@@ -1770,7 +1784,7 @@ export function App() {
       if (photo.libraryAsset && next.history.length > photo.history.length && !pendingNativeBefore.current) {
         pendingNativeBefore.current = toNativeSettings(photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
           photo.whiteBalanceSample, photo.curveChannels, photo.opticsState, photo.layers, photo.mask,
-          photo.skinRetouch, photo.healingOperations)
+          photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants)
       }
       return next
     }))
@@ -1826,19 +1840,17 @@ export function App() {
   const selectedNativeSettings = () => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode,
     selected.whiteBalanceSample, selected.curveChannels, selected.opticsState,
-    selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations,
+    selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants,
   )
 
   const nativeSettingsForPhoto = (photo: PhotoItem) => toNativeSettings(
     photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
     photo.whiteBalanceSample, photo.curveChannels, photo.opticsState,
-    photo.layers, photo.mask, photo.skinRetouch, photo.healingOperations,
+    photo.layers, photo.mask, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants,
   )
 
   function applyWorkflowSettings(settings: ReturnType<typeof selectedNativeSettings>, label: string) {
-    const mapped = fromNativeSettings(selected.adjustments, settings)
-    updateSelected((photo) => ({ ...photo, adjustments: mapped.adjustments,
-      curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
+    updateSelected((photo) => ({ ...applyNativeHistoryState(photo, settings),
       history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
     setNotice(label)
@@ -1979,7 +1991,7 @@ export function App() {
     const duplicateId = crypto.randomUUID()
     mutateLayers((layers) => layers.flatMap((layer) => {
       if (layer.id !== id) return [layer]
-      const copy = { ...layer, id: duplicateId, name: `${layer.name} 副本`, adjustments: { tone: { ...layer.adjustments.tone } } }
+      const copy = { ...layer, id: duplicateId, name: `${layer.name} 副本`, adjustments: structuredClone(layer.adjustments) }
       return [layer, copy]
     }))
     setSelectedLayerId(duplicateId)
@@ -2045,7 +2057,7 @@ export function App() {
     const current = editorRequests.current.begin('colorSample')
     try {
       const band = await sampleNativeColor(selected.sourcePath, x, y, selected.adjustments, selected.curvePoints,
-        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState)
+        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.nativeRenderConstants)
       if (!current()) return
       if (!band) { setNotice('The sampled area is neutral; no color band was selected.'); return }
       setMixerBand(`${band[0].toUpperCase()}${band.slice(1)}`)
@@ -2236,7 +2248,7 @@ export function App() {
     const current = editorRequests.current.begin('advisor')
     try {
       const result = await adviseNativeImage(selected.sourcePath, selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
-        selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations)
+        selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants, selected.mask)
       if (!current()) return
       setAdvisorResult(result)
       setNotice(`${result.suggestions.length} local, explainable suggestion${result.suggestions.length === 1 ? '' : 's'} ready`)
@@ -2410,7 +2422,7 @@ export function App() {
     if (!hasPhotoEdits(selected)) return
     updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
       opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
-      layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [],
+      layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [], nativeRenderConstants: { ...defaultNativeRenderConstants },
       history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
   }
 
@@ -2735,7 +2747,7 @@ export function App() {
         <nav className="tool-rail" aria-label="Editing tools">{toolItems.map(({ id, label, icon: Icon }) => <button key={id}
           className={tool === id ? 'active' : ''} aria-label={label} aria-pressed={tool === id}
           title={label} onClick={() => setTool(id)}><Icon size={18} /><span>{label}</span></button>)}</nav>
-        <div className={`inspector-scroll tool-${tool}`}>
+        <div ref={inspectorScrollRef} className={`inspector-scroll tool-${tool}`}>
         {view === 'edit' && aiHubOpen && <section className="ai-tool-hub" aria-label="本機 AI 工具入口">
           <div className="ai-tool-hub-heading"><Sparkles size={17} /><div><strong>本機 AI 工具</strong><small>所有影像處理都在這台電腦完成</small></div></div>
           <div className="ai-tool-hub-actions">

@@ -1,0 +1,49 @@
+{
+  "exposure": 0, "contrast": 0, "highlights": 0, "shadows": 0, "whites": 0, "blacks": 0,
+  "temperature": 0, "tint": 0, "vibrance": 0, "saturation": 0, "sharpness": 0, "noiseReduction": 0,
+  "whiteBalanceMode": "sourceDefault", "whiteBalanceSample": null,
+  "curve": [], "curves": { "master": [], "red": [], "green": [], "blue": [] },
+  "colorMixer": {
+    "bands": [
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+      { "hueDegrees": 0, "chroma": 0, "lightness": 0 }
+    ],
+    "hueLock": true, "bandWidthDegrees": 52
+  },
+  "grading": {
+    "shadows": { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+    "midtones": { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+    "highlights": { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+    "global": { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+    "balance": 0, "blending": 0.5, "amount": 1
+  },
+  "sharpenSettings": { "amount": 0.35, "radius": 1, "detail": 0.5, "masking": 0, "haloProtection": 0.75, "threshold": 0.002 },
+  "denoiseSettings": { "luminance": 0, "chroma": 0, "radius": 1.25, "detailProtection": 0.5, "highIso": 0 },
+  "aiDenoise": { "enabled": false, "amount": 0.5, "detail": 0.5, "colorNoise": 0.5, "preserveSkin": 0.5 },
+  "aiDenoiseProvider": "directMl",
+  "localDetail": { "texture": 0, "clarity": 0, "dehaze": 0 },
+  "optics": {
+    "parameters": { "enabled": false, "distortion": true, "tca": true, "vignette": true, "autoScale": true },
+    "matchMode": "auto", "manualIdentity": null
+  },
+  "geometry": {
+    "rotationDegrees": 0, "verticalKeystone": 0, "horizontalKeystone": 0, "scale": 1, "offsetX": 0, "offsetY": 0,
+    "flipHorizontal": false, "flipVertical": false,
+    "crop": { "left": 0, "top": 0, "right": 1, "bottom": 1 },
+    "cropAspectWidth": 0, "cropAspectHeight": 0, "fourPoint": null, "uprightMode": "off"
+  },
+  "layers": [],
+  "skinRetouch": {
+    "parameters": { "smooth": 0, "texture": 0.7, "toneEvenness": 0, "hueDegrees": 0, "chroma": 0, "exposureEv": 0 },
+    "faces": []
+  },
+  "healingOperations": [],
+  "grain": { "amount": 0, "size": 0.5, "roughness": 0.5, "color": 0, "seed": 0 },
+  "vignette": { "amount": 0, "midpoint": 0, "roundness": 0, "feather": 0, "highlightProtect": 0 }
+}

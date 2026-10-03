@@ -20,6 +20,17 @@ struct FixtureCase {
     curve: Vec<CurvePoint>,
     max_channel_delta: u8,
     max_mean_delta: f32,
+    #[serde(default)]
+    native_reference: Option<NativeReference>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeReference {
+    rgb8: Vec<u8>,
+    max_channel_delta: u8,
+    max_mean_delta: f32,
+    basis: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -87,36 +98,56 @@ fn native_cpu_stays_within_documented_browser_migration_tolerances() {
             ..Default::default()
         };
         let native = render_preview_to_srgb8(&decoded, &settings).expect("native preview");
-        assert_eq!(
-            native.data.len(),
-            fixture.browser_rgb8.len(),
-            "{}",
-            fixture.name
-        );
+        // Keep every frozen Browser value (also tested exactly by Vitest), but do not force
+        // the production tone engine to reproduce the former additive-shadow solarization.
+        // The corrected darktable adapter is independently qualified on dense monotonic ramps
+        // and the real NASA portrait; its explicit native Golden tolerance is tighter, not wider.
+        let (reference, max_channel_delta, max_mean_delta) =
+            if let Some(reference) = &fixture.native_reference {
+                assert_eq!(
+                    fixture.name, "tone",
+                    "migration reference changes must be explicit"
+                );
+                assert!(reference.basis.contains("darktable"));
+                assert!(reference.max_channel_delta < fixture.max_channel_delta);
+                assert!(reference.max_mean_delta < fixture.max_mean_delta);
+                (
+                    &reference.rgb8,
+                    reference.max_channel_delta,
+                    reference.max_mean_delta,
+                )
+            } else {
+                (
+                    &fixture.browser_rgb8,
+                    fixture.max_channel_delta,
+                    fixture.max_mean_delta,
+                )
+            };
+        assert_eq!(native.data.len(), reference.len(), "{}", fixture.name);
         let deltas: Vec<u8> = native
             .data
             .iter()
-            .zip(&fixture.browser_rgb8)
+            .zip(reference)
             .map(|(native, browser)| native.abs_diff(*browser))
             .collect();
         let max_delta = deltas.iter().copied().max().unwrap_or(0);
         let mean_delta =
             deltas.iter().map(|value| f32::from(*value)).sum::<f32>() / deltas.len().max(1) as f32;
         assert!(
-            max_delta <= fixture.max_channel_delta,
+            max_delta <= max_channel_delta,
             "{} max channel delta {} > {}; native={:?}, browser={:?}",
             fixture.name,
             max_delta,
-            fixture.max_channel_delta,
+            max_channel_delta,
             native.data,
-            fixture.browser_rgb8
+            reference
         );
         assert!(
-            mean_delta <= fixture.max_mean_delta,
+            mean_delta <= max_mean_delta,
             "{} mean delta {:.2} > {:.2}",
             fixture.name,
             mean_delta,
-            fixture.max_mean_delta
+            max_mean_delta
         );
     }
 }

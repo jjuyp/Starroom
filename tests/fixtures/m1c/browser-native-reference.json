@@ -33,6 +33,12 @@
       "name": "tone",
       "sourceRgb8": [24, 30, 40, 120, 130, 140, 230, 220, 210],
       "browserRgb8": [75, 89, 112, 121, 131, 141, 226, 216, 206],
+      "nativeReference": {
+        "rgb8": [26, 33, 43, 121, 131, 142, 241, 231, 220],
+        "maxChannelDelta": 1,
+        "maxMeanDelta": 0.5,
+        "basis": "RC3 darktable generalized-loglogistic shadow and anchored highlight/white shoulder adapter: normalized black/midtone anchors, monotonic single/combined luminance response, dense ramp and real NASA portrait CPU/GPU/detail qualification. Highlight mapping is evaluated after shadows with a unit-slope 0.34 anchor. Frozen Browser values remain historical migration data, not a production tone oracle."
+      },
       "adjustments": { "contrast": 20.0, "shadows": 35.0, "highlights": -25.0 },
       "curve": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }],
       "maxChannelDelta": 12,

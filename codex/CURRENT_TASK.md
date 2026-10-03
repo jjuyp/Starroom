@@ -13,9 +13,11 @@ Produce a verifiable Windows `v1.0.0-rc.3`, not Final, from the published rc.2 b
 reported close-request, Library/RAW thumbnail, camera-color, preview latency/detail and glass UI
 field regressions, then repeat installer/runtime qualification on one immutable candidate SHA.
 Historical rc.3 qualification remains a baseline, not acceptance for the current October fixes.
-Current source gates are green; repeat same-SHA full/release and installed-runtime qualification.
-New desktop interaction/screenshot acceptance is pending app-launch authorization after the
-test-tool approval expired; do not substitute an older installed executable or Browser demo.
+App-launch authorization was granted and the exact `991b048` desktop executable was tested.
+That interaction pass exposed shadow solarization, local-layer IPC serialization and incomplete
+History hydration defects which automated source gates had missed. Repair these as one batch,
+then repeat same-SHA full/release and installed-runtime qualification. The earlier green CI is
+baseline evidence only; do not substitute an older executable or Browser demo for the new pass.
 
 ## Validation order
 

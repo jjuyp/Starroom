@@ -561,7 +561,65 @@ Record deviations, dependency-version changes, GPU/backend issues, camera except
   Public resource inventory requires exactly the pinned MIT BiRefNet model; Face/Skin, Sky and
   NAFNet must report typed-unavailable there. This machine's five verified local weights are
   automatically discovered without selecting them for each photo.
-- The desktop test tool launched a same-name older executable, so that screen was rejected as
-  evidence. Launching the uniquely named fresh executable then timed out at app approval. No
-  shell/UI automation bypass was used. New-version interactive/screenshot acceptance remains
-  pending authorization; automated Native/installer tests do not substitute for that gate.
+- The desktop test tool initially launched a same-name older executable, so that screen was
+  rejected as evidence. The user subsequently authorized launch, and the uniquely named exact
+  `991b048` executable was tested through the native UI. No shell/UI automation bypass was used.
+  Actual interactions exposed additional release blockers; automated Native/installer tests
+  are not substituted for this gate.
+
+## Native desktop interaction defects and repair batch (2026-10-03)
+
+- A real NASA portrait at Exposure -0.07 / Shadows +49 produced solarized tonal bands on both
+  CPU and DX12 GPU (only 1 LSB between them). The shared additive shadow mapping reversed
+  luminance ordering at its fade-out zone; GPU transport was not the cause. The fix adapts the
+  already pinned/licensed darktable generalized-loglogistic response to a normalized shadow
+  interval, preserves true black and 18% gray with a smooth endpoint slope, and keeps HDR
+  values unbounded. Dense monotonic ramps, real photographic detail and shared Preview/Export
+  plus CPU/GPU tests cover the defect. React still performs no creative image math.
+- The M1C Browser migration fixture retains all frozen Browser RGB bytes and exact JS tests.
+  Its affected tone case receives a separately identified approved Native darktable oracle:
+  the old Browser additive shadow response is not a professional tone-quality target. The new
+  Native bound is 1 LSB / 0.5 mean rather than weakening the old 12 LSB / 7 migration gap.
+- Manual, AI and portrait mask layer controls used UI `exposureEv`, while the shared Rust
+  `ToneParameters` wire schema requires `exposure_ev`. A dedicated validated bidirectional
+  compact-state adapter and a JSON fixture consumed by both TypeScript and the actual Tauri
+  request deserializer cover the boundary, including old camelCase History/project intent.
+  The same real deserializer exposed snake_case fields inside Rust mask enum variants; the
+  adapter must recursively map linear/portrait/generated mask fields and preserve their model,
+  cache and operation identities. Local relative color, RGB curves, mixer and grading intent
+  returned by Native projects must survive layer copy/edit/history paths even when the current
+  UI does not expose each local-color control.
+- The same UI pass found rotation remained at 90 degrees after Undo. History hydration must
+  map every existing Native adjustment back to UI units, including geometry, grading, detail,
+  Lensfun and hue-lock. The generated legacy radial layer must be restored exactly once, not
+  retained as a layer and synthesized again. Full settings round trips are required.
+- These are bug fixes under feature freeze, not new milestones. `991b048` remains a rejected
+  interactive candidate despite its green CI; source and rebuilt desktop verification must
+  complete before a new acceptance claim.
+- Dense gray ramps additionally exposed negative Highlights/Whites folding and combined
+  Shadows/Blacks folding. Negative Highlights and Whites now use the same pinned darktable
+  paper shoulder with unit-slope anchors at 0.34 and 0.72 respectively. Each downstream zone
+  is evaluated against its own stage input, not stale pre-shadow luminance. All 30 single-control
+  neutral/extreme cases and 124 paired/all-six extreme combinations are finite and monotonic;
+  combined cases cover separate 65,537-sample dark (0..0.3) and HDR (0..16) ramps. No tolerance
+  was relaxed and no image-quality test was removed.
+- The UI projection retains Native-only sharpen threshold, mixer band width, grain seed and
+  AI provider through preview/export, History, Snapshot, Look and copy/paste paths. Local color,
+  curves, mixer and grading survive layer duplication and local tone editing. Canonical Rust
+  defaults are shared as a fixture for older legal History JSON; original acknowledged JSON
+  and hash chains are never rewritten. The effective native sharpening/denoise values override
+  obsolete convenience scalars when projecting into the existing UI.
+- Pure RGB curves, WB mode/sample and non-default Native constants now count as edit intent,
+  enabling Reset and edited-state detection. Generated legacy radial controls hydrate once;
+  modified/reordered reserved layers remain intact and a new center control gets a distinct ID.
+- Persisted grain retains its u64 schema. The JSON UI boundary explicitly rejects seeds above
+  9,007,199,254,740,991 with `UnsafeRenderSeed` / `NativeRenderContractInvalid`, rather than
+  silently rounding a native-authored seed and changing deterministic texture.
+- The local full gate passes 306 Rust tests (four opt-in gates remain separate), all doc-test
+  runners, format, warning-denied Clippy, 132 frontend tests in 20 files, TypeScript, lint,
+  production build and JSON/packaging/Golden validation. Real photographic Golden passes all
+  five immutable photos; sensor regression passes six CC0 RAW files. Private real-model AI
+  inference/graph parity additionally passes once (YuNet/BiSeNet 4.076 s, Skin 6.083 s,
+  SegFormer 1.828 s, NAFNet 5.288 s inclusive debug CPU measurements, not slider latency).
+  Exact rebuilt UI and same-SHA release qualification remain required and are recorded in the
+  dated deliverable report when complete, not inferred from source tests.

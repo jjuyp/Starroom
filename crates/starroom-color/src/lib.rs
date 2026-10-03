@@ -173,17 +173,14 @@ pub fn luminance(rgb: LinearRgb) -> f32 {
     0.2627 * rgb.r + 0.6780 * rgb.g + 0.0593 * rgb.b
 }
 
-fn zone_weights(y: f32) -> (f32, f32, f32, f32) {
+fn zone_weights(y: f32) -> (f32, f32, f32) {
     let safe_y = y.max(0.0);
-    // Preserve true black and fade shadow influence before the midtones. This avoids the
-    // v0.1 failure where Shadows behaved like a broad white veil.
-    let shadow = smoothstep(0.004, 0.012, safe_y) * (1.0 - smoothstep(0.06, 0.18, safe_y));
     let black = 1.0 - smoothstep(0.0, 0.11, safe_y);
     // The scene-linear highlight shoulder must continue into HDR values above display white.
     // It gently relaxes there, but never falls to zero as the old prototype did.
     let highlight = smoothstep(0.34, 0.62, safe_y) * (1.0 - 0.25 * smoothstep(1.10, 8.0, safe_y));
     let white = smoothstep(0.72, 1.02, safe_y);
-    (shadow, black, highlight, white)
+    (black, highlight, white)
 }
 
 // GPL-derived / private-use: adapted from darktable `src/iop/sigmoid.c`,
@@ -208,32 +205,51 @@ fn darktable_generalized_loglogistic(
     }
 }
 
-/// A scene-linear highlight shoulder adapted from darktable's sigmoid foundation.
-/// It is blended only in the declared highlight zone, so `Highlights -100` recovers
-/// bright values without globally dimming shadows or midtones.
-fn darktable_highlight_rolloff(y: f32, amount: f32, highlight_weight: f32) -> f32 {
-    if amount >= 0.0 || highlight_weight <= 0.0 {
+/// Anchored scene-linear paper shoulder from the same darktable sigmoid adapter. It has unit
+/// slope at the anchor and strictly positive slope above it. Varying sigmoid strength by an
+/// input-dependent blend previously reversed bright-pixel order, despite CPU/GPU parity.
+fn darktable_paper_shoulder(y: f32, anchor: f32, paper_exposure: f32) -> f32 {
+    if y <= anchor {
         return y;
     }
-    let strength = (-amount).clamp(0.0, 1.0) * highlight_weight;
-    // Parameters follow the neutral-gray normalized sigmoid construction. The black target
-    // avoids the zero pole while the output remains scene-linear until the final gamut stage.
-    let mapped = darktable_generalized_loglogistic(
-        y,
-        1.0,
-        0.84,
-        0.000_152,
-        1.22 + strength * 1.45,
-        1.0 + strength * 0.55,
-    );
-    // Preserve 18% middle gray exactly by operating on excess above the pivot.
-    let pivot = 0.1845;
-    let shoulder = if y > pivot {
-        pivot + (mapped - pivot).max(0.0)
-    } else {
-        y
+    anchor
+        + darktable_generalized_loglogistic(
+            y - anchor,
+            paper_exposure,
+            paper_exposure,
+            0.0,
+            1.0,
+            1.0,
+        )
+}
+
+/// Normalize the existing darktable generalized-loglogistic paper response to the shadow
+/// interval. The former additive lift could reverse luminance ordering where its zone faded
+/// out; that solarized real portraits even when CPU/GPU matched perfectly. A bounded two-stop
+/// paper response retains true black, while an endpoint taper preserves 18% gray and its slope.
+fn darktable_shadow_response(y: f32, amount: f32) -> f32 {
+    const PIVOT: f32 = 0.18;
+    if y <= 0.0 || y >= PIVOT || amount.abs() <= f32::EPSILON {
+        return y;
+    }
+    let gain = 2.0_f32.powf(2.0 * amount.abs());
+    let paper_exposure = PIVOT / (gain - 1.0);
+    let response = |value| {
+        darktable_generalized_loglogistic(
+            value,
+            PIVOT + paper_exposure,
+            paper_exposure,
+            0.0,
+            1.0,
+            1.0,
+        )
     };
-    y + (shoulder - y) * strength
+    let mapped = if amount > 0.0 {
+        response(y)
+    } else {
+        PIVOT - response(PIVOT - y)
+    };
+    y + (mapped - y) * (1.0 - y / PIVOT)
 }
 
 fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
@@ -242,23 +258,23 @@ fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
     }
 
     let mut output = y.max(0.0) * 2.0_f32.powf(parameters.exposure_ev.clamp(-5.0, 5.0));
-    let (shadow_weight, black_weight, highlight_weight, white_weight) = zone_weights(output);
-
     let shadows = clamp_unit_control(parameters.shadows);
-    if shadows >= 0.0 {
-        output += shadows * shadow_weight * (0.24 + 0.18 * output.sqrt()) * (1.0 - output.min(1.0));
-    } else {
-        output *= 1.0 + shadows * shadow_weight * 0.72;
-    }
+    output = darktable_shadow_response(output, shadows);
 
     let highlights = clamp_unit_control(parameters.highlights);
     if highlights < 0.0 {
-        output = darktable_highlight_rolloff(output, highlights, highlight_weight);
+        // Preserve the entire shadow/midtone region; apply the paper shoulder only above the
+        // former highlight-zone start, with no input-dependent strength that can fold the curve.
+        output = darktable_paper_shoulder(output, 0.34, 0.84 / -highlights);
     } else {
+        let (_, highlight_weight, _) = zone_weights(output);
         output += highlights * highlight_weight * (1.0 - output.min(1.0)) * 0.22;
     }
 
     let blacks = clamp_unit_control(parameters.blacks);
+    // Zone selection is relative to the stage input, not the original exposure result.
+    // A stale black weight combined with a shadow lift could fold a formerly monotone map.
+    let (black_weight, _, _) = zone_weights(output);
     if blacks >= 0.0 {
         output += blacks * black_weight * 0.055;
     } else {
@@ -267,9 +283,12 @@ fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
 
     let whites = clamp_unit_control(parameters.whites);
     if whites >= 0.0 {
+        let (_, _, white_weight) = zone_weights(output);
         output += whites * white_weight * (0.10 + 0.10 * output.min(1.0));
     } else {
-        output *= 1.0 + whites * white_weight * 0.48;
+        // The white zone is deliberately narrower than Highlights. This is a smooth paper
+        // shoulder, not multiplication by a rapidly falling white-zone gain.
+        output = darktable_paper_shoulder(output, 0.72, 0.20 / -whites);
     }
 
     let contrast = clamp_unit_control(parameters.contrast);
@@ -646,6 +665,167 @@ mod tests {
         };
         let output = apply_tone(black, parameters);
         assert!(output.r.abs() < 1e-6 && output.g.abs() < 1e-6 && output.b.abs() < 1e-6);
+    }
+
+    #[test]
+    fn all_light_controls_preserve_gray_order_from_black_through_scene_linear_hdr() {
+        type Control = fn(&mut ToneParameters, f32);
+        let controls: [(&str, Control); 6] = [
+            ("exposure", |tone, amount| tone.exposure_ev = amount * 5.0),
+            ("contrast", |tone, amount| tone.contrast = amount),
+            ("highlights", |tone, amount| tone.highlights = amount),
+            ("shadows", |tone, amount| tone.shadows = amount),
+            ("whites", |tone, amount| tone.whites = amount),
+            ("blacks", |tone, amount| tone.blacks = amount),
+        ];
+        let mut failures = Vec::new();
+        for (name, control) in controls {
+            for amount in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+                let mut tone = ToneParameters::default();
+                control(&mut tone, amount);
+                let mut previous = tone_luminance(0.0, tone);
+                let mut reversals = 0;
+                let mut largest_reverse = 0.0_f32;
+                for index in 1..=65536 {
+                    let source = 16.0 * index as f32 / 65536.0;
+                    let mapped = tone_luminance(source, tone);
+                    assert!(mapped.is_finite());
+                    if mapped < previous {
+                        reversals += 1;
+                        largest_reverse = largest_reverse.max(previous - mapped);
+                    }
+                    previous = mapped;
+                }
+                eprintln!(
+                    "LIGHT_ORDER {name} amount={amount} reversals={reversals} maximum_reverse_step={largest_reverse}"
+                );
+                if reversals > 0 {
+                    failures.push(format!(
+                        "{name} {amount}: {reversals} reversed samples, max {largest_reverse}"
+                    ));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "non-monotone supported Light controls: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn combined_light_controls_preserve_gray_order_in_shadows_and_hdr() {
+        type Control = fn(&mut ToneParameters, f32);
+        let controls: [(&str, Control); 6] = [
+            ("exposure", |tone, amount| tone.exposure_ev = amount * 5.0),
+            ("contrast", |tone, amount| tone.contrast = amount),
+            ("highlights", |tone, amount| tone.highlights = amount),
+            ("shadows", |tone, amount| tone.shadows = amount),
+            ("whites", |tone, amount| tone.whites = amount),
+            ("blacks", |tone, amount| tone.blacks = amount),
+        ];
+        let mut cases = Vec::new();
+        for first in 0..controls.len() {
+            for second in first + 1..controls.len() {
+                for a in [-1.0, 1.0] {
+                    for b in [-1.0, 1.0] {
+                        let mut tone = ToneParameters::default();
+                        controls[first].1(&mut tone, a);
+                        controls[second].1(&mut tone, b);
+                        cases.push((
+                            format!("{} {a}, {} {b}", controls[first].0, controls[second].0),
+                            tone,
+                        ));
+                    }
+                }
+            }
+        }
+        for combination in 0..64 {
+            let mut tone = ToneParameters::default();
+            for (index, (_, control)) in controls.iter().enumerate() {
+                control(
+                    &mut tone,
+                    if combination & (1 << index) == 0 {
+                        -1.0
+                    } else {
+                        1.0
+                    },
+                );
+            }
+            cases.push((format!("all-six combination {combination}"), tone));
+        }
+        let mut failures = Vec::new();
+        for (name, tone) in cases {
+            // A separate dense dark ramp catches narrow folding which a full-HDR ramp misses.
+            for maximum in [0.3, 16.0] {
+                let mut previous = tone_luminance(0.0, tone);
+                let mut reversals = 0;
+                let mut largest_reverse = 0.0_f32;
+                for index in 1..=65536 {
+                    let mapped = tone_luminance(maximum * index as f32 / 65536.0, tone);
+                    assert!(mapped.is_finite(), "{name} produced a non-finite value");
+                    if mapped < previous {
+                        reversals += 1;
+                        largest_reverse = largest_reverse.max(previous - mapped);
+                    }
+                    previous = mapped;
+                }
+                if reversals > 0 {
+                    failures.push(format!("{name}, range {maximum}: {reversals} reversed samples, max {largest_reverse}"));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "combined Light controls reversed pixel order: {failures:?}"
+        );
+    }
+
+    #[test]
+    fn darktable_shadow_adapter_is_monotone_and_preserves_midtone_and_hdr_anchors() {
+        for amount in [-1.0, -0.5, -0.49, 0.0, 0.49, 0.5, 1.0] {
+            let mut previous = 0.0;
+            for index in 0..=65536 {
+                let source = index as f32 * 0.3 / 65536.0;
+                let mapped = darktable_shadow_response(source, amount);
+                assert!(mapped.is_finite());
+                assert!(
+                    mapped >= previous,
+                    "amount {amount}, source {source}: {previous} -> {mapped}"
+                );
+                if amount > 0.0 {
+                    assert!(mapped >= source);
+                }
+                if amount < 0.0 {
+                    assert!(mapped <= source);
+                }
+                previous = mapped;
+            }
+            for anchor in [0.0, 0.18, 0.25, 1.0, 8.0, 65536.0] {
+                assert_eq!(darktable_shadow_response(anchor, amount), anchor);
+            }
+            let epsilon = 0.0001;
+            let below_slope = (0.18 - darktable_shadow_response(0.18 - epsilon, amount)) / epsilon;
+            assert!(
+                (below_slope - 1.0).abs() < 0.005,
+                "midtone slope {below_slope}"
+            );
+        }
+        let input = LinearRgb {
+            r: 0.04,
+            g: 0.025,
+            b: 0.009,
+        };
+        for amount in [-1.0, 0.49, 1.0] {
+            let mapped = apply_tone(
+                input,
+                ToneParameters {
+                    shadows: amount,
+                    ..Default::default()
+                },
+            );
+            assert!((mapped.r / mapped.g - input.r / input.g).abs() < 1.0e-6);
+            assert!((mapped.b / mapped.g - input.b / input.g).abs() < 1.0e-6);
+        }
     }
 
     #[test]

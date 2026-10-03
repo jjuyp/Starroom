@@ -24,9 +24,18 @@ Status vocabulary is intentionally closed: `OPEN`, `FIXED`, `VERIFIED`, `EXTERNA
 | M30-R11 | EXTERNAL | GitHub-hosted Windows previously returned zero-job `startup_failure`; hosted runners have since recovered. | Historical infrastructure examples: `32985982566`, `32985843647`, `32985840314`. Later targeted runs `33034036657` / `33034039310` completed green. |
 | M30-R12 | EXTERNAL | Physical 100/125/150/200% HiDPI and mixed-DPI monitor movement requires qualified display hardware and human observation. | Signed field-validation record; automated coordinate/DPI invariants remain mandatory in Level-4. |
 | M30-R13 | OPEN | RC version synchronization, unique candidate HEAD, final Level-4 run, tag and artifacts. | Every product blocker `VERIFIED`, one shared HEAD for every Tier-4 result, then `v1.0.0-rc.1`. |
+| M30-R14 | FIXED | October real-photo tone solarization despite CPU/GPU numerical parity. | Local full tests pass all six controls and 124 extreme combinations; black/midtone/HDR and hue anchors, NASA detail and CPU/GPU/Preview-Export parity. Exact rebuilt desktop and same-SHA CI remain required. |
+| M30-R15 | FIXED | Local manual/AI/portrait masks use UI field names incompatible with the real Native request. | Shared complete fixtures pass frontend and production request deserialization; recursive mask/tone round trips and private Skin inference/graph parity pass. Actual rebuilt mask/Skin controls remain required. |
+| M30-R16 | FIXED | Undo/Redo, Snapshot and Look hydration drops existing graph intent or duplicates the legacy radial layer. | Full-family, hidden constants, local extensions, legacy defaults/curves and radial regressions pass locally. Exact rebuilt rotation Undo/Redo and deterministic export remain required. |
+| M30-R17 | FIXED | Tool switches retain the previous inspector scroll and sticky translucent title overlaps controls. | Tool-only scroll reset, preserved slider scroll and readable glass disclosure implemented and structurally tested; actual narrow/wide desktop remains required. |
 
 ## Gate discipline
 
 No row may be deleted to make acceptance green. `FIXED` becomes `VERIFIED` only from evidence for
 the same immutable RC-candidate HEAD. A GitHub infrastructure incident is recorded as `EXTERNAL`
 and retried later; it is not a Starroom regression and does not authorize tagging.
+
+The first thirteen rows retain the original pre-rc.1 ledger. October field defects R14-R17 are
+additional current blockers: `991b048` passed automated Full/Release but failed real interactions.
+An old green run cannot close these rows. The dated exact-SHA deliverable report is the evidence
+index for the rebuilt field candidate; public-only and this-machine-private AI gates stay separate.

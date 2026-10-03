@@ -2593,6 +2593,157 @@ mod tests {
     }
 
     #[test]
+    fn nasa_portrait_shadow_lift_preserves_tone_order_and_cpu_gpu_parity() {
+        let source = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let source_bytes = std::fs::read(&source).expect("immutable NASA portrait");
+        let decoded = starroom_imageio::decode_source_preview(&source, 512)
+            .expect("decode real NASA portrait");
+        assert_eq!((decoded.width(), decoded.height()), (512, 512));
+        let settings = RenderSettings {
+            tone: ToneParameters {
+                exposure_ev: -0.07,
+                shadows: 0.49,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let neutral = render_source_preview_to_srgb8(&decoded, &RenderSettings::default())
+            .expect("neutral portrait");
+        let cpu = render_source_preview_to_srgb8(&decoded, &settings).expect("CPU portrait");
+        let export = render_source_export_to_srgb8(&decoded, &settings).expect("portrait export");
+        assert_eq!(cpu.data, export.data, "CPU preview/export parity");
+        assert!(
+            neutral
+                .data
+                .iter()
+                .zip(&cpu.data)
+                .filter(|(a, b)| a != b)
+                .count()
+                > cpu.data.len() / 100
+        );
+        let working = prepare_source_for_ai_denoise(&decoded, &RenderSettings::default())
+            .expect("real portrait linear working pixels");
+        let mut detail_pairs = 0;
+        let mut smallest_ratio = f32::INFINITY;
+        // Hair and dark suit/collar from the real photograph, not a synthetic face. Preserve
+        // actual adjacent-pixel luminance order and at least 20% of its local contrast before
+        // output quantization; a posterized transfer can have excellent CPU/GPU parity.
+        for (left, top, right, bottom) in [(125, 0, 310, 130), (145, 150, 330, 300)] {
+            for y in top..bottom {
+                for x in left..right - 1 {
+                    let sample = |x| {
+                        let index = (y * working.width + x) * 3;
+                        LinearRgb {
+                            r: working.data[index],
+                            g: working.data[index + 1],
+                            b: working.data[index + 2],
+                        }
+                    };
+                    let before = [sample(x), sample(x + 1)];
+                    let luminances = before.map(starroom_color::luminance);
+                    let original_delta = luminances[1] - luminances[0];
+                    if original_delta.abs() > 0.001
+                        && luminances.iter().all(|value| (0.002..0.18).contains(value))
+                    {
+                        let after = before.map(|pixel| {
+                            starroom_color::luminance(apply_tone(pixel, settings.tone))
+                        });
+                        let ratio = (after[1] - after[0]) / original_delta;
+                        assert!(
+                            ratio >= 0.2,
+                            "real portrait local tone inversion/flattening: {luminances:?}, ratio {ratio}"
+                        );
+                        smallest_ratio = smallest_ratio.min(ratio);
+                        detail_pairs += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            detail_pairs > 1000,
+            "must exercise real portrait dark texture"
+        );
+        eprintln!(
+            "NASA_SHADOW_DETAIL pairs={detail_pairs} minimum_contrast_ratio={smallest_ratio}"
+        );
+        let output = std::env::temp_dir().join(format!(
+            "starroom-nasa-shadow-regression-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&output).unwrap();
+        for (name, image) in [("neutral", &neutral), ("cpu", &cpu)] {
+            let encoded = starroom_imageio::encode_jpeg_rgb8(
+                &image.data,
+                image.width,
+                image.height,
+                95,
+                None,
+            )
+            .unwrap();
+            std::fs::write(output.join(format!("{name}.jpg")), encoded).unwrap();
+        }
+        match GpuRenderer::try_new() {
+            Ok(gpu) => {
+                let accelerated =
+                    render_source_preview_with_gpu_to_srgb8(&decoded, &settings, &gpu)
+                        .expect("GPU portrait");
+                let maximum_delta = accelerated
+                    .data
+                    .iter()
+                    .zip(&cpu.data)
+                    .map(|(actual, expected)| actual.abs_diff(*expected))
+                    .max()
+                    .unwrap();
+                let large_differences = accelerated
+                    .data
+                    .iter()
+                    .zip(&cpu.data)
+                    .filter(|(actual, expected)| actual.abs_diff(**expected) > 2)
+                    .count();
+                eprintln!(
+                    "NASA_SHADOW_PARITY backend={:?} max_delta={maximum_delta} over_two={large_differences} output={}",
+                    gpu.status(),
+                    output.display()
+                );
+                let encoded = starroom_imageio::encode_jpeg_rgb8(
+                    &accelerated.data,
+                    accelerated.width,
+                    accelerated.height,
+                    95,
+                    None,
+                )
+                .unwrap();
+                std::fs::write(output.join("gpu.jpg"), encoded).unwrap();
+                assert!(
+                    maximum_delta <= 1,
+                    "real portrait CPU/GPU delta {maximum_delta}"
+                );
+            }
+            Err(error) => eprintln!("NASA_SHADOW_PARITY explicit GPU unavailable: {error}"),
+        }
+        let mut previous = 0.0;
+        for index in 0..=65536 {
+            let value = index as f32 * 0.3 / 65536.0;
+            let mapped = starroom_color::luminance(apply_tone(
+                LinearRgb {
+                    r: value,
+                    g: value,
+                    b: value,
+                },
+                settings.tone,
+            ));
+            assert!(mapped.is_finite());
+            assert!(
+                mapped >= previous,
+                "shadow response reversed brightness at {value}: {previous} -> {mapped}"
+            );
+            previous = mapped;
+        }
+        assert_eq!(source_bytes, std::fs::read(source).unwrap());
+    }
+
+    #[test]
     fn fused_gpu_creative_stages_match_cpu_oracle_before_spatial_processing() {
         let pixels = [
             LinearRgb {

@@ -1,8 +1,9 @@
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { LatestPreviewQueue } from './latestPreviewQueue'
-import type { Adjustments } from './editorState'
+import { defaultAdjustments, type Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './previewPresentation'
+import canonicalNativeDefaults from '../fixtures/contracts/native-default-settings.json'
 
 export type RenderBackend = 'native' | 'browserFallback'
 export type NativePreviewInteractionPhase = 'interactive' | 'final'
@@ -93,8 +94,99 @@ export type NativeMaskDefinition =
   | { type: 'portraitSemantic'; faceId: string; region: NativePortraitRegion; threshold: number; feather: number; modelId: string; modelVersion: string; modelHash: string; cacheKey: string }
   | { type: 'generated'; providerId: string; modelId: string; modelVersion: string; modelHash: string; semanticClass: NativeAiMaskSemantic; threshold: number; feather: number; invert: boolean; cacheIdentity: string; metadata: Record<string, string> }
 export type NativeMaskTree = NativeMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeMaskTree[] }
-export interface NativeLayerAdjustments { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
+type NativeSerializedMaskDefinition = Exclude<NativeMaskDefinition, { type: 'linear' | 'portraitSemantic' | 'generated' }>
+  | { type: 'linear'; start_x: number; start_y: number; end_x: number; end_y: number; feather: number; invert: boolean }
+  | { type: 'portraitSemantic'; face_id: string; region: NativePortraitRegion; threshold: number; feather: number; model_id: string; model_version: string; model_hash: string; cache_key: string }
+  | { type: 'generated'; provider_id: string; model_id: string; model_version: string; model_hash: string; semantic_class: NativeAiMaskSemantic; threshold: number; feather: number; invert: boolean; cache_identity: string; metadata: Record<string, string> }
+export type NativeSerializedMaskTree = NativeSerializedMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeSerializedMaskTree[] }
+
+/** Rust's tagged enum renames variants, not variant fields. Recursively adapt the
+ * three field-bearing variants instead of changing their model/cache identity. */
+export function fromNativeMask(mask: NativeSerializedMaskTree | NativeMaskTree): NativeMaskTree {
+  if ('operation' in mask) return { operation: mask.operation, children: mask.children.map(fromNativeMask) }
+  if (mask.type === 'linear' && 'start_x' in mask) {
+    const { start_x, start_y, end_x, end_y, ...rest } = mask
+    return { ...rest, startX: start_x, startY: start_y, endX: end_x, endY: end_y }
+  }
+  if (mask.type === 'portraitSemantic' && 'face_id' in mask) {
+    const { face_id, model_id, model_version, model_hash, cache_key, ...rest } = mask
+    return { ...rest, faceId: face_id, modelId: model_id, modelVersion: model_version, modelHash: model_hash, cacheKey: cache_key }
+  }
+  if (mask.type === 'generated' && 'provider_id' in mask) {
+    const { provider_id, model_id, model_version, model_hash, semantic_class, cache_identity, ...rest } = mask
+    return { ...rest, metadata: { ...rest.metadata }, providerId: provider_id, modelId: model_id,
+      modelVersion: model_version, modelHash: model_hash, semanticClass: semantic_class, cacheIdentity: cache_identity }
+  }
+  return structuredClone(mask) as NativeMaskDefinition
+}
+
+export function toNativeMask(mask: NativeMaskTree | NativeSerializedMaskTree): NativeSerializedMaskTree {
+  if ('operation' in mask) return { operation: mask.operation, children: mask.children.map(toNativeMask) }
+  const normalized = fromNativeMask(mask)
+  if (!('type' in normalized)) throw new Error('NativeLayerContractInvalid: mask leaf type is missing.')
+  if (normalized.type === 'linear') {
+    const { startX, startY, endX, endY, ...rest } = normalized
+    return { ...rest, start_x: startX, start_y: startY, end_x: endX, end_y: endY }
+  }
+  if (normalized.type === 'portraitSemantic') {
+    const { faceId, modelId, modelVersion, modelHash, cacheKey, ...rest } = normalized
+    return { ...rest, face_id: faceId, model_id: modelId, model_version: modelVersion, model_hash: modelHash, cache_key: cacheKey }
+  }
+  if (normalized.type === 'generated') {
+    const { providerId, modelId, modelVersion, modelHash, semanticClass, cacheIdentity, ...rest } = normalized
+    return { ...rest, provider_id: providerId, model_id: modelId, model_version: modelVersion,
+      model_hash: modelHash, semantic_class: semanticClass, cache_identity: cacheIdentity }
+  }
+  return normalized
+}
+
+export interface NativeLocalColorParameters { temperature: number; tint: number; vibrance: number; saturation: number }
+export interface NativeLayerAdjustmentExtensions {
+  relativeColor?: NativeLocalColorParameters
+  curves?: NativeEditSettings['curves']
+  colorMixer?: NativeColorMixer
+  grading?: NativeGrading
+}
+export interface NativeLayerAdjustments extends NativeLayerAdjustmentExtensions { tone: { exposureEv: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number } }
 export interface NativeAdjustmentLayer { id: string; name: string; enabled: boolean; opacity: number; blendMode: 'normal'; mask: NativeMaskTree; adjustments: NativeLayerAdjustments }
+/** ToneParameters is the shared Rust graph type, whose wire schema is snake_case.
+ * UI intent remains camelCase; never cast native layer JSON directly into UI state. */
+export interface NativeSerializedAdjustmentLayer extends Omit<NativeAdjustmentLayer, 'adjustments' | 'mask'> {
+  mask: NativeSerializedMaskTree
+  adjustments: NativeLayerAdjustmentExtensions & { tone: Omit<NativeLayerAdjustments['tone'], 'exposureEv'> & { exposure_ev: number } }
+}
+
+function localToneFromWire(tone: NativeLayerAdjustments['tone'] | NativeSerializedAdjustmentLayer['adjustments']['tone']): NativeLayerAdjustments['tone'] {
+  if (!tone || typeof tone !== 'object') throw new Error('NativeLayerContractInvalid: local tone parameters are missing.')
+  const exposureEv = 'exposure_ev' in tone ? tone.exposure_ev : tone.exposureEv
+  const values = { exposureEv, contrast: tone.contrast, highlights: tone.highlights,
+    shadows: tone.shadows, whites: tone.whites, blacks: tone.blacks }
+  if (Object.values(values).some((value) => typeof value !== 'number' || !Number.isFinite(value))
+    || ('exposure_ev' in tone && 'exposureEv' in tone && tone.exposureEv !== tone.exposure_ev)) {
+    throw new Error('NativeLayerContractInvalid: local tone must contain finite, unambiguous exposure and tone values.')
+  }
+  return values
+}
+
+/** Accept the canonical native response and old camelCase history/project layers without
+ * losing their mask/model identity or edit values. No pixels or color math are involved. */
+export function fromNativeLayers(layers: ReadonlyArray<NativeSerializedAdjustmentLayer | NativeAdjustmentLayer>): NativeAdjustmentLayer[] {
+  return layers.map((layer) => {
+    const adjustments = layer.adjustments ?? {}
+    const tone = 'tone' in adjustments ? adjustments.tone : { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 }
+    return { ...layer, enabled: layer.enabled === undefined ? true : layer.enabled,
+      opacity: layer.opacity === undefined ? 1 : layer.opacity, blendMode: layer.blendMode ?? 'normal',
+      mask: fromNativeMask(layer.mask ?? { type: 'none' }),
+      adjustments: { ...structuredClone(adjustments), tone: localToneFromWire(tone) } }
+  })
+}
+
+export function toNativeLayers(layers: ReadonlyArray<NativeAdjustmentLayer | NativeSerializedAdjustmentLayer>): NativeSerializedAdjustmentLayer[] {
+  return layers.map((layer) => {
+    const { exposureEv, ...tone } = localToneFromWire(layer.adjustments.tone)
+    return { ...layer, mask: toNativeMask(layer.mask), adjustments: { ...structuredClone(layer.adjustments), tone: { exposure_ev: exposureEv, ...tone } } }
+  })
+}
 export interface NativeSkinRetouchParameters { smooth: number; texture: number; toneEvenness: number; hueDegrees: number; chroma: number; exposureEv: number }
 export interface NativeSkinRetouchFace { faceId: string; cacheKey: string }
 export interface NativeSkinRetouchSettings { parameters: NativeSkinRetouchParameters; faces: NativeSkinRetouchFace[] }
@@ -132,11 +224,77 @@ export interface NativeEditSettings {
     flipHorizontal: boolean; flipVertical: boolean; crop: { left: number; top: number; right: number; bottom: number };
     cropAspectWidth: number; cropAspectHeight: number; fourPoint: null | { topLeft: { x: number; y: number }; topRight: { x: number; y: number }; bottomRight: { x: number; y: number }; bottomLeft: { x: number; y: number } };
     uprightMode: 'off' | 'auto' | 'level' | 'vertical' | 'full' }
-  layers: NativeAdjustmentLayer[]
+  layers: NativeSerializedAdjustmentLayer[]
   skinRetouch: NativeSkinRetouchSettings
   healingOperations: NativeHealingOperation[]
   grain: { amount: number; size: number; roughness: number; color: number; seed: number }
   vignette: { amount: number; midpoint: number; roundness: number; feather: number; highlightProtect: number }
+}
+
+/** Native-authored graph values with no UI knob. Preserve them across history, Looks,
+ * snapshots and rerenders instead of silently replacing them with UI defaults. */
+export interface NativeRenderConstants {
+  sharpenThreshold: number
+  mixerBandWidthDegrees: number
+  grainSeed: number
+  aiDenoiseProvider: NativeEditSettings['aiDenoiseProvider']
+}
+export const defaultNativeRenderConstants: NativeRenderConstants = {
+  sharpenThreshold: .002, mixerBandWidthDegrees: 52, grainSeed: 0, aiDenoiseProvider: 'directMl',
+}
+
+function checkedRenderConstants(constants: NativeRenderConstants): NativeRenderConstants {
+  if (!Number.isFinite(constants.sharpenThreshold) || !Number.isFinite(constants.mixerBandWidthDegrees)
+    || !Number.isSafeInteger(constants.grainSeed) || constants.grainSeed < 0
+    || !['directMl', 'cpu'].includes(constants.aiDenoiseProvider)) {
+    throw new Error('NativeRenderContractInvalid: graph constants must be finite; grain seed must be a nonnegative JavaScript-safe integer. Larger native u64 seeds are not supported by this JSON boundary.')
+  }
+  return constants
+}
+
+/** Old history JSON is intentionally returned verbatim by Rust. Normalize only the UI
+ * projection using the exact shared Rust Deserialize/Serialize defaults fixture; never
+ * mutate the acknowledged before-state or its history hash. */
+export function normalizeNativeSettings(input: NativeEditSettings): NativeEditSettings {
+  const raw = structuredClone(input)
+  for (const key of ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'temperature', 'tint',
+    'vibrance', 'saturation', 'sharpness', 'noiseReduction'] as const) {
+    if (typeof raw[key] !== 'number' || !Number.isFinite(raw[key])) throw new Error(`NativeEditContractInvalid: required ${key} is missing or non-finite.`)
+  }
+  if (!Array.isArray(raw.curve)) throw new Error('NativeEditContractInvalid: required legacy curve is missing.')
+  const settings = { ...structuredClone(canonicalNativeDefaults), ...raw } as NativeEditSettings
+  settings.curves = { ...structuredClone(canonicalNativeDefaults.curves), ...(raw.curves ?? {}) }
+  // The production native graph gives the original curve precedence when the modern
+  // master has fewer than two points. Preserve that same S-curve during UI hydration.
+  if (settings.curves.master.length < 2) settings.curves.master = structuredClone(raw.curve)
+  return settings
+}
+
+function neutralLayerExtensions(adjustments: NativeLayerAdjustmentExtensions): boolean {
+  const color = adjustments.relativeColor
+  if (color && Object.values(color).some((value) => value !== 0)) return false
+  if (adjustments.curves && Object.values(adjustments.curves).some((points) => points.length !== 0)) return false
+  const mixer = adjustments.colorMixer
+  if (mixer && (mixer.hueLock !== canonicalNativeDefaults.colorMixer.hueLock
+    || mixer.bandWidthDegrees !== canonicalNativeDefaults.colorMixer.bandWidthDegrees
+    || mixer.bands.length !== 8 || mixer.bands.some((band) => Object.values(band).some((value) => value !== 0)))) return false
+  const grading = adjustments.grading
+  if (grading && (grading.balance !== canonicalNativeDefaults.grading.balance
+    || grading.blending !== canonicalNativeDefaults.grading.blending || grading.amount !== canonicalNativeDefaults.grading.amount
+    || (['global', 'shadows', 'midtones', 'highlights'] as const)
+      .some((zone) => Object.values(grading[zone]).some((value) => value !== 0)))) return false
+  return true
+}
+
+const legacyRadialId = '__m15-radial-mask__'
+const isLegacyRadialId = (id: string) => id === legacyRadialId || /^__m15-radial-mask__:controls(?::\d+)?$/.test(id)
+
+function availableLegacyRadialId(layers: ReadonlyArray<NativeAdjustmentLayer>): string {
+  const used = new Set(layers.map(({ id }) => id))
+  if (!used.has(legacyRadialId)) return legacyRadialId
+  let id = `${legacyRadialId}:controls`, index = 2
+  while (used.has(id)) { id = `${legacyRadialId}:controls:${index}`; index += 1 }
+  return id
 }
 
 export interface NativePreviewResult {
@@ -195,7 +353,9 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
   layers: NativeAdjustmentLayer[] = [],
   mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 },
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
-  healingOperations: NativeHealingOperation[] = []): NativeEditSettings {
+  healingOperations: NativeHealingOperation[] = [],
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants): NativeEditSettings {
+  checkedRenderConstants(renderConstants)
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
   const wheel = (zone: 'Global' | 'Shadows' | 'Midtones' | 'Highlights'): NativeColorWheel => ({
@@ -227,7 +387,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
         lightness: adjustments[`mixer${title(band)}Lightness` as keyof Adjustments] / 100,
       })),
       hueLock: adjustments.mixerHueLock !== 0,
-      bandWidthDegrees: 52,
+      bandWidthDegrees: renderConstants.mixerBandWidthDegrees,
     },
     grading: {
       global: wheel('Global'), shadows: wheel('Shadows'), midtones: wheel('Midtones'), highlights: wheel('Highlights'),
@@ -236,7 +396,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     sharpenSettings: {
       amount: Math.max(0, adjustments.sharpness / 50), radius: adjustments.sharpenRadius,
       detail: adjustments.sharpenDetail / 100, masking: adjustments.sharpenMasking / 100,
-      haloProtection: adjustments.sharpenHaloProtection / 100, threshold: .002,
+      haloProtection: adjustments.sharpenHaloProtection / 100, threshold: renderConstants.sharpenThreshold,
     },
     denoiseSettings: {
       luminance: Math.max(adjustments.noiseReduction, adjustments.denoiseLuminance) / 100,
@@ -251,7 +411,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       colorNoise: adjustments.aiDenoiseColorNoise / 100,
       preserveSkin: adjustments.aiDenoisePreserveSkin / 100,
     },
-    aiDenoiseProvider: 'directMl',
+    aiDenoiseProvider: renderConstants.aiDenoiseProvider,
     localDetail: { texture: adjustments.texture / 100, clarity: adjustments.clarity / 100, dehaze: adjustments.dehaze / 100 },
     optics: { parameters: { enabled: adjustments.lensCorrection !== 0, distortion: adjustments.lensDistortion !== 0,
       tca: adjustments.lensTca !== 0, vignette: adjustments.lensVignette !== 0, autoScale: adjustments.lensAutoScale !== 0 },
@@ -272,18 +432,18 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
       },
       uprightMode: (['off', 'auto', 'level', 'vertical', 'full'] as const)[Math.round(adjustments.geometryUpright)] ?? 'off',
     },
-    layers: [
-      ...layers.map((layer) => ({ ...layer, mask: structuredClone(layer.mask), adjustments: { tone: { ...layer.adjustments.tone } } })),
+    layers: toNativeLayers([
+      ...layers,
       ...(adjustments.maskExposure === 0 ? [] : [{
-        id: '__m15-radial-mask__', name: 'Radial mask', enabled: true, opacity: 1, blendMode: 'normal' as const,
+        id: availableLegacyRadialId(layers), name: 'Radial mask', enabled: true, opacity: 1, blendMode: 'normal' as const,
         mask: { type: 'radial' as const, ...mask, feather: Math.max(0, adjustments.maskFeather / 100), invert: false },
         adjustments: { tone: { exposureEv: adjustments.maskExposure, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } },
       }]),
-    ],
+    ]),
     skinRetouch: { parameters: { ...skinRetouch.parameters }, faces: skinRetouch.faces.map((face) => ({ ...face })) },
     healingOperations: healingOperations.map((operation) => structuredClone(operation)),
     grain: { amount: adjustments.grainAmount / 100, size: adjustments.grainSize / 100,
-      roughness: adjustments.grainRoughness / 100, color: adjustments.grainColor / 100, seed: 0 },
+      roughness: adjustments.grainRoughness / 100, color: adjustments.grainColor / 100, seed: renderConstants.grainSeed },
     vignette: { amount: adjustments.vignette / 100, midpoint: adjustments.vignetteMidpoint / 100,
       roundness: adjustments.vignetteRoundness / 100, feather: adjustments.vignetteFeather / 100,
       highlightProtect: adjustments.vignetteHighlightProtect / 100 },
@@ -386,12 +546,58 @@ export async function mixNativeLooks(pathA: string, pathB: string, weightA: numb
   })
 }
 
-export function fromNativeSettings(base: Adjustments, settings: NativeEditSettings): { adjustments: Adjustments; curves: NativeToneCurves } {
+export function fromNativeSettings(base: Adjustments, input: NativeEditSettings): { adjustments: Adjustments; curves: NativeToneCurves; layers: NativeAdjustmentLayer[]; mask: RadialMask | null; renderConstants: NativeRenderConstants; settings: NativeEditSettings } {
+  const settings = normalizeNativeSettings(input)
+  const layers = fromNativeLayers(settings.layers)
+  const candidate = layers.at(-1) && isLegacyRadialId(layers.at(-1)!.id) ? layers.at(-1)! : null
+  const radial = candidate && 'type' in candidate.mask && candidate.mask.type === 'radial' ? candidate.mask : null
+  // The legacy scalar is serialized as a graph layer. Restore its original UI intent
+  // exactly once, including geometry, or keep a modified layer intact as local intent.
+  const legacyRadial = candidate && candidate === layers.at(-1) && radial && candidate.name === 'Radial mask' && candidate.enabled
+    && candidate.opacity === 1 && candidate.adjustments.tone.exposureEv !== 0
+    // Do not strip native local color/curves/grading hidden behind the reserved ID.
+    && neutralLayerExtensions(candidate.adjustments)
+    && (['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const)
+      .every((key) => candidate.adjustments.tone[key] === 0) && !radial.invert ? candidate : null
   const adjustments: Adjustments = {
     ...base,
+    maskExposure: legacyRadial?.adjustments.tone.exposureEv ?? 0,
+    maskFeather: legacyRadial && radial ? radial.feather * 100 : base.maskFeather,
     exposure: settings.exposure, contrast: settings.contrast, highlights: settings.highlights, shadows: settings.shadows,
     whites: settings.whites, blacks: settings.blacks, temperature: settings.temperature, tint: settings.tint,
     vibrance: settings.vibrance, saturation: settings.saturation,
+    sharpness: settings.sharpenSettings.amount * 50,
+    // The effective native denoise channels are authoritative. An old convenience scalar
+    // cannot re-enable a stronger amount when a native Look returned lower channels.
+    noiseReduction: Math.min(settings.noiseReduction, settings.denoiseSettings.luminance * 100, settings.denoiseSettings.chroma * 100),
+    sharpenRadius: settings.sharpenSettings.radius, sharpenDetail: settings.sharpenSettings.detail * 100,
+    sharpenMasking: settings.sharpenSettings.masking * 100, sharpenHaloProtection: settings.sharpenSettings.haloProtection * 100,
+    denoiseLuminance: settings.denoiseSettings.luminance * 100, denoiseChroma: settings.denoiseSettings.chroma * 100,
+    denoiseRadius: settings.denoiseSettings.radius, denoiseDetailProtection: settings.denoiseSettings.detailProtection * 100,
+    denoiseHighIso: settings.denoiseSettings.highIso * 100,
+    texture: settings.localDetail.texture * 100, clarity: settings.localDetail.clarity * 100, dehaze: settings.localDetail.dehaze * 100,
+    mixerHueLock: settings.colorMixer.hueLock ? 1 : 0,
+    gradeBalance: settings.grading.balance * 100, gradeBlending: settings.grading.blending * 100, gradeAmount: settings.grading.amount * 100,
+    lensCorrection: settings.optics.parameters.enabled ? 1 : 0, lensDistortion: settings.optics.parameters.distortion ? 1 : 0,
+    lensTca: settings.optics.parameters.tca ? 1 : 0, lensVignette: settings.optics.parameters.vignette ? 1 : 0,
+    lensAutoScale: settings.optics.parameters.autoScale ? 1 : 0,
+    rotation: settings.geometry.rotationDegrees,
+    flipHorizontal: settings.geometry.flipHorizontal ? 1 : 0, flipVertical: settings.geometry.flipVertical ? 1 : 0,
+    geometryVertical: settings.geometry.verticalKeystone * 100, geometryHorizontal: settings.geometry.horizontalKeystone * 100,
+    geometryScale: settings.geometry.scale * 100, geometryOffsetX: settings.geometry.offsetX * 100, geometryOffsetY: settings.geometry.offsetY * 100,
+    cropLeft: settings.geometry.crop.left * 100, cropTop: settings.geometry.crop.top * 100,
+    cropRight: settings.geometry.crop.right * 100, cropBottom: settings.geometry.crop.bottom * 100,
+    cropAspectWidth: settings.geometry.cropAspectWidth, cropAspectHeight: settings.geometry.cropAspectHeight,
+    geometryUpright: ['off', 'auto', 'level', 'vertical', 'full'].indexOf(settings.geometry.uprightMode),
+    geometryFourPoint: settings.geometry.fourPoint ? 1 : 0,
+    quadTopLeftX: settings.geometry.fourPoint ? settings.geometry.fourPoint.topLeft.x * 100 : defaultAdjustments.quadTopLeftX,
+    quadTopLeftY: settings.geometry.fourPoint ? settings.geometry.fourPoint.topLeft.y * 100 : defaultAdjustments.quadTopLeftY,
+    quadTopRightX: settings.geometry.fourPoint ? settings.geometry.fourPoint.topRight.x * 100 : defaultAdjustments.quadTopRightX,
+    quadTopRightY: settings.geometry.fourPoint ? settings.geometry.fourPoint.topRight.y * 100 : defaultAdjustments.quadTopRightY,
+    quadBottomRightX: settings.geometry.fourPoint ? settings.geometry.fourPoint.bottomRight.x * 100 : defaultAdjustments.quadBottomRightX,
+    quadBottomRightY: settings.geometry.fourPoint ? settings.geometry.fourPoint.bottomRight.y * 100 : defaultAdjustments.quadBottomRightY,
+    quadBottomLeftX: settings.geometry.fourPoint ? settings.geometry.fourPoint.bottomLeft.x * 100 : defaultAdjustments.quadBottomLeftX,
+    quadBottomLeftY: settings.geometry.fourPoint ? settings.geometry.fourPoint.bottomLeft.y * 100 : defaultAdjustments.quadBottomLeftY,
     aiDenoiseEnabled: settings.aiDenoise.enabled ? 1 : 0, aiDenoiseAmount: settings.aiDenoise.amount * 100,
     aiDenoiseDetail: settings.aiDenoise.detail * 100, aiDenoiseColorNoise: settings.aiDenoise.colorNoise * 100,
     aiDenoisePreserveSkin: settings.aiDenoise.preserveSkin * 100,
@@ -407,8 +613,19 @@ export function fromNativeSettings(base: Adjustments, settings: NativeEditSettin
     adjustments[`mixer${band}Chroma` as keyof Adjustments] = settings.colorMixer.bands[index].chroma * 100
     adjustments[`mixer${band}Lightness` as keyof Adjustments] = settings.colorMixer.bands[index].lightness * 100
   })
+  for (const zone of ['Global', 'Shadows', 'Midtones', 'Highlights'] as const) {
+    const wheel = settings.grading[`${zone[0].toLowerCase()}${zone.slice(1)}` as keyof Pick<NativeGrading, 'global' | 'shadows' | 'midtones' | 'highlights'>]
+    adjustments[`grade${zone}Hue`] = wheel.hueDegrees
+    adjustments[`grade${zone}Chroma`] = wheel.chroma * 100
+    adjustments[`grade${zone}Lightness`] = wheel.lightness * 100
+  }
   const withIds = (points: Array<{ x: number; y: number }>, channel: string) => points.map((point, index) => ({ ...point, id: `${channel}-${index}` }))
-  return { adjustments, curves: { master: withIds(settings.curves.master, 'master'), red: withIds(settings.curves.red, 'red'), green: withIds(settings.curves.green, 'green'), blue: withIds(settings.curves.blue, 'blue') } }
+  return { adjustments, layers: layers.filter((layer) => layer !== legacyRadial), settings,
+    mask: legacyRadial && radial ? { x: radial.x, y: radial.y, width: radial.width, height: radial.height, rotation: radial.rotation } : null,
+    renderConstants: checkedRenderConstants({ sharpenThreshold: settings.sharpenSettings.threshold,
+      mixerBandWidthDegrees: settings.colorMixer.bandWidthDegrees, grainSeed: settings.grain.seed,
+      aiDenoiseProvider: settings.aiDenoiseProvider }),
+    curves: { master: withIds(settings.curves.master, 'master'), red: withIds(settings.curves.red, 'red'), green: withIds(settings.curves.green, 'green'), blue: withIds(settings.curves.blue, 'blue') } }
 }
 
 /** M16: all inference is local Rust/ONNX Runtime. This returns compact geometry/cache metadata,
@@ -496,13 +713,14 @@ export async function renderNativePreview(
   surface: object = defaultPreviewSurface,
   resolutionMode: 'fit' | 'highResolution' = 'fit',
   viewport: NativePreviewViewport | null = null,
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
   const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) },
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)
@@ -516,9 +734,10 @@ export async function queryNativeWhiteBalanceInfo(sourcePath: string) {
 
 export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,
   curve: ToneCurvePoint[], whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
-  toneCurves: NativeToneCurves, opticsState: NativeOpticsState = defaultNativeOpticsState): Promise<NativeColorBand | null> {
+  toneCurves: NativeToneCurves, opticsState: NativeOpticsState = defaultNativeOpticsState,
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants): Promise<NativeColorBand | null> {
   return invoke<NativeColorBand | null>('native_sample_color', {
-    request: { sourcePath, x, y, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState) },
+    request: { sourcePath, x, y, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, undefined, undefined, undefined, undefined, renderConstants) },
   })
 }
 
@@ -527,9 +746,10 @@ export async function sampleNativeColor(sourcePath: string, x: number, y: number
 export async function adviseNativeImage(sourcePath: string, adjustments: Adjustments, curve: ToneCurvePoint[],
   whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
   toneCurves: NativeToneCurves, opticsState: NativeOpticsState, layers: NativeAdjustmentLayer[] = [],
-  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(), healingOperations: NativeHealingOperation[] = []): Promise<NativeAdvisorResult> {
+  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(), healingOperations: NativeHealingOperation[] = [],
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants, mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }): Promise<NativeAdvisorResult> {
   return invoke<NativeAdvisorResult>('advise_native_image', { request: { sourcePath, maxEdge: 1024,
-    settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, { x: .5, y: .5, width: .42, height: .42, rotation: 0 }, skinRetouch, healingOperations) } })
+    settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) } })
 }
 
 export async function chooseNativeExportPath(sourceName: string) {
@@ -644,10 +864,11 @@ export async function exportNativeJpeg(
   layers: NativeAdjustmentLayer[] = [],
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
   healingOperations: NativeHealingOperation[] = [],
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations) },
+    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) },
   })
 }
 

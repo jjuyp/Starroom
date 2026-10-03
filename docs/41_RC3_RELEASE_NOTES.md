@@ -63,7 +63,16 @@ workflows; these local results are not substituted for CI.
 - Final installer hashes and same-SHA CI links are recorded with the dated deliverable report,
   not substituted with the historical hashes above. No new release tag is authorized by local
   source tests alone.
-- Newly built desktop GUI interaction/screenshot acceptance remains unverified: the test-tool
-  launch approval expired. Older installed-app screenshots were rejected. This must be resumed
-  with app-launch authorization before claiming all nine field requests have full visual and
-  interactive acceptance. A second computer still requires independent field validation.
+- Desktop launch authorization was granted and the exact `991b048` executable was exercised.
+  RGB/brightness histogram switching, sidebar-only Presets/History, source dimensions, Color
+  controls, rotation and normal close were observed. The same pass exposed shadow solarization,
+  a local-layer IPC schema mismatch and incomplete Undo hydration. Consequently `991b048` is
+  not accepted for delivery despite green automated CI. These fixes require another exact-build
+  interaction pass and same-SHA release qualification. A second computer still requires
+  independent field validation.
+
+The follow-up repair batch passes 306 ordinary Rust tests, 132 frontend tests, full source
+validation and private real-model inference/graph parity locally. It fixes shadow/highlight/white
+tone folding, downstream zone ordering, actual local IPC schemas and full saved-intent hydration.
+R14-R17 are `FIXED`, not `VERIFIED`, until the exact rebuilt candidate passes interactions and
+same-SHA Full/Release qualification. The dated deliverable report records that final evidence.

@@ -584,5 +584,15 @@ Do not call Starroom production-ready if its RAW, tone, color, denoise, sharpeni
 - [ ] Validate the updated installer on a second clean computer. The public package intentionally cannot include non-redistributable Face/Skin, Sky or NAFNet weights.
 
 Native desktop interaction/screenshot acceptance is not replaced by AST tests or the Browser demo.
-The explicit newly built desktop executable launch was denied by an expired app-approval prompt;
-resume that gate only after desktop-tool launch authorization is granted. This is not a product-test pass.
+The user granted desktop launch authorization; the exact `991b048` executable was exercised.
+Its green automated gates did not detect the following real-interaction regressions. They are
+release blockers until fixed and requalified in the rebuilt desktop executable:
+
+- [ ] Eliminate non-monotonic shadow solarization with the pinned darktable tone adapter;
+  keep black/midtone/HDR anchors, real-photo detail and CPU/GPU parity regressions.
+- [ ] Serialize all manual/AI/portrait local-layer tones using the actual Rust wire schema;
+  preserve old camelCase project intent when hydrating History/Snapshots.
+- [ ] Restore every existing serialized adjustment on Undo/Redo and prevent a synthesized
+  legacy radial layer from applying twice after History/Snapshot restore.
+- [ ] Reset inspector scroll only when switching tools and prevent translucent sticky titles
+  from overlapping scrolled control labels.

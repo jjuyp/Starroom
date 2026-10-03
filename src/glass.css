@@ -124,7 +124,7 @@
 .theme-dark .inspector-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(180,205,236,.35) transparent;padding:0 12px 12px}
 .theme-dark .inspector-scroll .inspector-content{padding:0;overflow:visible}
 .theme-dark .inspector-scroll .inspector-head{margin:0 -12px 10px;padding:0 12px}
-.theme-dark .inspector-toggle{display:flex;width:calc(100% + 24px);text-align:left;cursor:pointer;background:rgba(75,112,161,.14);color:var(--sr-text-primary)}
+.theme-dark .inspector-toggle{display:flex;width:calc(100% + 24px);text-align:left;cursor:pointer;background:rgba(25,45,69,.96);color:var(--sr-text-primary)}
 .theme-dark .inspector-toggle svg{transition:transform .16s ease}.theme-dark .inspector-toggle svg.is-collapsed{transform:rotate(-90deg)}
 .theme-dark .inspector-content [hidden]{display:none!important}
 .theme-dark .color-bento{grid-template-columns:minmax(0,1fr);gap:10px}

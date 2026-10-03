@@ -996,6 +996,15 @@ const fn default_denoise_execution_provider() -> DenoiseExecutionProvider {
 
 impl NativeEditSettings {
     fn validated(self) -> Result<RenderSettings, String> {
+        // Persisted projects retain u64 seeds, but this IPC boundary uses JSON numbers.
+        // Reject unrepresentable intent before any render/history commit instead of allowing
+        // JavaScript to round a seed and silently change deterministic grain on the next edit.
+        if self.grain.seed > 9_007_199_254_740_991 {
+            return Err(
+                "UnsafeRenderSeed: grain seed exceeds the exact JavaScript JSON integer range"
+                    .into(),
+            );
+        }
         let finite = [
             self.exposure,
             self.contrast,
@@ -4948,6 +4957,160 @@ mod tests {
         }
         std::fs::write(root.join("keep"), b"user state").unwrap();
         assert!(release_self_test(&root).is_err());
+    }
+
+    #[test]
+    fn native_preview_deserializes_shared_local_layer_wire_contract() {
+        let layers: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-local-layers.json"
+        ))
+        .expect("shared frontend/native layer contract");
+        let workflow: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-local-workflow.json"
+        ))
+        .expect("shared frontend/native skin and healing contract");
+        let mut edit = serde_json::to_value(neutral_settings()).unwrap();
+        edit["layers"] = layers.clone();
+        edit["skinRetouch"] = workflow["skinRetouch"].clone();
+        edit["healingOperations"] = workflow["healingOperations"].clone();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let wire = serde_json::json!({
+            "requestId": "shared-local-layer-contract",
+            "sourcePath": source,
+            "maxEdge": 512,
+            "preferGpu": true,
+            "interactionPhase": "final",
+            "resolutionMode": "fit",
+            "settings": edit,
+        });
+        let request: NativePreviewRequest = serde_json::from_value(wire.clone())
+            .expect("actual native_preview IPC request accepts frontend wire");
+        assert_eq!(request.request_id, "shared-local-layer-contract");
+        assert_eq!(request.source_path, source);
+        assert_eq!(request.max_edge, 512);
+        assert!(request.prefer_gpu);
+        let serialized_settings = serde_json::to_string(&request.settings).unwrap();
+        let restored: NativeEditSettings = serde_json::from_str(&serialized_settings).unwrap();
+        let expected_skin: SkinRetouchSettings =
+            serde_json::from_value(workflow["skinRetouch"].clone()).unwrap();
+        let expected_healing: Vec<HealingOperation> =
+            serde_json::from_value(workflow["healingOperations"].clone()).unwrap();
+        assert_eq!(request.settings.skin_retouch, expected_skin);
+        assert_eq!(request.settings.healing_operations, expected_healing);
+        assert_eq!(restored.skin_retouch, expected_skin);
+        assert_eq!(restored.healing_operations, expected_healing);
+        assert_eq!(restored.layers, request.settings.layers);
+        let validated = request
+            .settings
+            .validated()
+            .expect("valid native layer controls");
+        assert_eq!(validated.layers.len(), layers.as_array().unwrap().len());
+        fn mask_types(
+            mask: &starroom_project::MaskTree,
+            types: &mut std::collections::BTreeSet<&'static str>,
+        ) {
+            use starroom_project::{MaskDefinition, MaskTree};
+            match mask {
+                MaskTree::Composite(composite) => {
+                    for child in &composite.children {
+                        mask_types(child, types);
+                    }
+                }
+                MaskTree::Leaf(leaf) => {
+                    types.insert(match leaf {
+                        MaskDefinition::None => "none",
+                        MaskDefinition::Radial { .. } => "radial",
+                        MaskDefinition::Linear { .. } => "linear",
+                        MaskDefinition::Brush { .. } => "brush",
+                        MaskDefinition::Luminance { .. } => "luminance",
+                        MaskDefinition::ColorRange { .. } => "colorRange",
+                        MaskDefinition::PortraitSemantic { .. } => "portraitSemantic",
+                        MaskDefinition::Generated { .. } => "generated",
+                        MaskDefinition::Provider { .. } => "provider",
+                    });
+                }
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (layer, original) in validated.layers.iter().zip(layers.as_array().unwrap()) {
+            assert_eq!(layer.id, original["id"].as_str().unwrap());
+            let expected: NativeAdjustmentLayer = serde_json::from_value(original.clone()).unwrap();
+            assert_eq!(
+                layer, &expected,
+                "all local tone/color/curve/mixer/grading and mask intent"
+            );
+            assert!(layer.adjustments.tone.exposure_ev.is_finite());
+            let round_trip: NativeAdjustmentLayer =
+                serde_json::from_str(&serde_json::to_string(layer).unwrap()).unwrap();
+            assert_eq!(&round_trip, layer);
+            mask_types(&layer.mask, &mut seen);
+        }
+        assert_eq!(
+            seen,
+            std::collections::BTreeSet::from([
+                "none",
+                "radial",
+                "linear",
+                "brush",
+                "luminance",
+                "colorRange",
+                "portraitSemantic",
+                "generated"
+            ])
+        );
+        assert_eq!(validated.skin_retouch, expected_skin);
+        assert_eq!(validated.healing_operations, expected_healing);
+        assert_eq!(validated.layers[0].adjustments.tone.exposure_ev, 0.35);
+        assert_eq!(validated.layers[1].adjustments.tone.exposure_ev, -0.4);
+        // Catch the exact field regression instead of silently dropping a non-neutral layer EV.
+        let mut invalid = wire;
+        let tone = invalid["settings"]["layers"][0]["adjustments"]["tone"]
+            .as_object_mut()
+            .unwrap();
+        let exposure = tone.remove("exposure_ev").unwrap();
+        tone.insert("exposureEv".into(), exposure);
+        let error = serde_json::from_value::<NativePreviewRequest>(invalid).unwrap_err();
+        assert!(error.to_string().contains("exposure_ev"));
+    }
+
+    #[test]
+    fn native_json_boundary_rejects_unsafe_grain_seed_without_rounding() {
+        let mut edit = neutral_settings();
+        edit.grain.seed = 9_007_199_254_740_991;
+        assert_eq!(
+            edit.clone().validated().unwrap().grain.seed,
+            edit.grain.seed
+        );
+        edit.grain.seed += 1;
+        assert!(
+            edit.validated()
+                .unwrap_err()
+                .starts_with("UnsafeRenderSeed:")
+        );
+    }
+
+    #[test]
+    fn native_legacy_missing_families_have_explicit_effective_defaults() {
+        let wire = serde_json::json!({
+            "exposure": 0, "contrast": 0, "highlights": 0, "shadows": 0, "whites": 0, "blacks": 0,
+            "temperature": 0, "tint": 0, "vibrance": 0, "saturation": 0, "sharpness": 0, "noiseReduction": 0,
+            "curve": [],
+        });
+        let effective: NativeEditSettings = serde_json::from_value(wire).unwrap();
+        let canonical = serde_json::to_string_pretty(&effective).unwrap();
+        let shared: NativeEditSettings = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-default-settings.json"
+        ))
+        .expect("production Rust serde defaults shared with frontend");
+        assert_eq!(
+            serde_json::to_string(&effective).unwrap(),
+            serde_json::to_string(&shared).unwrap()
+        );
+        let restored: NativeEditSettings = serde_json::from_str(&canonical).unwrap();
+        let effective = effective.validated().unwrap();
+        let restored = restored.validated().unwrap();
+        assert_eq!(effective, restored);
     }
 
     #[test]

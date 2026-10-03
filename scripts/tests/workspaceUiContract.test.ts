@@ -108,6 +108,48 @@ describe('production workspace UI structure', () => {
     expect(hidden).toHaveLength(1)
   })
 
+  it('resets primary inspector scroll only when the active tool changes and keeps its sticky title readable', () => {
+    const containers = descendants(source, (node) => {
+      const value = attribute(node, 'className')?.initializer
+      return Boolean(value && identifier(value, 'tool') && attribute(node, 'ref')?.initializer
+        && identifier(attribute(node, 'ref')!.initializer!, 'inspectorScrollRef'))
+    })
+    expect(containers).toHaveLength(1)
+    const effects = calls(source, 'useLayoutEffect').filter((call) => identifier(call.arguments[0], 'inspectorScrollRef'))
+    expect(effects).toHaveLength(1)
+    const dependencies = effects[0].arguments[1]
+    expect(ts.isArrayLiteralExpression(dependencies)).toBe(true)
+    expect((dependencies as ts.ArrayLiteralExpression).elements.map((entry) => entry.getText(source))).toEqual(['tool'])
+    const resets = descendants(effects[0].arguments[0], (node) => ts.isBinaryExpression(node)
+      && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isPropertyAccessExpression(node.left) && node.left.name.text === 'scrollTop'
+      && ts.isNumericLiteral(node.right) && node.right.text === '0')
+    expect(resets).toHaveLength(1)
+    const background = winningValue('.theme-dark .inspector-toggle', 'background')
+    expect(background).toMatch(/^rgba\(/)
+    const alpha = Number(background!.match(/,\s*([.\d]+)\)$/)?.[1])
+    expect(alpha).toBeGreaterThanOrEqual(.9)
+    expect(winningValue('.theme-dark .inspector-head', 'backdrop-filter')).toBe('blur(12px)')
+  })
+
+  it('hydrates native history and snapshots through the local-tone wire adapter instead of casting raw layers into UI state', () => {
+    const hydrator = descendants(source, (node) => ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name) && node.name.text === 'applyNativeHistoryState')[0] as ts.VariableDeclaration
+    expect(hydrator?.initializer).toBeDefined()
+    expect(calls(hydrator, 'fromNativeSettings')).toHaveLength(1)
+    const layers = descendants(hydrator, (node) => ts.isPropertyAssignment(node)
+      && node.name.getText(source) === 'layers') as ts.PropertyAssignment[]
+    expect(layers).toHaveLength(1)
+    expect(ts.isPropertyAccessExpression(layers[0].initializer)).toBe(true)
+    expect(identifier(layers[0].initializer, 'mapped')).toBe(true)
+    expect(identifier(layers[0].initializer, 'state')).toBe(false)
+    const mask = descendants(hydrator, (node) => ts.isPropertyAssignment(node)
+      && node.name.getText(source) === 'mask') as ts.PropertyAssignment[]
+    expect(mask).toHaveLength(1)
+    expect(identifier(mask[0].initializer, 'mapped')).toBe(true)
+    expect(identifier(mask[0].initializer, 'photo')).toBe(true)
+  })
+
   it('keeps every command palette entry connected to the shared command dispatcher', () => {
     const dispatch = descendants(source, (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'executeCommand')[0]
     expect(dispatch).toBeDefined()
