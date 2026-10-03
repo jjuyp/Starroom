@@ -182,6 +182,18 @@ pub struct FaceCropTransform {
 }
 
 impl FaceCropTransform {
+    /// Stable key shared by generation and restoration. Keep the established five-decimal
+    /// representation so existing compact project references remain byte-compatible.
+    pub fn identity_hash(self) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(format!(
+                "{:.5}:{:.5}:{:.5}:{:.5}",
+                self.center_x, self.center_y, self.side, self.rotation_degrees
+            ))
+        )
+    }
+
     pub fn from_face(
         bounds: FaceBounds,
         width: u32,
@@ -494,13 +506,7 @@ impl PortraitOnnxProvider {
             .map_err(|e| PortraitError::ParsingFailed(e.to_string()))?;
         let probabilities = parser_probabilities(&output)?;
         let regions = project_semantic_regions(&probabilities, width, height, face.crop)?;
-        let transform_hash = format!(
-            "{:x}",
-            Sha256::digest(format!(
-                "{:.5}:{:.5}:{:.5}:{:.5}",
-                face.crop.center_x, face.crop.center_y, face.crop.side, face.crop.rotation_degrees
-            ))
-        );
+        let transform_hash = face.crop.identity_hash();
         Ok(PortraitParseResult {
             face_id: face.id.clone(),
             cache_key: ParsingCacheKey {
@@ -1522,7 +1528,7 @@ impl AiMaskOnnxProvider {
         }
     }
 
-    fn cache_identity(source_hash: &str, semantic: AiMaskSemantic, model_hash: &str) -> String {
+    pub fn cache_identity(source_hash: &str, semantic: AiMaskSemantic, model_hash: &str) -> String {
         format!(
             "{:x}",
             Sha256::digest(

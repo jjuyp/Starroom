@@ -641,3 +641,47 @@ The state comparison is canonical JSON (sorted object keys, preserved array orde
 undefined optionals), since Rust serde_json::Value does not preserve JavaScript insertion order.
 Both debounce scheduling and queued commits use the same comparison; two further regressions
 prevent focus-only phantom commands without altering acknowledged JSON or persistent hashes.
+
+## Common-tool and thin-mask field qualification (2026-10-03)
+
+- Production radial/linear canvas controls are extracted into `MaskOverlay.tsx`. Main outlines
+  use 1.1 CSS px, feather guides 0.75 px, no filled wash, and 8 px visible pins with separate
+  24 px transparent hit targets. Sizes remain CSS-pixel constant across zoom/aspect changes.
+  Pointer capture and existing edit callbacks are preserved; focus states and keyboard fine/
+  coarse movement, resize and rotation are tested. The local visual fixture imports those
+  actual components and production CSS; it is explicitly **not** a Native render/runtime proof.
+- Manual LensIdentity now has one camelCase wire format and legacy snake_case read aliases.
+  A shared JSON fixture passes TypeScript serialization and the actual Tauri deserializer plus
+  mature Lensfun profile resolution. Native f32 values round-trip as typed values, not a false
+  bit-exact comparison with decimal JSON literals. Old History is projected for display and
+  comparison only, never rewritten or rehashed; aliases cannot create focus-only edits.
+- The existing white-balance clipboard now transports Temperature/Tint with mode and sampling
+  intent, preserving unrelated adjustments and Undo/Redo. It never copies the source camera's
+  neutral/profile into another camera. RAW-only and encoded-only modes are visibly disabled for
+  the wrong source kind. AI skin protection is visibly unavailable until a real referenced Skin
+  raster exists; model unavailability is not hidden behind an apparently working slider.
+- Native color targeting and neutral sampling use the actual post-lens/post-geometry image.
+  Immutable source-space semantic rasters are mapped through the existing inverse geometry and
+  Lensfun green-channel sampling grid for local masks, Skin and AI preserve-skin. Exact cardinal
+  rotations avoid negative trigonometric round-off black edge pixels. New deterministic tiny
+  fixtures, real LibRaw sensor sampling and DX12/CPU plus Preview/Export tests cover the changes.
+- NAFNet residual cache identity must describe the actual precreative input (source, WB, optics,
+  geometry and source region), not only dimensions. Creative tone/curve/color controls remain
+  excluded from inference identity. Advisor uses the same attached generated/portrait/denoise
+  artifacts as Preview/Export instead of failing or dropping valid edits.
+- Per-control release profiling exercises 27 control families on one 24 MP source: five
+  **changed** settings per family at the 1024-edge interactive tier, median and nearest-rank
+  p95 reported independently. Identical cached-frame reopening is measured separately, never
+  presented as slider latency. Same-machine Lightroom A/B has not been performed; these
+  timings are Starroom measurements, not a claim of identical proprietary behavior/speed.
+- No dependency, model asset, mature foundation revision, license or source-photo bytes changes
+  in this batch. Public clean-install AI remains limited to the distributable bundled BiRefNet;
+  separately licensed/local-only weights retain their explicit boundary. The user requested
+  final GUI inspection on their own; automatic Native/installed qualification remains required.
+- Same-source AI History/Snapshot/session restoration now lazily regenerates a missing in-memory
+  mask using the exact pinned local provider and validates original source/model/semantic/cache
+  identity. Portrait/Skin intent carries optional versioned Native source-pixel crop metadata;
+  older absent metadata remains absent in JSON and is recovered only when the original crop hash
+  can be proved. Cross-source mask/face reuse is explicitly rejected with instructions to generate
+  a mask or detect a face on the current photo; no arbitrary raster is silently substituted.
+  No pixels, model weights or camera calibration are added to project/history JSON.

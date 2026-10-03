@@ -598,3 +598,25 @@ release blockers until fixed and requalified in the rebuilt desktop executable:
   from overlapping scrolled control labels.
 - [ ] Verify delayed numeric commits and paused slider continuations remain in Native History;
   focus-only debounce must not consume later edits. Repair and regression coverage are implemented.
+
+## Existing-tool qualification and mask refinement (2026-10-03)
+
+- [x] Replace thick radial/linear frames with 1.1 px outlines, 0.75 px feather guides and small
+  visible pins; retain generous invisible hit targets and add keyboard micro-adjustment.
+- [x] Verify actual component screenshots, keyboard position changes and real pointer dragging;
+  explicitly label component screenshots as design evidence, not Native pixel acceptance.
+- [x] Repair nested manual LensIdentity transport and historical aliases, including real Rust
+  deserialization/Lensfun matching and no phantom History commands.
+- [x] Copy/Paste Temperature/Tint along with WB mode/sample; preserve unrelated edits.
+- [x] Disable invalid RAW/encoded WB modes and explain actual AI skin-raster prerequisites.
+- [x] Complete post-geometry picker, AI mask/Skin/Advisor mapping and cache/restart validation;
+  real local models reproduce identical pixels after cold-cache restoration and reject foreign sources.
+- [x] Qualify all existing common-tool families against the real shared graph and measure
+  changed-setting interactive requests, not repeated cached frames.
+- Final delivery requires same-SHA full CI, Release gate and installed runtime; its exact commit,
+  CI URLs and installer hash are recorded in the dated delivery verification report.
+- [ ] User field inspection of the final GUI and same-machine Lightroom A/B remains separate
+  from automated acceptance; do not claim identical Lightroom speed without measurements.
+
+The user will open the final software themselves. Do not treat another desktop-launch
+approval as a blocker for the current repair/verification/package batch.

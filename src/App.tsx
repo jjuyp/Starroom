@@ -32,6 +32,7 @@ import {
   openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
   refreshNativeLibraryMetadata,
   nativePreviewViewportContract,
+  nativePortraitSourceCrop,
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeLibraryQuery, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
@@ -49,7 +50,9 @@ import {
   scrollFilmstripFromWheel,
 } from './interactiveState'
 import { controlGradient, formatNumericValue, gradingGradient, kelvinToRelative, wheelPosition, wheelValue, whiteBalancePresentation, type MixerBand } from './editControls'
-import { manualMaskTypes, maskLabel, maskLabels, portraitRegionLabels, validLinearGeometry, selectedRadialMask, replaceRadialGeometry, invertedMask, type ManualMaskType } from './maskWorkspace'
+import { manualMaskTypes, maskLabel, maskLabels, portraitRegionLabels, validLinearGeometry, selectedRadialMask, replaceRadialGeometry, invertedMask, hasNativeSkinSelection, type ManualMaskType } from './maskWorkspace'
+import { MaskOverlay, LinearMaskOverlay } from './MaskOverlay'
+import { canApplyWhiteBalanceMode, copyWhiteBalanceState, pasteWhiteBalanceState, type WhiteBalanceClipboard } from './whiteBalanceClipboard'
 
 type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
@@ -106,7 +109,7 @@ const defaultCurveChannels = (): NativeToneCurves => ({ master: copyCurve(defaul
 const copyCurveChannels = (curves: NativeToneCurves): NativeToneCurves => ({ master: copyCurve(curves.master), red: copyCurve(curves.red), green: copyCurve(curves.green), blue: copyCurve(curves.blue) })
 const defaultLayer = (): NativeAdjustmentLayer => ({ id: crypto.randomUUID(), name: '局部調整', enabled: true, opacity: 1, blendMode: 'normal', mask: { type: 'none' }, adjustments: { tone: { exposureEv: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } } })
 const copyLayers = (layers: NativeAdjustmentLayer[]) => structuredClone(layers)
-const copySkinRetouch = (value: NativeSkinRetouchSettings): NativeSkinRetouchSettings => ({ parameters: { ...value.parameters }, faces: value.faces.map((face) => ({ ...face })) })
+const copySkinRetouch = (value: NativeSkinRetouchSettings): NativeSkinRetouchSettings => structuredClone(value)
 const copyHealingOperations = (operations: NativeHealingOperation[]) => operations.map((operation) => structuredClone(operation))
 const newMaskOfType = (type: 'none' | 'radial' | 'linear' | 'brush' | 'luminance' | 'colorRange'): NativeAdjustmentLayer['mask'] => {
   if (type === 'radial') return { type, x: .5, y: .5, width: .4, height: .4, rotation: 0, feather: .2, invert: false }
@@ -573,94 +576,6 @@ function CurveChannelTabs({ value, onChange }: { value: keyof NativeToneCurves; 
     className={value === channel ? 'active' : ''} onClick={() => onChange(channel)}>{channel === 'master' ? 'Master' : channel[0].toUpperCase() + channel.slice(1)}</button>)}</div>
 }
 
-type MaskDragMode = 'move' | 'width' | 'height' | 'rotate' | null
-
-function MaskOverlay({ bounds, mask, feather = .2, onBeginEdit, onChange }: {
-  bounds: { left: number; top: number; width: number; height: number }
-  mask: RadialMask; feather?: number; onBeginEdit: () => void; onChange: (mask: RadialMask) => void
-}) {
-  const [dragMode, setDragMode] = useState<MaskDragMode>(null)
-  const moveOffset = useRef({ x: 0, y: 0 })
-  const svgRef = useRef<SVGSVGElement>(null)
-  const position = (event: React.PointerEvent<SVGSVGElement>) => {
-    return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
-  }
-  const angle = mask.rotation * Math.PI / 180
-  const rotatePoint = (localX: number, localY: number) => ({
-    x: mask.x + localX * Math.cos(angle) - localY * Math.sin(angle),
-    y: mask.y + localX * Math.sin(angle) + localY * Math.cos(angle),
-  })
-  const widthHandle = rotatePoint(mask.width / 2, 0)
-  const heightHandle = rotatePoint(0, mask.height / 2)
-  const rotationHandle = rotatePoint(0, -mask.height / 2 - .08)
-  const beginDrag = (event: React.PointerEvent, mode: MaskDragMode) => {
-    if (event.button !== 0) return
-    event.stopPropagation()
-    onBeginEdit()
-    const point = clientPointToNormalized(event, svgRef.current!.getBoundingClientRect())
-    moveOffset.current = { x: point.x - mask.x, y: point.y - mask.y }
-    setDragMode(mode)
-    svgRef.current?.setPointerCapture(event.pointerId)
-  }
-
-  return <svg ref={svgRef} className="mask-overlay" style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }}
-    viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Editable radial mask"
-    onPointerDown={(event) => {
-      if (event.button !== 0 || event.target !== event.currentTarget) return
-      const next = position(event)
-      onBeginEdit()
-      onChange({ ...mask, x: Math.max(0, Math.min(1, next.x)), y: Math.max(0, Math.min(1, next.y)) })
-    }}
-    onPointerMove={(event) => {
-      if (!dragMode) return
-      const next = position(event)
-      const dx = next.x - mask.x
-      const dy = next.y - mask.y
-      const localX = dx * Math.cos(-angle) - dy * Math.sin(-angle)
-      const localY = dx * Math.sin(-angle) + dy * Math.cos(-angle)
-      if (dragMode === 'move') onChange({ ...mask, x: Math.max(0, Math.min(1, next.x - moveOffset.current.x)), y: Math.max(0, Math.min(1, next.y - moveOffset.current.y)) })
-      if (dragMode === 'width') onChange({ ...mask, width: Math.max(.04, Math.min(1.6, Math.abs(localX) * 2)) })
-      if (dragMode === 'height') onChange({ ...mask, height: Math.max(.04, Math.min(1.6, Math.abs(localY) * 2)) })
-      if (dragMode === 'rotate') onChange({ ...mask, rotation: Math.atan2(dy, dx) * 180 / Math.PI + 90 })
-    }}
-    onPointerCancel={() => setDragMode(null)}
-    onPointerUp={(event) => { setDragMode(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
-    <g transform={`rotate(${mask.rotation} ${mask.x * 1000} ${mask.y * 1000})`}>
-      <ellipse className="mask-feather-ring" cx={mask.x * 1000} cy={mask.y * 1000} rx={mask.width * 500 * (1 + 2 * feather)} ry={mask.height * 500 * (1 + 2 * feather)} />
-      <ellipse className="mask-ring" cx={mask.x * 1000} cy={mask.y * 1000} rx={mask.width * 500} ry={mask.height * 500}
-        onPointerDown={(event) => beginDrag(event, 'move')} />
-    </g>
-    <line className="mask-rotation-line" x1={mask.x * 1000} y1={mask.y * 1000} x2={rotationHandle.x * 1000} y2={rotationHandle.y * 1000} />
-    <ellipse className="mask-center-handle" cx={mask.x * 1000} cy={mask.y * 1000} rx={5000 / Math.max(1, bounds.width)} ry={5000 / Math.max(1, bounds.height)} onPointerDown={(event) => beginDrag(event, 'move')} />
-    <ellipse className="mask-handle" cx={widthHandle.x * 1000} cy={widthHandle.y * 1000} rx={4500 / Math.max(1, bounds.width)} ry={4500 / Math.max(1, bounds.height)} onPointerDown={(event) => beginDrag(event, 'width')} />
-    <ellipse className="mask-handle" cx={heightHandle.x * 1000} cy={heightHandle.y * 1000} rx={4500 / Math.max(1, bounds.width)} ry={4500 / Math.max(1, bounds.height)} onPointerDown={(event) => beginDrag(event, 'height')} />
-    <ellipse className="mask-rotate-handle" cx={rotationHandle.x * 1000} cy={rotationHandle.y * 1000} rx={5000 / Math.max(1, bounds.width)} ry={5000 / Math.max(1, bounds.height)} onPointerDown={(event) => beginDrag(event, 'rotate')} />
-  </svg>
-}
-
-function LinearMaskOverlay({ bounds, mask, onBeginEdit, onChange }: {
-  bounds: { left: number; top: number; width: number; height: number }
-  mask: Extract<NativeMaskDefinition, { type: 'linear' }>
-  onBeginEdit: () => void; onChange: (mask: NativeMaskDefinition) => void
-}) {
-  const [drag, setDrag] = useState<'start' | 'end' | null>(null)
-  return <svg className="mask-overlay linear-mask-overlay" aria-label="編輯線性漸層" style={{ left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }}
-    viewBox="0 0 1000 1000" preserveAspectRatio="none" onPointerMove={(event) => {
-      if (!drag) return
-      const point = clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
-      const x = Math.max(0, Math.min(1, point.x)), y = Math.max(0, Math.min(1, point.y))
-      const next = drag === 'start' ? { ...mask, startX: x, startY: y } : { ...mask, endX: x, endY: y }
-      if (validLinearGeometry(next)) onChange(next)
-    }} onPointerCancel={() => setDrag(null)} onPointerUp={(event) => { setDrag(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}>
-    <line className="mask-rotation-line" x1={mask.startX * 1000} y1={mask.startY * 1000} x2={mask.endX * 1000} y2={mask.endY * 1000} />
-    {(['start', 'end'] as const).map((point) => <ellipse key={point} className="mask-handle" cx={(point === 'start' ? mask.startX : mask.endX) * 1000} cy={(point === 'start' ? mask.startY : mask.endY) * 1000}
-      rx={6500 / Math.max(1, bounds.width)} ry={6500 / Math.max(1, bounds.height)} onPointerDown={(event) => {
-        if (event.button !== 0) return
-        event.stopPropagation(); onBeginEdit(); setDrag(point); event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId)
-      }} />)}
-  </svg>
-}
-
 function FourPointOverlay({ values, onBeginEdit, onAdjust }: {
   values: Adjustments; onBeginEdit: () => void
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
@@ -936,7 +851,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
 
 function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, whiteBalanceInfo, whiteBalanceError, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance,
-  mixerBand, onMixerBand, mixerPicking, onMixerPicking, opticsState, opticsStatus, onOpticsState, onResolveOptics }: {
+  mixerBand, onMixerBand, mixerPicking, onMixerPicking, opticsState, opticsStatus, onOpticsState, onResolveOptics, nativeAiDenoiseReady, nativeSkinMaskReady }: {
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
@@ -949,6 +864,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   mixerBand: string; onMixerBand: (band: string) => void; mixerPicking: boolean; onMixerPicking: () => void
   opticsState: NativeOpticsState; opticsStatus: NativeLensProfileResolution | null
   onOpticsState: (state: NativeOpticsState) => void; onResolveOptics: () => void
+  nativeAiDenoiseReady: boolean; nativeSkinMaskReady: boolean
 }) {
   const mixerBands = ['Red', 'Orange', 'Yellow', 'Green', 'Cyan', 'Blue', 'Purple', 'Magenta'] as const
   const gradingZones = ['Global', 'Shadows', 'Midtones', 'Highlights'] as const
@@ -969,9 +885,9 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
       {whiteBalanceError && <div className="tool-note" role="status">白平衡中繼資料讀取失敗：{whiteBalanceError}。目前僅顯示相對調整值。</div>}
       {renderBackend === 'native' && <div className="wb-controls"><label>白平衡模式<select value={whiteBalanceMode}
         onFocus={onBeginAdjustment} onChange={(event) => onWhiteBalanceMode(event.target.value as NativeWhiteBalanceMode)}>
-        <option value="sourceDefault">來源預設</option><option value="asShot" disabled={whiteBalanceInfo?.source === 'renderedRelative'}>拍攝時設定（RAW）</option>
-        <option value="camera" disabled={whiteBalanceInfo?.source === 'renderedRelative'}>相機白平衡（RAW）</option><option value="auto">自動（灰世界）</option>
-        <option value="neutralPicker">中性灰吸管</option><option value="relative">相對校正（一般影像）</option>
+        <option value="sourceDefault">來源預設</option><option value="asShot" disabled={whiteBalanceInfo?.source !== 'rawMetadata'}>拍攝時設定（RAW）</option>
+        <option value="camera" disabled={whiteBalanceInfo?.source !== 'rawMetadata'}>相機白平衡（RAW）</option><option value="auto">自動（灰世界）</option>
+        <option value="neutralPicker">中性灰吸管</option><option value="relative" disabled={whiteBalanceInfo?.source !== 'renderedRelative'}>相對校正（一般影像）</option>
       </select></label><div><button onClick={onCopyWhiteBalance}>複製白平衡</button><button onClick={onPasteWhiteBalance}>貼上白平衡</button></div>
       <small>{whiteBalanceMode === 'neutralPicker' ? '在預覽中雙擊中性區域即可取樣。' : '模式會與非破壞性編輯狀態一同保存。'}</small></div>}</section>
       <div className="basic-color-controls"><strong>基本色彩</strong>
@@ -1045,7 +961,12 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
       <div className={`optics-status status-${opticsStatus?.status ?? 'idle'}`}><strong>{opticsStatus?.status ?? 'Not resolved'}</strong>
         <span>{opticsStatus?.profileId ?? 'No profile selected'}</span><small>{opticsStatus?.cameraMount ?? ''} · DB {opticsStatus?.databaseVersion ?? '0.3.4'}</small></div>
     </div>}
+    {tool === 'detail' && <div className="tool-note" role="status">{!nativeAiDenoiseReady
+      ? 'AI 降噪模型尚未就緒；一般降噪與細節調整仍可使用。'
+      : !nativeSkinMaskReady ? 'AI 降噪已就緒。肌膚保護需先偵測人臉，並選取肌膚遮罩或啟用肌膚修飾。' : 'AI 降噪與肌膚保護已連接本機原生管線。'}</div>}
     {tool !== 'color' && sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]} onBeginEdit={onBeginAdjustment}
+      disabled={key.startsWith('aiDenoise') && (!nativeAiDenoiseReady && (key !== 'aiDenoiseEnabled' || values.aiDenoiseEnabled === 0)
+        || key === 'aiDenoisePreserveSkin' && !nativeSkinMaskReady)}
       onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
     {tool === 'masks' && <div className="mask-values">
       {([
@@ -1213,7 +1134,7 @@ export function App() {
   const pendingSession = useRef<NativeSessionState | null>(null)
   const currentSession = useRef<NativeSessionState | null>(null)
   const transientEditsPending = useRef(false)
-  const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<Pick<PhotoItem, 'whiteBalanceMode' | 'whiteBalanceSample'> | null>(null)
+  const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<WhiteBalanceClipboard | null>(null)
   const [savedCurvePreset, setSavedCurvePreset] = usePersistedValue<NativeToneCurves | null>('starroom-custom-curve-preset', null)
   const [mixerBand, setMixerBand] = useState('Red')
   const [mixerPicking, setMixerPicking] = useState(false)
@@ -2043,15 +1964,19 @@ export function App() {
   }
 
   function copyWhiteBalance() {
-    setCopiedWhiteBalance({ whiteBalanceMode: selected.whiteBalanceMode,
-      whiteBalanceSample: selected.whiteBalanceSample ? { ...selected.whiteBalanceSample } : null })
+    setCopiedWhiteBalance(copyWhiteBalanceState(selected))
     setNotice('已複製白平衡')
   }
 
   function pasteWhiteBalance() {
     if (!copiedWhiteBalance) { setNotice('請先複製白平衡'); return }
-    updateWhiteBalance(copiedWhiteBalance.whiteBalanceMode,
-      copiedWhiteBalance.whiteBalanceSample ? { ...copiedWhiteBalance.whiteBalanceSample } : null)
+    if (!canApplyWhiteBalanceMode(copiedWhiteBalance.whiteBalanceMode, whiteBalanceInfo?.source)) {
+      setNotice('白平衡模式不適用於這張照片：RAW 相機白平衡與一般影像相對校正不能互相代替。請在來源照片選擇來源預設後重新複製。')
+      return
+    }
+    updateSelected((photo) => ({ ...photo, ...pasteWhiteBalanceState(photo, copiedWhiteBalance),
+      history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
+    setBefore(false)
     setNotice('已貼上白平衡')
   }
 
@@ -2062,8 +1987,7 @@ export function App() {
     }
     const current = editorRequests.current.begin('colorSample')
     try {
-      const band = await sampleNativeColor(selected.sourcePath, x, y, selected.adjustments, selected.curvePoints,
-        selected.whiteBalanceMode, selected.whiteBalanceSample, selected.curveChannels, selected.opticsState, selected.nativeRenderConstants)
+      const band = await sampleNativeColor(selected.sourcePath, x, y, selectedNativeSettings())
       if (!current()) return
       if (!band) { setNotice('The sampled area is neutral; no color band was selected.'); return }
       setMixerBand(`${band[0].toUpperCase()}${band.slice(1)}`)
@@ -2139,11 +2063,13 @@ export function App() {
 
   function addPortraitMask(faceId: string, cacheKey: string, region: NativePortraitRegion) {
     if (!portraitDetection) return
+    const detected = portraitDetection.faces.find(({ face }) => face.id === faceId)
+    if (!detected) { setNotice('所選人臉已變更，請重新偵測。'); return }
     const layer = defaultLayer()
     layer.name = `人像・${portraitRegionLabels[region]}`
     layer.mask = { type: 'portraitSemantic', faceId, region, threshold: .5, feather: .08,
       modelId: portraitDetection.parserModelId, modelVersion: portraitDetection.parserModelVersion,
-      modelHash: portraitDetection.parserModelHash, cacheKey }
+      modelHash: portraitDetection.parserModelHash, cacheKey, sourceCrop: nativePortraitSourceCrop(detected.face) }
     mutateLayers((layers) => [...layers, layer])
     setSelectedLayerId(layer.id)
     setNotice(`已建立${layer.name}遮罩`)
@@ -2167,6 +2093,7 @@ export function App() {
         modelVersion: portraitDetection.parserModelVersion,
         modelHash: portraitDetection.parserModelHash,
         cacheKey,
+        sourceCrop: nativePortraitSourceCrop(face),
       })),
     }
     mutateLayers((layers) => [...layers, layer])
@@ -2230,7 +2157,7 @@ export function App() {
     }
     const faces = portraitDetection.faces
       .filter(({ face }) => faceId === '__all__' || face.id === faceId)
-      .map(({ face, cacheKey }) => ({ faceId: face.id, cacheKey }))
+      .map(({ face, cacheKey }) => ({ faceId: face.id, cacheKey, sourceCrop: nativePortraitSourceCrop(face) }))
     updateSkinRetouch((current) => ({ ...current, faces }))
     setNotice(`Skin retouch linked to ${faces.length} local portrait cache entr${faces.length === 1 ? 'y' : 'ies'}`)
   }
@@ -2887,7 +2814,8 @@ export function App() {
             onCurvePresetSave={saveCurvePreset} onCurvePresetLoad={loadCurvePreset} canLoadCurvePreset={savedCurvePreset !== null}
             onWhiteBalanceMode={(mode) => updateWhiteBalance(mode)} onCopyWhiteBalance={copyWhiteBalance} onPasteWhiteBalance={pasteWhiteBalance}
             mixerBand={mixerBand} onMixerBand={setMixerBand} mixerPicking={mixerPicking} onMixerPicking={() => setMixerPicking(!mixerPicking)}
-            opticsState={selected.opticsState} opticsStatus={opticsStatus} onOpticsState={updateOpticsState} onResolveOptics={refreshOpticsStatus} />}
+            opticsState={selected.opticsState} opticsStatus={opticsStatus} onOpticsState={updateOpticsState} onResolveOptics={refreshOpticsStatus}
+            nativeAiDenoiseReady={aiAvailability?.denoise.state === 'ready'} nativeSkinMaskReady={hasNativeSkinSelection(selected.skinRetouch, selected.layers)} />}
         </div>
         <button className="reset-all" disabled={!hasPhotoEdits(selected)} onClick={resetAll}><RotateCcw size={14} /> 重設所有編輯</button>
       </aside>

@@ -8,6 +8,34 @@ use thiserror::Error;
 pub const PROJECT_SCHEMA_VERSION: u32 = 2;
 pub const PROJECT_MINIMUM_SCHEMA_VERSION: u32 = 1;
 
+/// Versioned, pixel-free reproduction data for the native face-parser crop. Coordinates are
+/// copied from the verified provider's source-space transform, never recomputed by the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortraitSourceCrop {
+    pub version: u32,
+    pub center_x: f32,
+    pub center_y: f32,
+    pub side: f32,
+    pub rotation_degrees: f32,
+}
+
+impl PortraitSourceCrop {
+    pub fn is_valid(self) -> bool {
+        self.version == 1
+            && [
+                self.center_x,
+                self.center_y,
+                self.side,
+                self.rotation_degrees,
+            ]
+            .into_iter()
+            .all(f32::is_finite)
+            && self.side > 1.0
+            && (-90.0..=90.0).contains(&self.rotation_degrees)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ProjectError {
     #[error("project serialization failed: {0}")]
@@ -419,6 +447,8 @@ pub enum MaskDefinition {
         model_version: String,
         model_hash: String,
         cache_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_crop: Option<PortraitSourceCrop>,
     },
     /// M20 local AI result. The node stores only reproducible provider/model identity and
     /// refinement intent; the R16Float-compatible raster remains in the native cache.
@@ -911,6 +941,7 @@ mod tests {
             model_version: "8a4729d".into(),
             model_hash: "a".repeat(64),
             cache_key: "face-cafebabe:transform".into(),
+            source_crop: None,
         }
         .into();
         let restored: MaskTree =
@@ -940,5 +971,33 @@ mod tests {
             serde_json::from_str::<MaskTree>(&json).expect("restore"),
             tree
         );
+    }
+
+    #[test]
+    fn portrait_source_crop_is_versioned_pixel_free_and_legacy_json_is_unchanged() {
+        let crop: PortraitSourceCrop = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/native-portrait-source-crop.json"
+        ))
+        .unwrap();
+        assert!(crop.is_valid());
+        assert!(!PortraitSourceCrop { version: 2, ..crop }.is_valid());
+        assert!(
+            !PortraitSourceCrop {
+                side: f32::NAN,
+                ..crop
+            }
+            .is_valid()
+        );
+        assert!(!PortraitSourceCrop { side: 0.35, ..crop }.is_valid());
+        let legacy = serde_json::json!({ "type": "portraitSemantic", "face_id": "face",
+            "region": "skin", "threshold": 0.5_f32, "feather": 0.1_f32, "model_id": "parser",
+            "model_version": "pin", "model_hash": "a".repeat(64), "cache_key": "exact" });
+        let leaf: MaskDefinition = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&leaf).unwrap(), legacy);
+        let mut with_crop = legacy;
+        with_crop["source_crop"] = serde_json::to_value(crop).unwrap();
+        let leaf: MaskDefinition = serde_json::from_value(with_crop.clone()).unwrap();
+        assert_eq!(serde_json::to_value(leaf).unwrap(), with_crop);
+        assert!(!with_crop.to_string().contains("pixels"));
     }
 }

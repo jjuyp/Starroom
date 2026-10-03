@@ -1,4 +1,4 @@
-import type { NativeMaskDefinition, NativeMaskTree, NativeAdjustmentLayer } from './nativeRender'
+import type { NativeMaskDefinition, NativeMaskTree, NativeAdjustmentLayer, NativeSkinRetouchSettings } from './nativeRender'
 import type { RadialMask } from './previewPresentation'
 
 export const manualMaskTypes = ['radial', 'linear', 'brush', 'luminance', 'colorRange'] as const
@@ -17,6 +17,15 @@ export function validLinearGeometry(mask: Extract<NativeMaskDefinition, { type: 
 export function maskLabel(mask: NativeMaskTree): string {
   if ('type' in mask) return maskLabels[mask.type]
   return { add: '合併區域', subtract: '減去區域', intersect: '交集區域', invert: '反轉區域' }[mask.operation]
+}
+
+/** Native preserve-skin needs a real skin raster, not just installed face weights. */
+export function hasNativeSkinSelection(skin: NativeSkinRetouchSettings, layers: NativeAdjustmentLayer[]): boolean {
+  const hasSkin = (mask: NativeMaskTree): boolean => 'type' in mask
+    ? mask.type === 'portraitSemantic' && mask.region === 'skin'
+    : mask.children.some(hasSkin)
+  return skin.faces.length > 0
+    || layers.some((layer) => layer.enabled && hasSkin(layer.mask))
 }
 
 // Canvas controls edit only the selected layer. The legacy center mask has a separate contract.

@@ -19,6 +19,15 @@ History hydration defects which automated source gates had missed. Repair these 
 then repeat same-SHA full/release and installed-runtime qualification. The earlier green CI is
 baseline evidence only; do not substitute an older executable or Browser demo for the new pass.
 
+The current user request extends qualification to all existing common editing workflows and
+asks for thinner, designed mask controls. The user will open the final desktop themselves;
+do not pause this batch for another desktop-launch approval. Actual shared-graph/installed
+runtime tests still apply. Component screenshots are design evidence only, never Native pixel
+acceptance. Fix picker/semantic-mask geometry, manual LensIdentity IPC, WB clipboard, stale
+AI residual identity and same-source restart restoration before the final immutable SHA.
+The existing historical rc.3 tag must not be moved or reused to imply acceptance for new fixes;
+deliver a dated, SHA-identified field hotfix without declaring v1.0 Final.
+
 ## Validation order
 
 Use Fast -> Targeted -> Full -> Release. Batch related fixes, run only affected local/Blueprint
@@ -44,13 +53,14 @@ The active field hotfix is recorded in `docs/41_RC3_RELEASE_NOTES.md`.
 - BiSeNet remains local-only by explicit user decision. The exact MIT BiRefNet Subject/Background
   asset may be acquired at release-build time, hash-verified and bundled with its license; no model
   may be downloaded at runtime or claimed available without installed inference validation.
-- Do not tag or publish `v1.0.0-rc.3` until every same-SHA release gate is green. Do not declare Final, merge
-  `main`, close Draft PR #2 or begin M31.
+- Preserve the existing historical `v1.0.0-rc.3` tag. Deliver this hotfix under its date and commit
+  only after every same-SHA release gate is green. Do not declare Final, merge `main`, close Draft
+  PR #2 or begin M31.
 
 ## Acceptance
 
 Warning-denied full CI plus real Windows release build, installer install/launch/uninstall, clean
 state, migration/corruption/recovery, offline/privacy/network scan, notices, RAW/Golden, parity,
 100k/100MP plan and M28 performance regression gates, plus installed close/runtime validation.
-Record executable/installer/model hashes and CI URLs. Only then create `v1.0.0-rc.3` and stop for
-field validation.
+Record executable/installer/model hashes and CI URLs, deliver the dated hotfix, then stop for
+the user's field validation. Do not move an existing release tag.

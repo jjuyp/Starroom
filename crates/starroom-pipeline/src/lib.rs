@@ -21,19 +21,21 @@ use starroom_detail::{
     local_detail, sharpen,
 };
 use starroom_geometry::{
-    GeometryParameters, UprightMode, analyze_upright, apply_geometry, apply_upright,
+    CropRect, GeometryParameters, Matrix3, Point2, UprightMode, analyze_upright, apply_geometry,
+    apply_upright, constrain_crop_aspect,
 };
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_heal::{HealPoint, HealingOperation, apply_operation};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
 use starroom_look::{GrainSettings, LookError, VignetteSettings, apply_finishing_effects};
 use starroom_optics::{
-    LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider, OpticsSettings,
-    apply_lens_correction,
+    LensCorrection, LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider,
+    NormalizedPoint, OpticsSettings, apply_lens_correction, distort,
 };
 use starroom_portrait::{SkinRetouchParameters, apply_skin_retouch};
 use starroom_project::{
     GeneratedMaskSemantic, MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion,
+    PortraitSourceCrop,
 };
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::profiling::{self, ProfileStage};
@@ -85,7 +87,7 @@ pub enum WhiteBalanceMode {
     Relative,
 }
 
-/// Normalized source-space rectangle used by the native Neutral Picker.
+/// Normalized post-lens/post-geometry rectangle used by the native Neutral Picker.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhiteBalanceSample {
@@ -199,6 +201,8 @@ pub struct GeneratedMaskRaster {
 pub struct SkinRetouchFaceReference {
     pub face_id: String,
     pub cache_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_crop: Option<PortraitSourceCrop>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -597,6 +601,82 @@ fn apply_white_balance(
     }
 }
 
+/// Picker rectangles are post-geometry/display coordinates. Camera/As-Shot and Auto retain
+/// their source-space semantics; only the explicit picker is deferred until the same native
+/// lens/geometry stage used by preview/export has prepared the visible image.
+fn source_white_balance(settings: WhiteBalanceSettings) -> WhiteBalanceSettings {
+    if settings.mode == WhiteBalanceMode::NeutralPicker {
+        WhiteBalanceSettings::default()
+    } else {
+        settings
+    }
+}
+
+/// Runtime-only output -> source mapping for immutable source-space AI probability caches.
+/// Reuses the existing mature projective geometry transform and Lensfun distortion equations;
+/// no raster copies, cache/model identity changes, or browser image mathematics are involved.
+#[derive(Debug, Clone, Copy)]
+struct SemanticSamplingMap {
+    inverse_geometry: Matrix3,
+    crop: CropRect,
+    output_width: usize,
+    output_height: usize,
+    lens: Option<(LensCorrection, f32, bool)>,
+}
+
+impl SemanticSamplingMap {
+    fn source_point(self, x: f32, y: f32) -> Option<Point2> {
+        const EDGE_EPSILON: f32 = 1.0e-6;
+        let covered = |point: Point2| {
+            point.x.is_finite()
+                && point.y.is_finite()
+                && (-EDGE_EPSILON..=1.0 + EDGE_EPSILON).contains(&point.x)
+                && (-EDGE_EPSILON..=1.0 + EDGE_EPSILON).contains(&point.y)
+        };
+        // Local/mask iteration uses pixel-index / frame-size. Geometry's resampler uses
+        // pixel-index / (frame-size - 1); match its exact pixel grid, including edge pixels.
+        let target = Point2 {
+            x: self.crop.left
+                + x * self.output_width as f32 / self.output_width.saturating_sub(1).max(1) as f32
+                    * (self.crop.right - self.crop.left),
+            y: self.crop.top
+                + y * self.output_height as f32
+                    / self.output_height.saturating_sub(1).max(1) as f32
+                    * (self.crop.bottom - self.crop.top),
+        };
+        let mut source = self.inverse_geometry.transform(target);
+        // Geometry's RGB sampler treats uncovered post-lens pixels as empty. Do not let an
+        // extrapolated radial polynomial fold those coordinates back into a source subject.
+        if !covered(source) {
+            return None;
+        }
+        if let Some((correction, auto_scale, distortion_enabled)) = self.lens {
+            let point = NormalizedPoint {
+                x: (source.x * 2.0 - 1.0) * auto_scale,
+                y: (source.y * 2.0 - 1.0) * auto_scale,
+            };
+            let green = if distortion_enabled {
+                distort(point, correction.distortion)
+            } else {
+                point
+            };
+            source = Point2 {
+                x: (green.x + 1.0) * 0.5,
+                y: (green.y + 1.0) * 0.5,
+            };
+        }
+        // Floating quarter-turn endpoints may differ from zero/one by a few ULPs. Real
+        // uncovered borders must remain unselected rather than clamping to source edges.
+        if !covered(source) {
+            return None;
+        }
+        Some(Point2 {
+            x: source.x.clamp(0.0, 1.0),
+            y: source.y.clamp(0.0, 1.0),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColorTransformReport {
     pub input: InputProfileSource,
@@ -769,6 +849,7 @@ fn mask_leaf_weight(
     rgb: LinearRgb,
     portrait_masks: &[PortraitMaskRaster],
     generated_masks: &[GeneratedMaskRaster],
+    semantic_map: Option<SemanticSamplingMap>,
 ) -> Result<f32, PipelineError> {
     let weight = match mask {
         MaskDefinition::None => 1.0,
@@ -913,6 +994,7 @@ fn mask_leaf_weight(
             model_version,
             model_hash,
             cache_key,
+            source_crop,
         } => {
             if face_id.trim().is_empty()
                 || cache_key.trim().is_empty()
@@ -922,6 +1004,7 @@ fn mask_leaf_weight(
                 || ![*threshold, *feather].into_iter().all(f32::is_finite)
                 || !(0.0..=1.0).contains(threshold)
                 || *feather < 0.0
+                || source_crop.is_some_and(|crop| !crop.is_valid())
             {
                 return Err(PipelineError::InvalidMask(
                     "portrait semantic reference is invalid",
@@ -937,7 +1020,14 @@ fn mask_leaf_weight(
                 .ok_or_else(|| PipelineError::MaskProviderUnavailable {
                     provider: format!("portrait semantic cache: {cache_key}"),
                 })?;
-            let value = raster.weight_at(x, y)?;
+            let value = if let Some(map) = semantic_map {
+                let Some(point) = map.source_point(x, y) else {
+                    return Ok(0.0);
+                };
+                raster.weight_at(point.x, point.y)?
+            } else {
+                raster.weight_at(x, y)?
+            };
             smoothstep(*threshold - *feather, *threshold + *feather + 1.0e-5, value)
         }
         MaskDefinition::Generated {
@@ -974,7 +1064,14 @@ fn mask_leaf_weight(
                 .ok_or_else(|| PipelineError::MaskProviderUnavailable {
                     provider: format!("AI mask cache: {cache_identity}"),
                 })?;
-            let probability = raster.weight_at(x, y)?;
+            let probability = if let Some(map) = semantic_map {
+                let Some(point) = map.source_point(x, y) else {
+                    return Ok(0.0);
+                };
+                raster.weight_at(point.x, point.y)?
+            } else {
+                raster.weight_at(x, y)?
+            };
             let refined = smoothstep(
                 *threshold - *feather,
                 *threshold + *feather + 1.0e-5,
@@ -991,13 +1088,14 @@ fn mask_leaf_weight(
     Ok(weight.clamp(0.0, 1.0))
 }
 
-fn mask_weight(
+fn mask_weight_mapped(
     mask: &MaskTree,
     x: f32,
     y: f32,
     rgb: LinearRgb,
     portrait_masks: &[PortraitMaskRaster],
     generated_masks: &[GeneratedMaskRaster],
+    semantic_map: Option<SemanticSamplingMap>,
 ) -> Result<f32, PipelineError> {
     if !x.is_finite()
         || !y.is_finite()
@@ -1010,42 +1108,81 @@ fn mask_weight(
         ));
     }
     match mask {
-        MaskTree::Leaf(leaf) => mask_leaf_weight(leaf, x, y, rgb, portrait_masks, generated_masks),
+        MaskTree::Leaf(leaf) => mask_leaf_weight(
+            leaf,
+            x,
+            y,
+            rgb,
+            portrait_masks,
+            generated_masks,
+            semantic_map,
+        ),
         MaskTree::Composite(composite) => {
             let mut children = composite.children.iter();
             let Some(first) = children.next() else {
                 return Ok(0.0);
             };
-            let first_weight = mask_weight(first, x, y, rgb, portrait_masks, generated_masks)?;
+            let first_weight = mask_weight_mapped(
+                first,
+                x,
+                y,
+                rgb,
+                portrait_masks,
+                generated_masks,
+                semantic_map,
+            )?;
             match composite.operation {
                 MaskOperation::Add => children.try_fold(first_weight, |value, child| {
-                    Ok(value.max(mask_weight(
+                    Ok(value.max(mask_weight_mapped(
                         child,
                         x,
                         y,
                         rgb,
                         portrait_masks,
                         generated_masks,
+                        semantic_map,
                     )?))
                 }),
                 MaskOperation::Subtract => children.try_fold(first_weight, |value, child| {
                     Ok(value
-                        * (1.0 - mask_weight(child, x, y, rgb, portrait_masks, generated_masks)?))
+                        * (1.0
+                            - mask_weight_mapped(
+                                child,
+                                x,
+                                y,
+                                rgb,
+                                portrait_masks,
+                                generated_masks,
+                                semantic_map,
+                            )?))
                 }),
                 MaskOperation::Intersect => children.try_fold(first_weight, |value, child| {
-                    Ok(value.min(mask_weight(
+                    Ok(value.min(mask_weight_mapped(
                         child,
                         x,
                         y,
                         rgb,
                         portrait_masks,
                         generated_masks,
+                        semantic_map,
                     )?))
                 }),
                 MaskOperation::Invert => Ok(1.0 - first_weight),
             }
         }
     }
+}
+
+#[cfg(test)]
+fn mask_weight(
+    mask: &MaskTree,
+    x: f32,
+    y: f32,
+    rgb: LinearRgb,
+    portrait_masks: &[PortraitMaskRaster],
+    generated_masks: &[GeneratedMaskRaster],
+) -> Result<f32, PipelineError> {
+    mask_weight_mapped(mask, x, y, rgb, portrait_masks, generated_masks, None)
 }
 
 fn apply_prepared_layers(
@@ -1055,6 +1192,7 @@ fn apply_prepared_layers(
     y: f32,
     portrait_masks: &[PortraitMaskRaster],
     generated_masks: &[GeneratedMaskRaster],
+    semantic_map: Option<SemanticSamplingMap>,
 ) -> Result<LinearRgb, PipelineError> {
     for prepared_layer in layers {
         let layer = prepared_layer.layer;
@@ -1073,8 +1211,16 @@ fn apply_prepared_layers(
         );
         // M14 deliberately supports only Normal. Any future mode must earn an explicit
         // scene-linear implementation rather than quietly behaving like Normal.
-        let weight =
-            layer.opacity * mask_weight(&layer.mask, x, y, rgb, portrait_masks, generated_masks)?;
+        let weight = layer.opacity
+            * mask_weight_mapped(
+                &layer.mask,
+                x,
+                y,
+                rgb,
+                portrait_masks,
+                generated_masks,
+                semantic_map,
+            )?;
         rgb = LinearRgb {
             r: rgb.r + (adjusted.r - rgb.r) * weight,
             g: rgb.g + (adjusted.g - rgb.g) * weight,
@@ -1104,7 +1250,7 @@ fn apply_layers(
         .iter()
         .map(PreparedLayer::new)
         .collect::<Result<Vec<_>, _>>()?;
-    apply_prepared_layers(rgb, &prepared, x, y, portrait_masks, generated_masks)
+    apply_prepared_layers(rgb, &prepared, x, y, portrait_masks, generated_masks, None)
 }
 
 fn skin_retouch_is_identity(parameters: SkinRetouchParameters) -> bool {
@@ -1116,6 +1262,7 @@ fn apply_skin_retouch_stage(
     width: usize,
     height: usize,
     settings: &RenderSettings,
+    semantic_map: Option<SemanticSamplingMap>,
 ) -> Result<Vec<f32>, PipelineError> {
     let parameters = settings.skin_retouch.parameters;
     if skin_retouch_is_identity(parameters) {
@@ -1138,9 +1285,28 @@ fn apply_skin_retouch_stage(
         for raster in found {
             matched = true;
             for pixel in 0..count {
-                let x = (pixel % width) as f32 / width.max(1) as f32;
-                let y = (pixel / width) as f32 / height.max(1) as f32;
-                let value = raster.weight_at(x, y)?;
+                let local_x = pixel % width;
+                let local_y = pixel / width;
+                let (x, y) = settings.source_region.map_or_else(
+                    || {
+                        (
+                            local_x as f32 / width.max(1) as f32,
+                            local_y as f32 / height.max(1) as f32,
+                        )
+                    },
+                    |region| {
+                        (
+                            (region.x as usize + local_x) as f32 / region.full_width.max(1) as f32,
+                            (region.y as usize + local_y) as f32 / region.full_height.max(1) as f32,
+                        )
+                    },
+                );
+                let value = if let Some(map) = semantic_map {
+                    map.source_point(x, y)
+                        .map_or(Ok(0.0), |point| raster.weight_at(point.x, point.y))?
+                } else {
+                    raster.weight_at(x, y)?
+                };
                 match raster.region {
                     PortraitMaskRegion::Skin => skin[pixel] = skin[pixel].max(value),
                     PortraitMaskRegion::Eyes
@@ -1316,12 +1482,13 @@ fn gpu_creative_parameters(
     GpuCreativeParameters { values }
 }
 
-fn apply_creative_graph(
+fn apply_creative_graph_mapped(
     pixels: Vec<[f32; 3]>,
     width: usize,
     height: usize,
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
+    semantic_map: Option<SemanticSamplingMap>,
 ) -> Result<Vec<f32>, PipelineError> {
     validate_mask_rasters(&settings.portrait_masks, &settings.generated_masks)?;
     // Encoded relative-WB is prepared by the CPU color oracle. The complete global creative
@@ -1471,6 +1638,7 @@ fn apply_creative_graph(
                     y,
                     &settings.portrait_masks,
                     &settings.generated_masks,
+                    semantic_map,
                 )?;
             }
         }
@@ -1485,12 +1653,23 @@ fn apply_creative_graph(
     }
     checkpoint()?;
     let data = profiling::measure(ProfileStage::Skin, working_bytes, || {
-        apply_skin_retouch_stage(data, width, height, settings)
+        apply_skin_retouch_stage(data, width, height, settings, semantic_map)
     })?;
     checkpoint()?;
     profiling::measure(ProfileStage::Healing, working_bytes, || {
         apply_healing_stage(data, width, height, settings)
     })
+}
+
+#[cfg(test)]
+fn apply_creative_graph(
+    pixels: Vec<[f32; 3]>,
+    width: usize,
+    height: usize,
+    settings: &RenderSettings,
+    gpu: Option<&GpuRenderer>,
+) -> Result<Vec<f32>, PipelineError> {
+    apply_creative_graph_mapped(pixels, width, height, settings, gpu, None)
 }
 
 fn to_working_image(
@@ -1526,7 +1705,7 @@ fn to_working_image(
             decoded.width,
             decoded.height,
             SourceKind::Encoded,
-            settings.white_balance,
+            source_white_balance(settings.white_balance),
         )
     })?;
     let data = pixels.into_iter().flatten().collect();
@@ -1558,7 +1737,7 @@ fn to_working_raw(
             decoded.width,
             decoded.height,
             SourceKind::Raw,
-            settings.white_balance,
+            source_white_balance(settings.white_balance),
         )
     })?;
     let data = pixels.into_iter().flatten().collect();
@@ -1566,10 +1745,10 @@ fn to_working_raw(
         .map_err(|_| PipelineError::DetailBuffer)
 }
 
-/// Samples the actual native working graph at normalized image coordinates for M7's targeted
-/// Color Mixer tool. The browser transports only the selected enum, never image pixels or color
-/// science. RAW and encoded inputs therefore use exactly the same decode/WB/creative stages as
-/// preview and export.
+/// Samples the native post-lens/post-geometry working image for M7's targeted Color Mixer tool.
+/// Sampling precedes creative adjustments to avoid a circular Mixer target. RAW and encoded
+/// inputs use the same source profile, WB and geometry graph as preview/export; the browser
+/// receives only the selected enum, never image pixels or color-science computations.
 pub fn sample_source_color_band(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
@@ -1579,17 +1758,10 @@ pub fn sample_source_color_band(
     if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
         return Err(PipelineError::InvalidDecodedBuffer);
     }
-    let (image, width, height) = match decoded {
-        DecodedSourceImage::Rendered(source) => {
-            let (image, _) = to_working_image(source, settings)?;
-            (image, source.width as usize, source.height as usize)
-        }
-        DecodedSourceImage::Raw(source) => (
-            to_working_raw(source, settings)?,
-            source.width as usize,
-            source.height as usize,
-        ),
-    };
+    // The pointer lives on the post-Lens/post-Geometry canvas, not the sensor/source frame.
+    // Reuse the actual native graph instead of maintaining a second coordinate approximation.
+    let image = prepare_source_for_ai_denoise(decoded, settings)?;
+    let (width, height) = (image.width, image.height);
     let px = ((x * width as f32).floor() as usize).min(width.saturating_sub(1));
     let py = ((y * height as f32).floor() as usize).min(height.saturating_sub(1));
     let offset = (py * width + px) * 3;
@@ -1609,7 +1781,8 @@ fn render_working_graph(
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgbF32, PipelineError> {
-    let geometry_image = apply_precreative_geometry(working, settings, optics_resolution)?;
+    let (geometry_image, semantic_map) =
+        apply_precreative_geometry_mapped(working, settings, optics_resolution)?;
     render_prepared_working_graph(
         geometry_image,
         input_source,
@@ -1617,16 +1790,27 @@ fn render_working_graph(
         settings,
         output_icc,
         gpu,
+        semantic_map,
     )
 }
 
+#[cfg(test)]
 fn apply_precreative_geometry(
     working: LinearImage,
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
 ) -> Result<LinearImage, PipelineError> {
+    apply_precreative_geometry_mapped(working, settings, optics_resolution).map(|(image, _)| image)
+}
+
+fn apply_precreative_geometry_mapped(
+    working: LinearImage,
+    settings: &RenderSettings,
+    optics_resolution: Option<&LensProfileResolution>,
+) -> Result<(LinearImage, SemanticSamplingMap), PipelineError> {
     checkpoint()?;
     let working_bytes = (working.data.len() as u64).saturating_mul(F32_BYTES);
+    let mut lens_mapping = None;
     let optically_corrected = if settings.optics.parameters.enabled {
         let resolution = optics_resolution.ok_or(PipelineError::OpticsProfile(
             LensProfileStatus::MissingMetadata,
@@ -1644,6 +1828,11 @@ fn apply_precreative_geometry(
             )
         })
         .map_err(|_| PipelineError::OpticsCorrection)?;
+        lens_mapping = Some((
+            correction,
+            corrected.auto_scale,
+            settings.optics.parameters.distortion,
+        ));
         LinearImage::new(working.width, working.height, corrected.data)
             .map_err(|_| PipelineError::DetailBuffer)?
     } else {
@@ -1661,28 +1850,78 @@ fn apply_precreative_geometry(
     } else {
         settings.geometry
     };
-    if geometry_parameters == GeometryParameters::default() {
-        return Ok(profiling::measure(
-            ProfileStage::Geometry,
-            working_bytes,
-            || optically_corrected,
-        ));
-    }
-    let geometrically_corrected = profiling::measure(ProfileStage::Geometry, working_bytes, || {
-        apply_geometry(
-            optically_corrected.width,
-            optically_corrected.height,
-            &optically_corrected.data,
-            geometry_parameters,
+    let crop = constrain_crop_aspect(
+        geometry_parameters.crop,
+        optically_corrected.width,
+        optically_corrected.height,
+        geometry_parameters.crop_aspect_width,
+        geometry_parameters.crop_aspect_height,
+    );
+    let (mut image, inverse_geometry) = if geometry_parameters == GeometryParameters::default() {
+        (
+            profiling::measure(ProfileStage::Geometry, working_bytes, || {
+                optically_corrected
+            }),
+            Matrix3::IDENTITY,
         )
-    })
-    .map_err(|_| PipelineError::Geometry)?;
-    LinearImage::new(
-        geometrically_corrected.width,
-        geometrically_corrected.height,
-        geometrically_corrected.data,
-    )
-    .map_err(|_| PipelineError::DetailBuffer)
+    } else {
+        let geometrically_corrected =
+            profiling::measure(ProfileStage::Geometry, working_bytes, || {
+                apply_geometry(
+                    optically_corrected.width,
+                    optically_corrected.height,
+                    &optically_corrected.data,
+                    geometry_parameters,
+                )
+            })
+            .map_err(|_| PipelineError::Geometry)?;
+        let inverse = geometrically_corrected
+            .transform
+            .inverse()
+            .ok_or(PipelineError::Geometry)?;
+        (
+            LinearImage::new(
+                geometrically_corrected.width,
+                geometrically_corrected.height,
+                geometrically_corrected.data,
+            )
+            .map_err(|_| PipelineError::DetailBuffer)?,
+            inverse,
+        )
+    };
+    if settings.white_balance.mode == WhiteBalanceMode::NeutralPicker {
+        profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
+            let sample = settings
+                .white_balance
+                .sample
+                .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            let scale = picker_white_balance_scale(
+                image.data.as_chunks::<3>().0,
+                image.width as u32,
+                image.height as u32,
+                sample,
+            )
+            .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
+            for pixel in image.data.as_chunks_mut::<3>().0 {
+                for (value, scale) in pixel.iter_mut().zip(scale) {
+                    *value *= scale;
+                }
+            }
+            Ok::<_, PipelineError>(())
+        })?;
+    }
+    let semantic_map = SemanticSamplingMap {
+        inverse_geometry,
+        crop,
+        output_width: settings
+            .source_region
+            .map_or(image.width, |region| region.full_width as usize),
+        output_height: settings
+            .source_region
+            .map_or(image.height, |region| region.full_height as usize),
+        lens: lens_mapping,
+    };
+    Ok((image, semantic_map))
 }
 
 fn render_prepared_working_graph(
@@ -1692,6 +1931,7 @@ fn render_prepared_working_graph(
     settings: &RenderSettings,
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
+    semantic_map: SemanticSamplingMap,
 ) -> Result<RenderedRgbF32, PipelineError> {
     checkpoint()?;
     // M21 is intentionally before tone/curve/mixer/grading. Inference and control adjustment
@@ -1702,17 +1942,19 @@ fn render_prepared_working_graph(
             .ai_denoise_residual
             .as_ref()
             .ok_or(AiDenoiseError::ResidualMismatch)?;
-        let skin = settings.portrait_masks.iter().find(|mask| {
-            mask.region == PortraitMaskRegion::Skin
-                && mask.width as usize == geometry_image.width
-                && mask.height as usize == geometry_image.height
-        });
+        let skin = mapped_portrait_region_weights(
+            geometry_image.width,
+            geometry_image.height,
+            settings,
+            semantic_map,
+            PortraitMaskRegion::Skin,
+        )?;
         profiling::measure(ProfileStage::AiDenoise, working_bytes, || {
             apply_residual(
                 &geometry_image,
                 residual,
                 settings.ai_denoise,
-                skin.map(|mask| mask.values.as_slice()),
+                skin.as_deref(),
             )
         })?
     } else {
@@ -1730,12 +1972,13 @@ fn render_prepared_working_graph(
     let creative = LinearImage::new(
         model_adjusted.width,
         model_adjusted.height,
-        apply_creative_graph(
+        apply_creative_graph_mapped(
             pixels,
             model_adjusted.width,
             model_adjusted.height,
             settings,
             gpu,
+            Some(semantic_map),
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
@@ -1825,6 +2068,13 @@ pub fn prepare_source_for_ai_denoise(
     decoded: &DecodedSourceImage,
     settings: &RenderSettings,
 ) -> Result<LinearImage, PipelineError> {
+    prepare_source_with_sampling_map(decoded, settings).map(|(image, _)| image)
+}
+
+fn prepare_source_with_sampling_map(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+) -> Result<(LinearImage, SemanticSamplingMap), PipelineError> {
     let optics_resolution = if settings.optics.parameters.enabled {
         Some(resolve_source_lens_profile(decoded, &settings.optics)?)
     } else {
@@ -1834,7 +2084,69 @@ pub fn prepare_source_for_ai_denoise(
         DecodedSourceImage::Rendered(image) => to_working_image(image, settings)?.0,
         DecodedSourceImage::Raw(image) => to_working_raw(image, settings)?,
     };
-    apply_precreative_geometry(working, settings, optics_resolution.as_ref())
+    apply_precreative_geometry_mapped(working, settings, optics_resolution.as_ref())
+}
+
+fn mapped_portrait_region_weights(
+    width: usize,
+    height: usize,
+    settings: &RenderSettings,
+    semantic_map: SemanticSamplingMap,
+    region: PortraitMaskRegion,
+) -> Result<Option<Vec<f32>>, PipelineError> {
+    let rasters = settings
+        .portrait_masks
+        .iter()
+        .filter(|mask| mask.region == region)
+        .collect::<Vec<_>>();
+    if rasters.is_empty() {
+        return Ok(None);
+    }
+    for raster in &rasters {
+        raster.validate()?;
+    }
+    let mut weights = Vec::with_capacity(width * height);
+    for y in 0..height {
+        checkpoint()?;
+        for x in 0..width {
+            let (x, y) = settings.source_region.map_or_else(
+                || (x as f32 / width as f32, y as f32 / height as f32),
+                |region| {
+                    (
+                        (region.x as usize + x) as f32 / region.full_width.max(1) as f32,
+                        (region.y as usize + y) as f32 / region.full_height.max(1) as f32,
+                    )
+                },
+            );
+            let mut weight = 0.0_f32;
+            if let Some(source) = semantic_map.source_point(x, y) {
+                for raster in &rasters {
+                    weight = weight.max(raster.weight_at(source.x, source.y)?);
+                }
+            }
+            weights.push(weight);
+        }
+    }
+    Ok(Some(weights))
+}
+
+/// Native-only coverage in the same post-lens/post-geometry pixel grid as the rendered image.
+/// The advisor and denoise protection reuse the shared mapping rather than separately guessing
+/// source coordinates. Source rasters and their model/cache identities remain immutable.
+pub fn sample_source_portrait_weights(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    region: PortraitMaskRegion,
+) -> Result<Option<Vec<f32>>, PipelineError> {
+    if !settings
+        .portrait_masks
+        .iter()
+        .any(|mask| mask.region == region)
+    {
+        return Ok(None);
+    }
+    let (image, map) = prepare_source_with_sampling_map(decoded, settings)?;
+    mapped_portrait_region_weights(image.width, image.height, settings, map, region)
 }
 
 fn render_shared_graph(
@@ -2091,6 +2403,487 @@ mod tests {
             embedded_icc: None,
             exif: None,
         }
+    }
+
+    fn geometry_fixture() -> DecodedSourceImage {
+        let mut image = fixture(&[
+            [0.72, 0.12, 0.09, 1.0],
+            [0.12, 0.68, 0.15, 1.0],
+            [0.10, 0.14, 0.73, 1.0],
+            [0.68, 0.58, 0.10, 1.0],
+        ]);
+        image.width = 2;
+        image.height = 2;
+        DecodedSourceImage::Rendered(image)
+    }
+
+    fn sampling_geometries() -> [GeometryParameters; 4] {
+        [
+            GeometryParameters {
+                rotation_degrees: 90.0,
+                ..Default::default()
+            },
+            GeometryParameters {
+                flip_horizontal: true,
+                ..Default::default()
+            },
+            GeometryParameters {
+                flip_vertical: true,
+                ..Default::default()
+            },
+            GeometryParameters {
+                crop: CropRect {
+                    left: 0.5,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn native_sampling_uses_post_geometry_rotation_crop_and_flip() {
+        let source = geometry_fixture();
+        let settings = RenderSettings::default();
+        let red = sample_source_color_band(&source, &settings, 0.0, 0.0).unwrap();
+        let green = sample_source_color_band(&source, &settings, 0.75, 0.0).unwrap();
+        let blue = sample_source_color_band(&source, &settings, 0.0, 0.75).unwrap();
+        assert!(red.is_some() && green.is_some() && blue.is_some());
+        assert_ne!(red, green);
+        assert_ne!(red, blue);
+        for (geometry, expected) in sampling_geometries().into_iter().zip([blue, green, blue]) {
+            let settings = RenderSettings {
+                geometry,
+                ..Default::default()
+            };
+            assert_eq!(
+                sample_source_color_band(&source, &settings, 0.0, 0.0).unwrap(),
+                expected
+            );
+        }
+        // A narrow crop removes the red column; its first visible pixel is the original green.
+        let crop = RenderSettings {
+            geometry: GeometryParameters {
+                crop: CropRect {
+                    left: 0.9,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            sample_source_color_band(&source, &crop, 0.0, 0.0).unwrap(),
+            green
+        );
+        assert!(sample_source_color_band(&source, &settings, f32::NAN, 0.0).is_err());
+    }
+
+    #[test]
+    fn neutral_picker_samples_the_visible_rotated_cropped_flipped_pixel() {
+        let source = geometry_fixture();
+        for geometry in sampling_geometries() {
+            let settings = RenderSettings {
+                geometry,
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::NeutralPicker,
+                    sample: Some(WhiteBalanceSample {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 0.1,
+                        height: 0.1,
+                    }),
+                },
+                ..Default::default()
+            };
+            let visible = prepare_source_for_ai_denoise(&source, &settings).unwrap();
+            let picked = &visible.data[..3];
+            assert!(
+                (picked[0] - picked[1]).abs() < 1.0e-6,
+                "geometry={geometry:?} picked={picked:?}"
+            );
+            assert!((picked[1] - picked[2]).abs() < 1.0e-6);
+            assert_eq!(
+                render_source_preview_to_srgb8(&source, &settings).unwrap(),
+                render_source_export_to_srgb8(&source, &settings).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn auto_white_balance_remains_full_source_and_ignores_picker_rectangles() {
+        let source = geometry_fixture();
+        let base = RenderSettings {
+            white_balance: WhiteBalanceSettings {
+                mode: WhiteBalanceMode::Auto,
+                sample: None,
+            },
+            ..Default::default()
+        };
+        let full = prepare_source_for_ai_denoise(&source, &base).unwrap();
+        for geometry in sampling_geometries() {
+            let expected = apply_geometry(full.width, full.height, &full.data, geometry).unwrap();
+            let settings = RenderSettings {
+                geometry,
+                white_balance: WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::Auto,
+                    sample: Some(WhiteBalanceSample {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 0.1,
+                        height: 0.1,
+                    }),
+                },
+                ..base.clone()
+            };
+            let actual = prepare_source_for_ai_denoise(&source, &settings).unwrap();
+            assert_eq!(
+                actual.data, expected.data,
+                "Auto WB must not become a one-point picker"
+            );
+        }
+    }
+
+    fn semantic_selection_settings(mask: MaskDefinition) -> RenderSettings {
+        RenderSettings {
+            layers: vec![NativeAdjustmentLayer {
+                id: "source-semantic".into(),
+                name: "Source semantic".into(),
+                enabled: true,
+                opacity: 1.0,
+                blend_mode: LayerBlendMode::Normal,
+                mask: mask.into(),
+                adjustments: LayerAdjustments {
+                    tone: ToneParameters {
+                        exposure_ev: 0.6,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            }],
+            portrait_masks: vec![PortraitMaskRaster {
+                cache_key: "immutable-source-face".into(),
+                face_id: "face".into(),
+                region: PortraitMaskRegion::Skin,
+                width: 2,
+                height: 2,
+                values: vec![1.0, 0.0, 0.0, 0.0],
+            }],
+            generated_masks: vec![GeneratedMaskRaster {
+                cache_identity: "immutable-source-subject".into(),
+                semantic: GeneratedMaskSemantic::Subject,
+                width: 2,
+                height: 2,
+                values: vec![1.0, 0.0, 0.0, 0.0],
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn semantic_test_masks() -> [MaskDefinition; 2] {
+        [
+            MaskDefinition::PortraitSemantic {
+                face_id: "face".into(),
+                region: PortraitMaskRegion::Skin,
+                threshold: 0.5,
+                feather: 0.0,
+                model_id: "local-face".into(),
+                model_version: "verified-local".into(),
+                model_hash: "a".repeat(64),
+                cache_key: "immutable-source-face".into(),
+                source_crop: None,
+            },
+            MaskDefinition::Generated {
+                provider_id: "local-subject".into(),
+                model_id: "verified-subject".into(),
+                model_version: "fixture".into(),
+                model_hash: "b".repeat(64),
+                semantic_class: GeneratedMaskSemantic::Subject,
+                threshold: 0.5,
+                feather: 0.0,
+                invert: false,
+                cache_identity: "immutable-source-subject".into(),
+                metadata: Default::default(),
+            },
+        ]
+    }
+
+    #[test]
+    fn source_semantic_rasters_follow_rotation_crop_flip_without_cache_mutation() {
+        let source = geometry_fixture();
+        for mask in semantic_test_masks() {
+            for (geometry, selected_pixel) in
+                sampling_geometries()
+                    .into_iter()
+                    .zip([Some(1), Some(1), Some(2), None])
+            {
+                let mut settings = semantic_selection_settings(mask.clone());
+                settings.geometry = geometry;
+                let portrait_before = settings.portrait_masks.clone();
+                let generated_before = settings.generated_masks.clone();
+                let base = RenderSettings {
+                    geometry,
+                    ..Default::default()
+                };
+                let original = render_source_preview_to_srgb8(&source, &base).unwrap();
+                let changed = render_source_preview_to_srgb8(&source, &settings).unwrap();
+                for (index, (original, changed)) in original
+                    .data
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .zip(changed.data.as_chunks::<3>().0)
+                    .enumerate()
+                {
+                    if selected_pixel == Some(index) {
+                        assert_ne!(
+                            original, changed,
+                            "selected source pixel must follow geometry"
+                        );
+                    } else {
+                        assert_eq!(
+                            original, changed,
+                            "unselected pixel {index} changed after {geometry:?}"
+                        );
+                    }
+                }
+                assert_eq!(
+                    changed,
+                    render_source_export_to_srgb8(&source, &settings).unwrap()
+                );
+                assert_eq!(settings.portrait_masks, portrait_before);
+                assert_eq!(settings.generated_masks, generated_before);
+            }
+        }
+    }
+
+    #[test]
+    fn advisor_portrait_weights_use_the_shared_visible_grid_and_preserve_source_cache() {
+        let source = geometry_fixture();
+        let mut settings = semantic_selection_settings(semantic_test_masks()[0].clone());
+        let source_cache = settings.portrait_masks.clone();
+        for (geometry, expected) in sampling_geometries().into_iter().zip([
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+            vec![0.0, 0.0],
+        ]) {
+            settings.geometry = geometry;
+            let weights =
+                sample_source_portrait_weights(&source, &settings, PortraitMaskRegion::Skin)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                weights, expected,
+                "advisor and denoise must use actual visible geometry"
+            );
+        }
+        assert_eq!(settings.portrait_masks, source_cache);
+        assert!(
+            sample_source_portrait_weights(&source, &settings, PortraitMaskRegion::Hair)
+                .unwrap()
+                .is_none()
+        );
+        settings.portrait_masks[0].values[3] = f32::NAN;
+        assert!(
+            sample_source_portrait_weights(&source, &settings, PortraitMaskRegion::Skin).is_err()
+        );
+    }
+
+    #[test]
+    fn source_semantic_mapping_uses_exact_lensfun_green_channel_geometry() {
+        let width = 7;
+        let height = 5;
+        let input: Vec<f32> = (0..height)
+            .flat_map(|_| (0..width).flat_map(|x| [0.2, x as f32 / (width - 1) as f32, 0.2]))
+            .collect();
+        let correction = LensCorrection {
+            distortion: starroom_optics::DistortionCoefficients {
+                model: starroom_optics::DistortionModel::Poly3,
+                k1: -0.12,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let parameters = starroom_optics::OpticsParameters {
+            enabled: true,
+            tca: false,
+            vignette: false,
+            ..Default::default()
+        };
+        let corrected =
+            apply_lens_correction(width, height, &input, correction, parameters).unwrap();
+        let map = SemanticSamplingMap {
+            inverse_geometry: Matrix3::IDENTITY,
+            crop: CropRect::default(),
+            output_width: width,
+            output_height: height,
+            lens: Some((correction, corrected.auto_scale, true)),
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let point = map.source_point(x as f32 / width as f32, y as f32 / height as f32);
+                if let Some(point) = point {
+                    let green = corrected.data[(y * width + x) * 3 + 1];
+                    assert!((point.x - green).abs() < 1.0e-6, "same Lensfun sample grid");
+                }
+            }
+        }
+        let outside = SemanticSamplingMap {
+            inverse_geometry: Matrix3 {
+                m: [[1.0, 0.0, 2.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            },
+            ..map
+        };
+        assert!(
+            outside.source_point(0.0, 0.0).is_none(),
+            "do not clamp uncovered borders to a face"
+        );
+    }
+
+    #[test]
+    fn skin_retouch_and_gpu_local_layers_remap_source_rasters_after_geometry() {
+        let source = geometry_fixture();
+        for (geometry, selected_pixel) in
+            sampling_geometries()
+                .into_iter()
+                .zip([Some(1), Some(1), Some(2), None])
+        {
+            let mut settings = semantic_selection_settings(semantic_test_masks()[0].clone());
+            settings.geometry = geometry;
+            settings.skin_retouch = SkinRetouchSettings {
+                parameters: SkinRetouchParameters {
+                    exposure_ev: 0.25,
+                    ..Default::default()
+                },
+                faces: vec![SkinRetouchFaceReference {
+                    face_id: "face".into(),
+                    cache_key: "immutable-source-face".into(),
+                    source_crop: None,
+                }],
+            };
+            let original = render_source_preview_to_srgb8(
+                &source,
+                &RenderSettings {
+                    geometry,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let cpu = render_source_preview_to_srgb8(&source, &settings).unwrap();
+            for (index, (original, changed)) in original
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(cpu.data.as_chunks::<3>().0)
+                .enumerate()
+            {
+                assert_eq!(
+                    original != changed,
+                    selected_pixel == Some(index),
+                    "skin/local selection {index} after {geometry:?}"
+                );
+            }
+            let mut only_skin = settings.clone();
+            only_skin.layers.clear();
+            let skin = render_source_preview_to_srgb8(&source, &only_skin).unwrap();
+            assert_eq!(
+                skin,
+                render_source_export_to_srgb8(&source, &only_skin).unwrap()
+            );
+            for (index, (original, changed)) in original
+                .data
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .zip(skin.data.as_chunks::<3>().0)
+                .enumerate()
+            {
+                assert_eq!(
+                    original != changed,
+                    selected_pixel == Some(index),
+                    "Skin alone must track source selection"
+                );
+            }
+            match GpuRenderer::try_new() {
+                Ok(gpu) => {
+                    let accelerated =
+                        render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu).unwrap();
+                    assert_eq!(
+                        (accelerated.width, accelerated.height),
+                        (cpu.width, cpu.height)
+                    );
+                    assert!(
+                        accelerated
+                            .data
+                            .iter()
+                            .zip(&cpu.data)
+                            .all(|(a, b)| i16::from(*a).abs_diff(i16::from(*b)) <= 1)
+                    );
+                }
+                Err(error) => assert!(
+                    !error.to_string().is_empty(),
+                    "GPU unavailability must be explicit"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn ai_denoise_preserve_skin_remaps_full_source_mask_to_preview_geometry() {
+        let source = geometry_fixture();
+        let mut settings = semantic_selection_settings(semantic_test_masks()[0].clone());
+        settings.layers.clear();
+        settings.geometry.rotation_degrees = 90.0;
+        // A higher-resolution source mask is deliberately different from the preview size.
+        settings.portrait_masks[0].width = 4;
+        settings.portrait_masks[0].height = 4;
+        settings.portrait_masks[0].values = vec![
+            1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ];
+        settings.ai_denoise = AiDenoiseParameters {
+            enabled: true,
+            amount: 1.0,
+            detail: 0.0,
+            color_noise: 1.0,
+            preserve_skin: 1.0,
+        };
+        settings.ai_denoise_residual = Some(AiDenoiseResidual {
+            width: 2,
+            height: 2,
+            values: vec![-0.04; 12],
+            model_hash: "fixture".into(),
+            source_identity: "source".into(),
+            inference_cache_key: "post-geometry-residual".into(),
+            execution_provider: AiExecutionProvider::Cpu,
+        });
+        let base = render_source_preview_to_srgb8(
+            &source,
+            &RenderSettings {
+                geometry: settings.geometry,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let protected = render_source_preview_to_srgb8(&source, &settings).unwrap();
+        assert_eq!(
+            &base.data[3..6],
+            &protected.data[3..6],
+            "rotated skin must retain its original detail"
+        );
+        assert_ne!(
+            &base.data[..3],
+            &protected.data[..3],
+            "non-skin must receive denoise"
+        );
+        assert_eq!(
+            protected,
+            render_source_export_to_srgb8(&source, &settings).unwrap()
+        );
+        settings.ai_denoise.preserve_skin = 0.0;
+        let unprotected = render_source_preview_to_srgb8(&source, &settings).unwrap();
+        assert_ne!(&unprotected.data[3..6], &protected.data[3..6]);
     }
 
     #[test]
@@ -2459,6 +3252,7 @@ mod tests {
             model_version: "pin".into(),
             model_hash: "a".repeat(64),
             cache_key: "parse-1".into(),
+            source_crop: None,
         }
         .into();
         let raster = PortraitMaskRaster {
@@ -3474,6 +4268,7 @@ mod tests {
                 faces: vec![SkinRetouchFaceReference {
                     face_id: "face-a".into(),
                     cache_key: "cache-a".into(),
+                    source_crop: None,
                 }],
             },
             ..Default::default()
@@ -3520,6 +4315,7 @@ mod tests {
                 faces: vec![SkinRetouchFaceReference {
                     face_id: "face-a".into(),
                     cache_key: "missing".into(),
+                    source_crop: None,
                 }],
             },
             ..Default::default()
@@ -3651,6 +4447,7 @@ mod tests {
                 faces: vec![SkinRetouchFaceReference {
                     face_id: "face-a".into(),
                     cache_key: "portrait-cache".into(),
+                    source_crop: None,
                 }],
             },
             ..Default::default()
@@ -3800,6 +4597,7 @@ mod tests {
                 faces: vec![SkinRetouchFaceReference {
                     face_id: "face-a".into(),
                     cache_key: "parity-face".into(),
+                    source_crop: None,
                 }],
             },
             healing_operations: vec![healing],

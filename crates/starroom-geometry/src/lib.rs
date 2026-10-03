@@ -217,9 +217,16 @@ fn scale(x: f32, y: f32) -> Matrix3 {
 }
 
 fn rotation(degrees: f32) -> Matrix3 {
-    let angle = degrees.to_radians();
-    let cos = angle.cos();
-    let sin = angle.sin();
+    // Cardinal rotations are exact coordinate permutations. Trigonometric roundoff otherwise
+    // puts an endpoint just outside the source and image_sample correctly paints it black.
+    // Do not snap arbitrary straighten angles or clamp genuinely uncovered image borders.
+    let (sin, cos) = match degrees.rem_euclid(360.0) {
+        0.0 => (0.0, 1.0),
+        90.0 => (1.0, 0.0),
+        180.0 => (0.0, -1.0),
+        270.0 => (-1.0, 0.0),
+        _ => degrees.to_radians().sin_cos(),
+    };
     Matrix3 {
         m: [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]],
     }
@@ -760,6 +767,35 @@ mod tests {
             .expect("quarter turn");
             assert_eq!((result.width, result.height), (height, width));
             assert!(result.data.iter().all(|value| value.is_finite()));
+        }
+    }
+
+    #[test]
+    fn cardinal_rotations_preserve_every_edge_pixel_without_black_roundoff_borders() {
+        let source: Vec<f32> = (1..=4).flat_map(|value| [value as f32; 3]).collect();
+        for (rotation_degrees, expected) in [
+            (90.0, [3.0, 1.0, 4.0, 2.0]),
+            (-90.0, [2.0, 4.0, 1.0, 3.0]),
+            (180.0, [4.0, 3.0, 2.0, 1.0]),
+            (360.0, [1.0, 2.0, 3.0, 4.0]),
+        ] {
+            let result = apply_geometry(
+                2,
+                2,
+                &source,
+                GeometryParameters {
+                    rotation_degrees,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                result.data,
+                expected
+                    .into_iter()
+                    .flat_map(|value| [value; 3])
+                    .collect::<Vec<_>>()
+            );
         }
     }
 

@@ -17,13 +17,20 @@ pub const LENSFUN_VERSION: &str = "0.3.4";
 pub const LENSFUN_COMMIT: &str = "101c745e847a5de4a1e569a94368ce2027198598";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LensIdentity {
+    #[serde(alias = "camera_make")]
     pub camera_make: String,
+    #[serde(alias = "camera_model")]
     pub camera_model: String,
+    #[serde(alias = "lens_make")]
     pub lens_make: String,
+    #[serde(alias = "lens_model")]
     pub lens_model: String,
+    #[serde(alias = "focal_length_mm")]
     pub focal_length_mm: f32,
     pub aperture: f32,
+    #[serde(alias = "focus_distance_m")]
     pub focus_distance_m: Option<f32>,
 }
 

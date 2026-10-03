@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { defaultNativeRenderConstants, fromNativeLayers, fromNativeMask, fromNativeSettings, nativePreviewViewportContract, normalizeNativeSettings, parseNativePreviewFrame, toNativeLayers, toNativeMask, toNativeSettings,
+import { defaultNativeRenderConstants, fromNativeLayers, fromNativeMask, fromNativeSettings, nativePortraitSourceCrop, nativePreviewViewportContract, normalizeNativeSettings, parseNativePreviewFrame, toNativeLayers, toNativeMask, toNativeSettings,
   type NativeAdjustmentLayer, type NativeEditSettings, type NativeMaskTree, type NativeSerializedAdjustmentLayer } from './nativeRender'
 import { defaultAdjustments } from './editorState'
 import localLayersFixture from '../fixtures/contracts/native-local-layers.json'
 import localWorkflowFixture from '../fixtures/contracts/native-local-workflow.json'
 import canonicalNativeDefaults from '../fixtures/contracts/native-default-settings.json'
+import manualLensFixture from '../fixtures/contracts/native-manual-lens.json'
+import portraitCropFixture from '../fixtures/contracts/native-portrait-source-crop.json'
 
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
@@ -140,6 +142,17 @@ describe('native preview contract', () => {
       'sourceDefault', null, { master: [], red: [], green: [], blue: [] }, { matchMode: 'manual', manualIdentity: identity })
     expect(settings.optics.parameters).toMatchObject({ enabled: true, distortion: true, tca: false, vignette: true, autoScale: true })
     expect(settings.optics.manualIdentity).toEqual(identity)
+    expect(settings.optics).toEqual(manualLensFixture)
+  })
+
+  it('hydrates historical snake_case manual lens identity without changing history JSON', () => {
+    const legacy = structuredClone(canonicalNativeDefaults)
+    const identity = { camera_make: 'Nikon', camera_model: 'Nikon D750', lens_make: 'Nikon',
+      lens_model: 'Nikon AF-S Nikkor 16-35mm f/4G ED VR', focal_length_mm: 24, aperture: 5.6, focus_distance_m: 10 }
+    const state = { ...legacy, optics: { ...legacy.optics, matchMode: 'manual', manualIdentity: identity } } as unknown as NativeEditSettings
+    const acknowledgedJson = JSON.stringify(state)
+    expect(fromNativeSettings(defaultAdjustments, state).settings.optics.manualIdentity).toEqual(manualLensFixture.manualIdentity)
+    expect(JSON.stringify(state)).toBe(acknowledgedJson)
   })
 
   it('serializes crop perspective upright and four-point geometry without browser image math', () => {
@@ -165,6 +178,25 @@ describe('native preview contract', () => {
       { master: [], red: [], green: [], blue: [] }, undefined, layers)
     expect(settings.layers[0].mask).toMatchObject({ type: 'portraitSemantic', cache_key: 'face-123:crop', region: 'skin' })
     expect(JSON.stringify(settings)).not.toContain('values')
+    expect(settings.layers[0].mask).not.toHaveProperty('source_crop')
+  })
+
+  it('persists Native face crop intent through mask serialization without UI crop math', () => {
+    const face = { id: 'face-123', confidence: .99, bounds: { left: .2, top: .1, right: .6, bottom: .5 }, landmarks: [],
+      crop: { centerX: 2048, centerY: 1536, side: 1024, rotationDegrees: -12 } }
+    const sourceCrop = nativePortraitSourceCrop(face)
+    expect(sourceCrop).toEqual(portraitCropFixture)
+    const mask = { type: 'portraitSemantic' as const, faceId: face.id, region: 'skin' as const, threshold: .55, feather: .08,
+      modelId: 'yakhyo/face-parsing-bisenet-resnet18', modelVersion: '8a4729d', modelHash: 'a'.repeat(64), cacheKey: 'face-123:crop', sourceCrop }
+    const wire = toNativeMask(mask)
+    expect(wire).toMatchObject({ source_crop: portraitCropFixture })
+    const restored = fromNativeMask(wire)
+    expect(restored).toEqual(mask)
+    expect(restored).not.toHaveProperty('source_crop')
+    sourceCrop.side = 900
+    expect(wire).toMatchObject({ source_crop: portraitCropFixture })
+    expect(restored).toMatchObject({ sourceCrop: portraitCropFixture })
+    expect(face.crop.side).toBe(1024)
   })
 
   it('serializes M17 skin controls and face cache identities without semantic pixels', () => {

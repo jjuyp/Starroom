@@ -161,12 +161,14 @@ button:disabled { opacity: .35; cursor: default; }
 .preview-badge { position: absolute; left: 12px; top: 12px; padding: 4px 7px; background: rgba(15,16,19,.78); border: 1px solid rgba(255,255,255,.14); color: #e9e9eb; border-radius: 5px; font-size: 9px; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 .show-before .photo-frame { outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); }
 .mask-overlay { position: absolute; z-index: 6; overflow: visible; touch-action: none; cursor: crosshair; }
-.mask-ring, .mask-feather-ring { fill: rgba(173,186,255,.055); stroke: #d6c0ff; stroke-width: 2; stroke-dasharray: 10 7; vector-effect: non-scaling-stroke; cursor: move; }
-.mask-feather-ring { fill: none; stroke-width: 1; opacity: .42; }
-.mask-rotation-line { stroke: #d6c0ff; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; }
-.mask-center-handle { fill: #fff; stroke: #6852a8; stroke-width: 3; vector-effect: non-scaling-stroke; cursor: move; }
-.mask-handle, .mask-rotate-handle { fill: #b8c4ff; stroke: #17181b; stroke-width: 3; vector-effect: non-scaling-stroke; cursor: ew-resize; }
-.mask-rotate-handle { fill: #e3b7ff; cursor: grab; }
+.mask-ring, .mask-feather-ring { fill: none; stroke: #e5dcff; stroke-width: 1.1; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.6)); }
+.mask-feather-ring { stroke-width: .75; stroke-dasharray: 2 5; opacity: .5; }
+.mask-ring-hit { fill: transparent; stroke: transparent; stroke-width: 16; vector-effect: non-scaling-stroke; pointer-events: all; cursor: move; }
+.mask-rotation-line { stroke: #d9d2ec; stroke-width: .8; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .7; }
+.mask-control-hit { fill: transparent; stroke: none; pointer-events: all; }
+.mask-control-pin { fill: #f8f5ff; stroke: #7865bc; stroke-width: 1.1; vector-effect: non-scaling-stroke; pointer-events: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.65)); }
+.mask-center-handle { cursor: move; }.mask-handle { cursor: ew-resize; }.mask-rotate-handle { cursor: grab; }
+.mask-control:focus { outline: none; }.mask-control:focus-visible .mask-control-pin { stroke: #59d9ff; filter: drop-shadow(0 0 3px rgba(89,217,255,.9)); }
 .mask-toolbar { position: absolute; top: 17px; display: flex; gap: 3px; padding: 5px; border: 1px solid rgba(255,255,255,.14); border-radius: var(--radius-lg); background: rgba(32,33,38,.88); backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .mask-toolbar button { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 9px; color: #cfd1d6; border-radius: 6px; font-size: 10px; }
 .mask-toolbar button:hover { background: rgba(255,255,255,.08); color: #fff; }

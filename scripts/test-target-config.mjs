@@ -27,7 +27,7 @@ export const targets = {
   },
   color: {
     rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],
+    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/whiteBalanceClipboard.test.ts'],
     golden: ['color', 'camera-color'],
   },
   tone: {
@@ -97,7 +97,7 @@ export const targets = {
   },
   masks: {
     rust: [['test', '--locked', '-p', 'starroom-project', 'mask'], ['test', '--locked', '-p', 'starroom-pipeline', 'm15_'], ['test', '--locked', '-p', 'starroom-render']],
-    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts'],
+    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts', 'src/maskOverlayGeometry.test.ts', 'src/maskWorkspace.test.ts'],
     golden: ['mask'],
   },
   portrait: {

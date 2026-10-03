@@ -40,13 +40,16 @@ use starroom_pipeline::{
     WhiteBalanceSample, WhiteBalanceSettings, prepare_source_for_ai_denoise,
     render_source_export_to_srgb8, render_source_preview_to_srgb8,
     render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
+    sample_source_portrait_weights,
 };
 use starroom_portrait::{
     AiMaskError, AiMaskModelRegistry, AiMaskOnnxProvider, AiMaskProvider, AiMaskSemantic,
-    DetectedFace, GeneratedAiMask, PortraitError, PortraitModelRegistry, PortraitOnnxProvider,
-    PortraitParseResult, PortraitRegion, cancellation_token,
+    DetectedFace, FaceCropTransform, GeneratedAiMask, PortraitError, PortraitModelRegistry,
+    PortraitOnnxProvider, PortraitParseResult, PortraitRegion, cancellation_token,
 };
-use starroom_project::{GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion};
+use starroom_project::{
+    GeneratedMaskSemantic, MaskDefinition, MaskTree, PortraitMaskRegion, PortraitSourceCrop,
+};
 use starroom_reference::{ReferenceAnalysis, ReferenceMatchRecipe, analyze, match_reference};
 use starroom_render::{
     GpuStageCacheKeys, PixelRect, RenderGraph, StageId, StageStateIdentity,
@@ -1492,6 +1495,8 @@ impl Default for NativePortraitRuntime {
 struct NativeAiMaskRuntime {
     provider: Mutex<Option<AiMaskOnnxProvider>>,
     cache: Mutex<BTreeMap<String, GeneratedAiMask>>,
+    /// Bounded metadata identities -> byte SHA; avoids rereading a RAW on every slider update.
+    source_hashes: Mutex<BTreeMap<String, String>>,
     cancellations: Mutex<BTreeMap<String, Arc<AtomicBool>>>,
 }
 
@@ -1518,6 +1523,7 @@ impl Default for NativeAiMaskRuntime {
         Self {
             provider: Mutex::new(None),
             cache: Mutex::new(BTreeMap::new()),
+            source_hashes: Mutex::new(BTreeMap::new()),
             cancellations: Mutex::new(BTreeMap::new()),
         }
     }
@@ -1652,7 +1658,22 @@ struct NativeColorSampleRequest {
     source_path: PathBuf,
     x: f32,
     y: f32,
+    #[serde(default = "default_color_sample_edge")]
+    max_edge: u32,
+    #[serde(default)]
+    coordinate_space: NativeSampleCoordinateSpace,
     settings: NativeEditSettings,
+}
+
+const fn default_color_sample_edge() -> u32 {
+    1800
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum NativeSampleCoordinateSpace {
+    #[default]
+    PostGeometry,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1663,19 +1684,57 @@ struct NativeAdvisorRequest {
     settings: NativeEditSettings,
 }
 
+struct AdvisorRuntimeRefs<'a> {
+    portrait: &'a NativePortraitRuntime,
+    masks: &'a NativeAiMaskRuntime,
+    denoise: &'a NativeAiDenoiseRuntime,
+}
+
+fn render_advisor_shared_graph(
+    decoded: &DecodedSourceImage,
+    source_path: &Path,
+    settings: &mut RenderSettings,
+    denoise_provider: DenoiseExecutionProvider,
+    runtimes: AdvisorRuntimeRefs<'_>,
+) -> Result<starroom_pipeline::RenderedRgb8, String> {
+    attach_portrait_masks(settings, source_path, runtimes.portrait)?;
+    attach_generated_masks(settings, source_path, runtimes.masks)?;
+    attach_ai_denoise(
+        decoded,
+        source_path,
+        settings,
+        denoise_provider,
+        "native-advisor",
+        runtimes.denoise,
+    )?;
+    render_source_preview_to_srgb8(decoded, settings)
+        .map_err(|error| format!("advisor native graph failed: {error}"))
+}
+
 /// M19 runs deterministic analysis locally on the same native graph that produces preview.
 /// The UI receives small statistics/suggestions only; no image pixels or cloud request cross IPC.
 #[tauri::command]
 fn advise_native_image(
     portrait_runtime: State<'_, NativePortraitRuntime>,
+    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
+    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
     request: NativeAdvisorRequest,
 ) -> Result<AdvisorResult, String> {
+    let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
-    attach_portrait_masks(&mut settings, &portrait_runtime)?;
     let decoded = decode_source_preview(&request.source_path, request.max_edge.clamp(256, 2048))
         .map_err(|error| format!("advisor preview decode failed: {error}"))?;
-    let rendered = render_source_preview_to_srgb8(&decoded, &settings)
-        .map_err(|error| format!("advisor native graph failed: {error}"))?;
+    let rendered = render_advisor_shared_graph(
+        &decoded,
+        &request.source_path,
+        &mut settings,
+        requested_denoise_provider,
+        AdvisorRuntimeRefs {
+            portrait: &portrait_runtime,
+            masks: &ai_mask_runtime,
+            denoise: &ai_denoise_runtime,
+        },
+    )?;
     let samples = rendered
         .data
         .as_chunks::<3>()
@@ -1690,33 +1749,19 @@ fn advise_native_image(
         })
         .collect::<Vec<_>>();
     let mut analysis = analyze_detailed(&samples);
-    let skin_rasters = settings
-        .portrait_masks
-        .iter()
-        .filter(|raster| raster.region == PortraitMaskRegion::Skin)
-        .collect::<Vec<_>>();
-    if !skin_rasters.is_empty() {
+    if let Some(skin_weights) =
+        sample_source_portrait_weights(&decoded, &settings, PortraitMaskRegion::Skin)
+            .map_err(|error| format!("advisor portrait geometry failed: {error}"))?
+    {
+        if skin_weights.len() != samples.len() {
+            return Err(
+                "AdvisorPortraitShapeMismatch: shared graph coverage dimensions differ".into(),
+            );
+        }
         let mut weight_sum = 0.0_f32;
         let mut luma_sum = 0.0_f32;
         let mut chroma_sum = 0.0_f32;
-        for (index, rgb) in samples.iter().enumerate() {
-            let x = (index % rendered.width as usize) as f32
-                / rendered.width.saturating_sub(1).max(1) as f32;
-            let y = (index / rendered.width as usize) as f32
-                / rendered.height.saturating_sub(1).max(1) as f32;
-            let weight = skin_rasters
-                .iter()
-                .map(|raster| {
-                    let px = (x * raster.width.saturating_sub(1) as f32).round() as usize;
-                    let py = (y * raster.height.saturating_sub(1) as f32).round() as usize;
-                    raster
-                        .values
-                        .get(py * raster.width as usize + px)
-                        .copied()
-                        .unwrap_or(0.0)
-                })
-                .fold(0.0_f32, f32::max)
-                .clamp(0.0, 1.0);
+        for (rgb, weight) in samples.iter().zip(skin_weights) {
             let luma = rgb[0] * 0.2627 + rgb[1] * 0.6780 + rgb[2] * 0.0593;
             let chroma =
                 ((rgb[0] - rgb[1]).powi(2) + (rgb[1] - rgb[2]).powi(2) + (rgb[2] - rgb[0]).powi(2))
@@ -1759,8 +1804,12 @@ fn native_optics_status(
 fn native_sample_color(
     request: NativeColorSampleRequest,
 ) -> Result<Option<starroom_color::ColorBand>, String> {
+    if !(256..=4096).contains(&request.max_edge) {
+        return Err("NativeColorSampleInvalid: decode edge is outside supported ranges".into());
+    }
+    let NativeSampleCoordinateSpace::PostGeometry = request.coordinate_space;
     let settings = request.settings.validated()?;
-    let decoded = decode_source_preview(&request.source_path, 1800)
+    let decoded = decode_source_preview(&request.source_path, request.max_edge)
         .map_err(|error| format!("native color sample decode failed: {error}"))?;
     sample_source_color_band(&decoded, &settings, request.x, request.y)
         .map_err(|error| format!("native color sample failed: {error}"))
@@ -2212,6 +2261,31 @@ fn infer_ai_denoise_with_fallback(
     }
 }
 
+fn ai_denoise_input_identity(
+    source_identity: &str,
+    width: usize,
+    height: usize,
+    settings: &RenderSettings,
+) -> Result<String, String> {
+    // NAFNet consumes the image after source color/WB, Lensfun and geometry. Dimensions alone
+    // cannot distinguish a rotation/flip/WB/profile edit. Creative sliders remain intentionally
+    // excluded: they occur after inference and must reuse its expensive immutable residual.
+    let input_stage = serde_json::to_vec(&(
+        settings.color_management,
+        settings.white_balance,
+        &settings.optics,
+        settings.geometry,
+        settings
+            .source_region
+            .map(|region| (region.full_width, region.full_height, region.x, region.y)),
+    ))
+    .map_err(|error| format!("AI denoise input identity failed: {error}"))?;
+    Ok(format!(
+        "{source_identity}:{width}x{height}:precreative-{:x}",
+        Sha256::digest(input_stage)
+    ))
+}
+
 fn attach_ai_denoise(
     decoded: &DecodedSourceImage,
     source_path: &Path,
@@ -2227,7 +2301,8 @@ fn attach_ai_denoise(
     }
     let working = prepare_source_for_ai_denoise(decoded, settings)
         .map_err(|error| format!("AI denoise input graph failed: {error}"))?;
-    let sized_identity = format!("{source}:{}x{}", working.width, working.height);
+    let sized_identity =
+        ai_denoise_input_identity(&source, working.width, working.height, settings)?;
     let key = inference_cache_key(&sized_identity);
     if let Some(residual) = runtime
         .cache
@@ -2575,17 +2650,24 @@ fn source_rgba_for_portrait(path: &Path) -> Result<(u32, u32, Vec<u8>, String), 
     Ok((rendered.width, rendered.height, rgba, identity))
 }
 
-fn collect_portrait_mask_references(
-    tree: &MaskTree,
-    values: &mut Vec<(String, String, PortraitMaskRegion)>,
-) {
+fn collect_portrait_mask_references(tree: &MaskTree, values: &mut Vec<PortraitRestoreReference>) {
     match tree {
         MaskTree::Leaf(MaskDefinition::PortraitSemantic {
             face_id,
             region,
             cache_key,
+            source_crop,
+            model_id,
+            model_version,
+            model_hash,
             ..
-        }) => values.push((cache_key.clone(), face_id.clone(), *region)),
+        }) => values.push(PortraitRestoreReference {
+            cache_key: cache_key.clone(),
+            face_id: face_id.clone(),
+            region: *region,
+            source_crop: *source_crop,
+            model_identity: Some((model_id.clone(), model_version.clone(), model_hash.clone())),
+        }),
         MaskTree::Leaf(_) => {}
         MaskTree::Composite(composite) => {
             for child in &composite.children {
@@ -2595,17 +2677,45 @@ fn collect_portrait_mask_references(
     }
 }
 
-fn collect_generated_mask_references(
-    tree: &MaskTree,
-    values: &mut Vec<(String, GeneratedMaskSemantic)>,
-) {
+struct PortraitRestoreReference {
+    cache_key: String,
+    face_id: String,
+    region: PortraitMaskRegion,
+    source_crop: Option<PortraitSourceCrop>,
+    model_identity: Option<(String, String, String)>,
+}
+
+struct GeneratedRestoreReference {
+    cache_identity: String,
+    semantic: GeneratedMaskSemantic,
+    provider_id: String,
+    model_id: String,
+    model_version: String,
+    model_hash: String,
+    execution_provider: Option<String>,
+}
+
+fn collect_generated_mask_references(tree: &MaskTree, values: &mut Vec<GeneratedRestoreReference>) {
     match tree {
         MaskTree::Leaf(MaskDefinition::Generated {
             cache_identity,
             semantic_class,
+            provider_id,
+            model_id,
+            model_version,
+            model_hash,
+            metadata,
             ..
         }) => {
-            values.push((cache_identity.clone(), *semantic_class));
+            values.push(GeneratedRestoreReference {
+                cache_identity: cache_identity.clone(),
+                semantic: *semantic_class,
+                provider_id: provider_id.clone(),
+                model_id: model_id.clone(),
+                model_version: model_version.clone(),
+                model_hash: model_hash.clone(),
+                execution_provider: metadata.get("executionProvider").cloned(),
+            });
         }
         MaskTree::Leaf(_) => {}
         MaskTree::Composite(composite) => {
@@ -2616,39 +2726,149 @@ fn collect_generated_mask_references(
     }
 }
 
+fn cached_source_content_hash(
+    path: &Path,
+    runtime: &NativeAiMaskRuntime,
+) -> Result<String, String> {
+    let source_identity = preview_source_identity(path)?;
+    let mut hashes = runtime
+        .source_hashes
+        .lock()
+        .map_err(|_| "AI mask source identity lock was poisoned".to_owned())?;
+    if let Some(hash) = hashes.get(&source_identity) {
+        return Ok(hash.clone());
+    }
+    let hash = source_content_hash(path)?;
+    if hashes.len() >= 32 {
+        hashes.pop_first();
+    }
+    hashes.insert(source_identity, hash.clone());
+    Ok(hash)
+}
+
 fn attach_generated_masks(
     settings: &mut RenderSettings,
+    source_path: &Path,
     runtime: &NativeAiMaskRuntime,
 ) -> Result<(), String> {
     let mut references = Vec::new();
     for layer in &settings.layers {
-        collect_generated_mask_references(&layer.mask, &mut references);
+        if layer.enabled && layer.opacity > 0.0 {
+            collect_generated_mask_references(&layer.mask, &mut references);
+        }
     }
     if references.is_empty() {
         return Ok(());
     }
-    let cache = runtime
-        .cache
-        .lock()
-        .map_err(|_| "AI mask cache lock was poisoned".to_owned())?;
-    for (cache_identity, semantic) in references {
-        let generated = cache
-            .get(&cache_identity)
-            .ok_or_else(|| format!("AI mask cache is unavailable: {cache_identity}"))?;
-        let expected = match generated.semantic {
-            AiMaskSemantic::Subject => GeneratedMaskSemantic::Subject,
-            AiMaskSemantic::Background => GeneratedMaskSemantic::Background,
-            AiMaskSemantic::Person => GeneratedMaskSemantic::Person,
-            AiMaskSemantic::Sky => GeneratedMaskSemantic::Sky,
-            AiMaskSemantic::Skin => GeneratedMaskSemantic::Skin,
-            AiMaskSemantic::Hair => GeneratedMaskSemantic::Hair,
+    let source_hash = cached_source_content_hash(source_path, runtime)?;
+    let registry = local_ai_mask_models();
+    let mut rgba_source = None;
+    for reference in references {
+        let (semantic, descriptor, provider_id) = match reference.semantic {
+            GeneratedMaskSemantic::Subject => {
+                (AiMaskSemantic::Subject, &registry.foreground, "foreground")
+            }
+            GeneratedMaskSemantic::Background => (
+                AiMaskSemantic::Background,
+                &registry.foreground,
+                "foreground",
+            ),
+            GeneratedMaskSemantic::Sky => (AiMaskSemantic::Sky, &registry.scene, "semantic-scene"),
+            _ => return Err(
+                "PortraitProviderRequired: use the verified portrait provider for Person/Skin/Hair"
+                    .into(),
+            ),
         };
-        if expected != semantic {
-            return Err(format!("AI mask semantic cache mismatch: {cache_identity}"));
+        if reference.provider_id != provider_id
+            || reference.model_id != descriptor.id
+            || reference.model_version != descriptor.version
+            || reference.model_hash != descriptor.sha256
+        {
+            return Err("MaskModelMismatch: saved AI mask requires a different provider/model version or SHA".into());
+        }
+        let expected_key =
+            AiMaskOnnxProvider::cache_identity(&source_hash, semantic, &descriptor.sha256);
+        if reference.cache_identity != expected_key {
+            return Err("MaskSourceMismatch: saved AI mask belongs to a different source; regenerate this mask for the current photo".into());
+        }
+        let execution_provider = match reference.execution_provider.as_deref() {
+            Some("cpu") => starroom_portrait::ExecutionProvider::Cpu,
+            Some("directMl") => starroom_portrait::ExecutionProvider::DirectMl,
+            None => registry.execution_provider,
+            _ => {
+                return Err("MaskProviderMismatch: saved execution provider is unsupported".into());
+            }
+        };
+        let cached = runtime
+            .cache
+            .lock()
+            .map_err(|_| "AI mask cache lock was poisoned".to_owned())?
+            .get(&expected_key)
+            .cloned();
+        let generated = if let Some(generated) = cached {
+            generated
+        } else {
+            starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+            if rgba_source.is_none() {
+                rgba_source =
+                    Some(source_rgba_for_portrait(source_path).map_err(|error| error.to_string())?);
+            }
+            let (width, height, rgba, _) = rgba_source.as_ref().expect("prepared above");
+            let mut provider = runtime
+                .provider
+                .lock()
+                .map_err(|_| "AI mask provider lock was poisoned".to_owned())?;
+            if provider.as_ref().is_none_or(|active| {
+                !active.supports(semantic) || active.execution_provider != execution_provider
+            }) {
+                let mut exact_registry = registry.clone();
+                exact_registry.execution_provider = execution_provider;
+                *provider = Some(
+                    AiMaskOnnxProvider::initialize_for(exact_registry, semantic)
+                        .map_err(|error| error.to_string())?,
+                );
+            }
+            let generated = provider
+                .as_mut()
+                .expect("initialized above")
+                .generate(
+                    *width,
+                    *height,
+                    rgba,
+                    &source_hash,
+                    semantic,
+                    &AtomicBool::new(false),
+                )
+                .map_err(|error| error.to_string())?;
+            starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+            runtime
+                .cache
+                .lock()
+                .map_err(|_| "AI mask cache lock was poisoned".to_owned())?
+                .insert(expected_key.clone(), generated.clone());
+            generated
+        };
+        if generated.semantic != semantic
+            || generated.cache_identity != expected_key
+            || generated.provider_id != reference.provider_id
+            || generated.model_id != reference.model_id
+            || generated.model_version != reference.model_version
+            || generated.model_hash != reference.model_hash
+        {
+            return Err(
+                "MaskCacheMismatch: generated raster identity does not match the saved edit".into(),
+            );
+        }
+        if settings
+            .generated_masks
+            .iter()
+            .any(|mask| mask.cache_identity == expected_key && mask.semantic == reference.semantic)
+        {
+            continue;
         }
         settings.generated_masks.push(GeneratedMaskRaster {
-            cache_identity,
-            semantic,
+            cache_identity: expected_key,
+            semantic: reference.semantic,
             width: generated.mask.width,
             height: generated.mask.height,
             values: generated.mask.values.clone(),
@@ -2659,11 +2879,14 @@ fn attach_generated_masks(
 
 fn attach_portrait_masks(
     settings: &mut RenderSettings,
+    source_path: &Path,
     runtime: &NativePortraitRuntime,
 ) -> Result<(), String> {
     let mut references = Vec::new();
     for layer in &settings.layers {
-        collect_portrait_mask_references(&layer.mask, &mut references);
+        if layer.enabled && layer.opacity > 0.0 {
+            collect_portrait_mask_references(&layer.mask, &mut references);
+        }
     }
     for face in &settings.skin_retouch.faces {
         for region in [
@@ -2678,21 +2901,136 @@ fn attach_portrait_masks(
             PortraitMaskRegion::Mouth,
             PortraitMaskRegion::Hair,
         ] {
-            references.push((face.cache_key.clone(), face.face_id.clone(), region));
+            references.push(PortraitRestoreReference {
+                cache_key: face.cache_key.clone(),
+                face_id: face.face_id.clone(),
+                region,
+                source_crop: face.source_crop,
+                model_identity: None,
+            });
         }
     }
     if references.is_empty() {
         return Ok(());
     }
-    let state = runtime
+    let source_identity = preview_source_identity(source_path)?;
+    let registry = local_portrait_models();
+    let mut source = None;
+    let mut detected_faces = None;
+    let mut state = runtime
         .0
         .lock()
         .map_err(|_| "portrait runtime lock was poisoned".to_owned())?;
-    for (cache_key, face_id, region) in references {
+    for reference in references {
+        let PortraitRestoreReference {
+            cache_key,
+            face_id,
+            region,
+            source_crop,
+            model_identity,
+        } = reference;
+        if model_identity.is_some_and(|(id, version, hash)| {
+            id != registry.parser.id
+                || version != registry.parser.version
+                || hash != registry.parser.sha256
+        }) {
+            return Err("PortraitModelMismatch: saved portrait requires a different pinned parser version or SHA".into());
+        }
+        if source_crop.is_some_and(|crop| !crop.is_valid()) {
+            return Err(
+                "PortraitRestoreMetadataInvalid: sourceCrop must be finite version 1 metadata"
+                    .into(),
+            );
+        }
+        if !state.parsed.contains_key(&cache_key) {
+            starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+            if source.is_none() {
+                source =
+                    Some(source_rgba_for_portrait(source_path).map_err(|error| error.to_string())?);
+            }
+            let (width, height, rgba, _) = source.as_ref().expect("prepared above");
+            if state.provider.is_none() {
+                state.provider = Some(
+                    PortraitOnnxProvider::initialize(registry.clone())
+                        .map_err(|error| error.to_string())?,
+                );
+            }
+            let provider = state.provider.as_mut().expect("initialized above");
+            if detected_faces.is_none() {
+                detected_faces = Some(provider.detect(*width, *height, rgba, default_face_crop_scale(), &source_identity)
+                    .map_err(|error| format!("PortraitSourceMismatch: cannot resolve saved face from current source: {error}"))?);
+            }
+            let mut face = detected_faces.as_ref().expect("detected above").iter()
+                .find(|face| face.id == face_id).cloned()
+                .ok_or_else(|| "PortraitSourceMismatch: saved face belongs to another source; detect/select faces for the current photo".to_owned())?;
+            if let Some(crop) = source_crop {
+                face.crop = FaceCropTransform {
+                    center_x: crop.center_x,
+                    center_y: crop.center_y,
+                    side: crop.side,
+                    rotation_degrees: crop.rotation_degrees,
+                };
+                if !(0.0..=*width as f32).contains(&crop.center_x)
+                    || !(0.0..=*height as f32).contains(&crop.center_y)
+                {
+                    return Err(
+                        "PortraitRestoreMetadataInvalid: crop center is outside the source".into(),
+                    );
+                }
+            } else if format!("{}:{}", face.id, face.crop.identity_hash()) != cache_key {
+                // Legacy versions exposed only the default 1.4 and the early 1.0 crop. Restore
+                // a candidate only when the complete original transform SHA proves equality.
+                face.crop = FaceCropTransform::from_face(
+                    face.bounds,
+                    *width,
+                    *height,
+                    1.0,
+                    face.landmarks[0],
+                    face.landmarks[1],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            if format!("{}:{}", face.id, face.crop.identity_hash()) != cache_key {
+                return Err("PortraitRestoreMetadataMissing: saved crop cannot be reproduced exactly; detect/select the face again".into());
+            }
+            let parsed = provider
+                .parse(*width, *height, rgba, &face, &source_identity)
+                .map_err(|error| error.to_string())?;
+            starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
+            state.parsed.insert(cache_key.clone(), parsed);
+        }
         let parse = state
             .parsed
             .get(&cache_key)
             .ok_or_else(|| format!("portrait semantic cache is unavailable: {cache_key}"))?;
+        if parse.cache_key.source_identity != source_identity
+            || parse.face_id != face_id
+            || parse.cache_key.face_id != face_id
+        {
+            return Err("PortraitSourceMismatch: cached face belongs to another photo; detect/select the current source".into());
+        }
+        if parse.cache_key.parser_model_hash != registry.parser.sha256
+            || format!("{}:{}", face_id, parse.cache_key.crop_transform_hash) != cache_key
+        {
+            return Err(
+                "PortraitCacheMismatch: cached model/crop identity differs from the saved edit"
+                    .into(),
+            );
+        }
+        if let Some(crop) = source_crop {
+            let crop = FaceCropTransform {
+                center_x: crop.center_x,
+                center_y: crop.center_y,
+                side: crop.side,
+                rotation_degrees: crop.rotation_degrees,
+            };
+            if crop.identity_hash() != parse.cache_key.crop_transform_hash {
+                return Err(
+                    "PortraitRestoreMetadataInvalid: sourceCrop does not match saved transform SHA"
+                        .into(),
+                );
+            }
+        }
         let source_region = match region {
             PortraitMaskRegion::Face => PortraitRegion::Face,
             PortraitMaskRegion::Skin => PortraitRegion::Skin,
@@ -2710,6 +3048,11 @@ fn attach_portrait_masks(
             .regions
             .get(&source_region)
             .ok_or_else(|| format!("portrait semantic region is unavailable: {cache_key}"))?;
+        if settings.portrait_masks.iter().any(|mask| {
+            mask.cache_key == cache_key && mask.face_id == face_id && mask.region == region
+        }) {
+            continue;
+        }
         settings.portrait_masks.push(PortraitMaskRaster {
             cache_key,
             face_id,
@@ -2856,7 +3199,7 @@ fn ai_mask_generate(
     ) {
         return Err(AiMaskError::PortraitProviderRequired(request.semantic).into());
     }
-    let source_hash = source_content_hash(&request.source_path)
+    let source_hash = cached_source_content_hash(&request.source_path, &runtime)
         .map_err(|error| AiMaskFailure::from(AiMaskError::InferenceFailed(error)))?;
     {
         let cache = runtime.cache.lock().map_err(|_| {
@@ -2867,15 +3210,10 @@ fn ai_mask_generate(
         if let Some(result) = cache.values().find(|result| {
             result.semantic == request.semantic
                 && result.cache_identity
-                    == format!(
-                        "{:x}",
-                        Sha256::digest(
-                            format!(
-                                "{source_hash}:ai-mask-v1:{:?}:{}",
-                                request.semantic, result.model_hash
-                            )
-                            .as_bytes()
-                        )
+                    == AiMaskOnnxProvider::cache_identity(
+                        &source_hash,
+                        request.semantic,
+                        &result.model_hash,
                     )
         }) {
             return Ok(AiMaskGenerateResponse {
@@ -3184,8 +3522,8 @@ fn native_preview_inner(
     let source_identity = preview_source_identity(&request.source_path)?;
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
-    attach_portrait_masks(&mut settings, portrait_runtime)?;
-    attach_generated_masks(&mut settings, ai_mask_runtime)?;
+    attach_portrait_masks(&mut settings, &request.source_path, portrait_runtime)?;
+    attach_generated_masks(&mut settings, &request.source_path, ai_mask_runtime)?;
     let gpu_cache_keys = preview_stage_identity(&source_identity, &settings)?;
     let graph_identity = gpu_cache_keys.display.clone();
     settings.gpu_cache_keys = Some(gpu_cache_keys);
@@ -3550,8 +3888,8 @@ fn native_export_jpeg(
     }
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
-    attach_portrait_masks(&mut settings, &portrait_runtime)?;
-    attach_generated_masks(&mut settings, &ai_mask_runtime)?;
+    attach_portrait_masks(&mut settings, &request.source_path, &portrait_runtime)?;
+    attach_generated_masks(&mut settings, &request.source_path, &ai_mask_runtime)?;
     let decoded = decode_source(&request.source_path)
         .map_err(|error| format!("native export decode failed: {error}"))?;
     attach_ai_denoise(
@@ -3685,8 +4023,8 @@ async fn native_export_batch(
         let prepared = (|| -> Result<RenderSettings, String> {
             let requested_provider = item.edit_settings.ai_denoise_provider;
             let mut settings = item.edit_settings.validated()?;
-            attach_portrait_masks(&mut settings, &portrait_runtime)?;
-            attach_generated_masks(&mut settings, &ai_mask_runtime)?;
+            attach_portrait_masks(&mut settings, &item.source_path, &portrait_runtime)?;
+            attach_generated_masks(&mut settings, &item.source_path, &ai_mask_runtime)?;
             // The production FullResolutionRenderer owns the one normal source decode. The M26
             // adapter previously decoded every item here as well even when AI Denoise was off,
             // doubling RAW/raster open work and peak buffer churn. Only model inference needs a
@@ -4146,6 +4484,272 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_ai_restoration_rejects_foreign_source_and_model_before_inference() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let hash = source_content_hash(&source).unwrap();
+        let registry = local_ai_mask_models();
+        let leaf = MaskDefinition::Generated {
+            provider_id: "foreground".into(),
+            model_id: registry.foreground.id,
+            model_version: registry.foreground.version,
+            model_hash: registry.foreground.sha256.clone(),
+            semantic_class: GeneratedMaskSemantic::Subject,
+            threshold: 0.5,
+            feather: 0.1,
+            invert: false,
+            cache_identity: AiMaskOnnxProvider::cache_identity(
+                "different-source",
+                AiMaskSemantic::Subject,
+                &registry.foreground.sha256,
+            ),
+            metadata: BTreeMap::new(),
+        };
+        let mut settings = RenderSettings::default();
+        settings.layers.push(NativeAdjustmentLayer {
+            id: "restored".into(),
+            name: "Restored".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: starroom_pipeline::LayerBlendMode::Normal,
+            mask: leaf.clone().into(),
+            adjustments: Default::default(),
+        });
+        let runtime = NativeAiMaskRuntime::default();
+        let error = attach_generated_masks(&mut settings, &source, &runtime).unwrap_err();
+        assert!(error.starts_with("MaskSourceMismatch:"), "{error}");
+        assert!(settings.generated_masks.is_empty() && runtime.cache.lock().unwrap().is_empty());
+        assert!(
+            runtime.provider.lock().unwrap().is_none(),
+            "foreign mask must never initialize a provider"
+        );
+        let mut wrong_model = leaf;
+        if let MaskDefinition::Generated {
+            model_version,
+            cache_identity,
+            ..
+        } = &mut wrong_model
+        {
+            *model_version = "different-model-version".into();
+            *cache_identity = AiMaskOnnxProvider::cache_identity(
+                &hash,
+                AiMaskSemantic::Subject,
+                &registry.foreground.sha256,
+            );
+        }
+        settings.layers[0].mask = wrong_model.into();
+        assert!(
+            attach_generated_masks(&mut settings, &source, &runtime)
+                .unwrap_err()
+                .starts_with("MaskModelMismatch:")
+        );
+        settings.layers[0].enabled = false;
+        assert!(attach_generated_masks(&mut settings, &source, &runtime).is_ok());
+        settings.layers[0].enabled = true;
+        settings.layers[0].opacity = 0.0;
+        assert!(attach_generated_masks(&mut settings, &source, &runtime).is_ok());
+        assert_eq!(source_content_hash(&source).unwrap(), hash);
+    }
+
+    #[test]
+    fn native_portrait_restore_metadata_matches_shared_wire_and_rejects_invalid_versions() {
+        let crop: PortraitSourceCrop = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-portrait-source-crop.json"
+        ))
+        .unwrap();
+        let reference = starroom_pipeline::SkinRetouchFaceReference {
+            face_id: "face".into(),
+            cache_key: "exact".into(),
+            source_crop: Some(crop),
+        };
+        let json = serde_json::to_value(&reference).unwrap();
+        assert_eq!(json["sourceCrop"], serde_json::to_value(crop).unwrap());
+        assert!(json.get("source_crop").is_none());
+        let old = serde_json::json!({ "faceId": "face", "cacheKey": "exact" });
+        let legacy: starroom_pipeline::SkinRetouchFaceReference =
+            serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(legacy).unwrap(), old);
+        let mut settings = RenderSettings::default();
+        settings
+            .skin_retouch
+            .faces
+            .push(starroom_pipeline::SkinRetouchFaceReference {
+                source_crop: Some(PortraitSourceCrop { version: 2, ..crop }),
+                ..reference
+            });
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        assert!(
+            attach_portrait_masks(&mut settings, &source, &NativePortraitRuntime::default())
+                .unwrap_err()
+                .starts_with("PortraitRestoreMetadataInvalid:")
+        );
+    }
+
+    #[test]
+    fn native_color_sample_ipc_transports_geometry_and_validates_coordinate_space() {
+        let mut settings = neutral_settings();
+        settings.geometry.rotation_degrees = 90.0;
+        settings.geometry.flip_horizontal = true;
+        settings.geometry.crop = starroom_geometry::CropRect {
+            left: 0.1,
+            top: 0.2,
+            right: 0.9,
+            bottom: 0.8,
+        };
+        let request = serde_json::json!({ "sourcePath": "photo.nef", "x": 0.2, "y": 0.7,
+            "maxEdge": 2048, "coordinateSpace": "postGeometry", "settings": settings });
+        let parsed: NativeColorSampleRequest = serde_json::from_value(request.clone()).unwrap();
+        assert_eq!(parsed.max_edge, 2048);
+        assert_eq!(parsed.settings.geometry, settings.geometry);
+        let mut unsupported = request;
+        unsupported["coordinateSpace"] = serde_json::json!("sourceSensor");
+        assert!(serde_json::from_value::<NativeColorSampleRequest>(unsupported).is_err());
+        let invalid = NativeColorSampleRequest {
+            source_path: "missing.png".into(),
+            x: 0.5,
+            y: 0.5,
+            max_edge: 128,
+            coordinate_space: NativeSampleCoordinateSpace::PostGeometry,
+            settings: neutral_settings(),
+        };
+        assert!(
+            native_sample_color(invalid)
+                .unwrap_err()
+                .starts_with("NativeColorSampleInvalid:")
+        );
+    }
+
+    #[test]
+    fn native_color_sample_command_reads_actual_png_after_geometry() {
+        let path = std::env::temp_dir().join(format!(
+            "starroom-native-sampling-{}.png",
+            std::process::id()
+        ));
+        let png = starroom_imageio::encode_png_rgb8(
+            &[180, 20, 18, 20, 170, 25, 15, 22, 180, 170, 145, 20],
+            2,
+            2,
+            None,
+        )
+        .unwrap();
+        std::fs::write(&path, png).unwrap();
+        let decoded = decode_source_preview(&path, 1800).unwrap();
+        let mut native = neutral_settings();
+        native.geometry.rotation_degrees = 90.0;
+        native.geometry.flip_horizontal = true;
+        let expected =
+            sample_source_color_band(&decoded, &native.clone().validated().unwrap(), 0.0, 0.0)
+                .unwrap();
+        let result = native_sample_color(NativeColorSampleRequest {
+            source_path: path.clone(),
+            x: 0.0,
+            y: 0.0,
+            max_edge: 1800,
+            coordinate_space: NativeSampleCoordinateSpace::PostGeometry,
+            settings: native,
+        })
+        .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result, expected);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ai_denoise_input_cache_invalidates_precreative_changes_not_creative_sliders() {
+        let settings = neutral_settings().validated().unwrap();
+        let identity = |settings: &RenderSettings| {
+            ai_denoise_input_identity("unchanged-canonical-source", 1800, 1200, settings).unwrap()
+        };
+        let base = identity(&settings);
+        let mut changes = vec![];
+        let mut wb = settings.clone();
+        wb.white_balance.mode = WhiteBalanceMode::Auto;
+        changes.push(wb);
+        let mut picker = settings.clone();
+        picker.white_balance.mode = WhiteBalanceMode::NeutralPicker;
+        picker.white_balance.sample = Some(WhiteBalanceSample {
+            x: 0.2,
+            y: 0.3,
+            width: 0.01,
+            height: 0.01,
+        });
+        changes.push(picker.clone());
+        picker.white_balance.sample.as_mut().unwrap().x = 0.7;
+        changes.push(picker);
+        let mut geometry = settings.clone();
+        geometry.geometry.rotation_degrees = 180.0;
+        changes.push(geometry.clone());
+        geometry.geometry.rotation_degrees = 0.0;
+        geometry.geometry.flip_horizontal = true;
+        changes.push(geometry.clone());
+        geometry.geometry.crop.left = 0.1;
+        changes.push(geometry);
+        let mut lens = settings.clone();
+        lens.optics.parameters.enabled = true;
+        changes.push(lens.clone());
+        lens.optics.parameters.distortion = false;
+        changes.push(lens);
+        let mut color = settings.clone();
+        color.color_management.intent =
+            starroom_color_management::RenderingIntent::AbsoluteColorimetric;
+        changes.push(color);
+        let mut tile = settings.clone();
+        tile.source_region = Some(SourceRegion {
+            full_width: 6000,
+            full_height: 4000,
+            x: 100,
+            y: 200,
+        });
+        changes.push(tile.clone());
+        tile.source_region.as_mut().unwrap().x = 600;
+        changes.push(tile);
+        let mut identities = std::collections::BTreeSet::from([base.clone()]);
+        for changed in changes {
+            assert!(
+                identities.insert(identity(&changed)),
+                "input edit must invalidate old residual"
+            );
+        }
+        assert_ne!(
+            base,
+            ai_denoise_input_identity("another-source", 1800, 1200, &settings).unwrap()
+        );
+        assert_ne!(
+            base,
+            ai_denoise_input_identity("unchanged-canonical-source", 900, 600, &settings).unwrap()
+        );
+        let mut creative = settings.clone();
+        creative.tone.exposure_ev = 1.0;
+        creative.relative_color.temperature = 0.4;
+        creative.curves.red.push(CurvePoint { x: 0.5, y: 0.6 });
+        creative.local_detail.texture = 0.5;
+        creative.denoise.luminance = 0.4;
+        creative.sharpen.amount = 0.6;
+        creative.ai_denoise.amount = 0.7;
+        creative.ai_denoise.preserve_skin = 1.0;
+        creative.layers.push(NativeAdjustmentLayer {
+            id: "creative".into(),
+            name: "creative".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: starroom_pipeline::LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
+            adjustments: starroom_pipeline::LayerAdjustments::default(),
+        });
+        assert_eq!(
+            base,
+            identity(&creative),
+            "creative sliders must retain expensive inference cache"
+        );
+        assert!(base.starts_with("unchanged-canonical-source:1800x1200:precreative-"));
+        assert!(
+            settings.image_identity.is_empty(),
+            "canonical image/model identity is not mutated"
+        );
+    }
 
     #[test]
     fn lazy_raw_metadata_refresh_repairs_legacy_dimensions_without_workflow_loss() {
@@ -4636,8 +5240,13 @@ mod tests {
         for (region, project_region) in [
             (PortraitRegion::Skin, PortraitMaskRegion::Skin),
             (PortraitRegion::Eyes, PortraitMaskRegion::Eyes),
+            (PortraitRegion::LeftEye, PortraitMaskRegion::LeftEye),
+            (PortraitRegion::RightEye, PortraitMaskRegion::RightEye),
             (PortraitRegion::Brows, PortraitMaskRegion::Brows),
+            (PortraitRegion::LeftBrow, PortraitMaskRegion::LeftBrow),
+            (PortraitRegion::RightBrow, PortraitMaskRegion::RightBrow),
             (PortraitRegion::Lips, PortraitMaskRegion::Lips),
+            (PortraitRegion::Mouth, PortraitMaskRegion::Mouth),
             (PortraitRegion::Hair, PortraitMaskRegion::Hair),
         ] {
             let raster = &parsing.regions[&region];
@@ -4656,6 +5265,7 @@ mod tests {
             .push(starroom_pipeline::SkinRetouchFaceReference {
                 face_id: face.id.clone(),
                 cache_key,
+                source_crop: None,
             });
         skin_settings.skin_retouch.parameters = starroom_portrait::SkinRetouchParameters {
             smooth: 0.5,
@@ -4698,7 +5308,7 @@ mod tests {
                 width,
                 height,
                 &rgba,
-                &identity,
+                &original_hash,
                 AiMaskSemantic::Sky,
                 &AtomicBool::new(false),
             )
@@ -4739,7 +5349,7 @@ mod tests {
                 feather: 0.1,
                 invert: false,
                 cache_identity: sky_result.cache_identity.clone(),
-                metadata: BTreeMap::new(),
+                metadata: BTreeMap::from([("executionProvider".into(), "cpu".into())]),
             }
             .into(),
             adjustments: starroom_pipeline::LayerAdjustments {
@@ -4763,10 +5373,18 @@ mod tests {
             NafNetOnnxProvider::initialize(local_nafnet_model(), DenoiseExecutionProvider::Cpu)
                 .unwrap();
         let working = prepare_source_for_ai_denoise(&decoded, &RenderSettings::default()).unwrap();
+        let native_source_identity = preview_source_identity(&source).unwrap();
+        let residual_input_identity = ai_denoise_input_identity(
+            &native_source_identity,
+            working.width,
+            working.height,
+            &RenderSettings::default(),
+        )
+        .unwrap();
         let residual = infer_tiled(
             &mut denoise,
             &working,
-            &identity,
+            &residual_input_identity,
             &AtomicBool::new(false),
             DenoiseExecutionProvider::Cpu,
         )
@@ -4783,7 +5401,7 @@ mod tests {
                 amount: 0.5,
                 ..Default::default()
             },
-            ai_denoise_residual: Some(residual),
+            ai_denoise_residual: Some(residual.clone()),
             ..Default::default()
         };
         let denoise_preview = render_source_preview_to_srgb8(&decoded, &denoise_settings).unwrap();
@@ -4794,8 +5412,180 @@ mod tests {
             "real NAFNet changes production pixels"
         );
         assert_eq!(source_content_hash(&source).unwrap(), original_hash);
+        // The real advisor handler shares these exact cache-attachment/render functions.
+        // Verify restored active AI Mask + Skin + NAFNet edits are not omitted or rejected.
+        let portrait_runtime = NativePortraitRuntime::default();
+        let parsing_cache_key = skin_settings.skin_retouch.faces[0].cache_key.clone();
+        portrait_runtime
+            .0
+            .lock()
+            .unwrap()
+            .parsed
+            .insert(parsing_cache_key, parsing);
+        let mask_runtime = NativeAiMaskRuntime::default();
+        mask_runtime
+            .cache
+            .lock()
+            .unwrap()
+            .insert(sky_result.cache_identity.clone(), sky_result);
+        let denoise_runtime = NativeAiDenoiseRuntime::default();
+        denoise_runtime
+            .cache
+            .lock()
+            .unwrap()
+            .insert(inference_cache_key(&residual_input_identity), residual);
+        let mut restored = skin_settings.clone();
+        restored.layers = sky_settings.layers.clone();
+        restored.portrait_masks.clear();
+        restored.ai_denoise = denoise_settings.ai_denoise;
+        let advisor_frame = render_advisor_shared_graph(
+            &decoded,
+            &source,
+            &mut restored,
+            DenoiseExecutionProvider::Cpu,
+            AdvisorRuntimeRefs {
+                portrait: &portrait_runtime,
+                masks: &mask_runtime,
+                denoise: &denoise_runtime,
+            },
+        )
+        .unwrap();
+        assert!(!restored.portrait_masks.is_empty() && !restored.generated_masks.is_empty());
+        assert!(restored.ai_denoise_residual.is_some());
+        assert_eq!(
+            advisor_frame,
+            render_source_export_to_srgb8(&decoded, &restored).unwrap()
+        );
+        assert_eq!(
+            denoise_runtime.cache.lock().unwrap().len(),
+            1,
+            "creative AI layers reuse the real residual"
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), original_hash);
         eprintln!(
             "private NASA512² NAFNet + native denoise parity: {:.3}s; total: {:.3}s",
+            stage_started.elapsed().as_secs_f64(),
+            total_started.elapsed().as_secs_f64()
+        );
+
+        // Simulate a real process restart: persist only the compact edit state, drop every
+        // runtime/provider/cache, then regenerate the exact pinned native artifacts locally.
+        let stage_started = Instant::now();
+        let mut cold_settings = restored.clone();
+        cold_settings.portrait_masks.clear();
+        cold_settings.generated_masks.clear();
+        cold_settings.ai_denoise_residual = None;
+        cold_settings.skin_retouch.faces[0].source_crop = Some(PortraitSourceCrop {
+            version: 1,
+            center_x: face.crop.center_x,
+            center_y: face.crop.center_y,
+            side: face.crop.side,
+            rotation_degrees: face.crop.rotation_degrees,
+        });
+        let serialized_skin = serde_json::to_string(&cold_settings.skin_retouch).unwrap();
+        cold_settings.skin_retouch = serde_json::from_str(&serialized_skin).unwrap();
+        drop((portrait_runtime, mask_runtime, denoise_runtime));
+        let cold_portrait = NativePortraitRuntime::default();
+        let cold_masks = NativeAiMaskRuntime::default();
+        let cold_denoise = NativeAiDenoiseRuntime::default();
+        let reopened_frame = render_advisor_shared_graph(
+            &decoded,
+            &source,
+            &mut cold_settings,
+            DenoiseExecutionProvider::Cpu,
+            AdvisorRuntimeRefs {
+                portrait: &cold_portrait,
+                masks: &cold_masks,
+                denoise: &cold_denoise,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            reopened_frame, advisor_frame,
+            "same-source close/reopen must reproduce exact Mask + Skin + NAFNet export pixels"
+        );
+        assert_eq!(cold_portrait.0.lock().unwrap().parsed.len(), 1);
+        assert_eq!(cold_masks.cache.lock().unwrap().len(), 1);
+        assert_eq!(cold_denoise.cache.lock().unwrap().len(), 1);
+        assert_eq!(
+            render_source_export_to_srgb8(&decoded, &cold_settings).unwrap(),
+            advisor_frame
+        );
+
+        // The established legacy 1.0 crop also restores, but only after an exact transform SHA
+        // match. This is not an automatic substitution of a newer/default 1.4 crop.
+        cold_portrait.0.lock().unwrap().parsed.clear();
+        let mut legacy = skin_settings.clone();
+        legacy.portrait_masks.clear();
+        assert!(legacy.skin_retouch.faces[0].source_crop.is_none());
+        attach_portrait_masks(&mut legacy, &source, &cold_portrait).unwrap();
+        assert_eq!(
+            render_source_export_to_srgb8(&decoded, &legacy).unwrap(),
+            retouched
+        );
+
+        // Any API crop scale can now be reproduced from the tiny versioned crop metadata;
+        // exact reference proof remains mandatory even when detector geometry is unchanged.
+        let mut wide_face = face.clone();
+        wide_face.crop = FaceCropTransform::from_face(
+            face.bounds,
+            width,
+            height,
+            2.2,
+            face.landmarks[0],
+            face.landmarks[1],
+        )
+        .unwrap();
+        let wide_parsing = portrait
+            .parse(width, height, &rgba, &wide_face, &identity)
+            .unwrap();
+        let wide_key = format!("{}:{}", face.id, wide_parsing.cache_key.crop_transform_hash);
+        let mut wide = skin_settings.clone();
+        wide.portrait_masks.clear();
+        wide.skin_retouch.faces[0].cache_key = wide_key.clone();
+        wide.skin_retouch.faces[0].source_crop = Some(PortraitSourceCrop {
+            version: 1,
+            center_x: wide_face.crop.center_x,
+            center_y: wide_face.crop.center_y,
+            side: wide_face.crop.side,
+            rotation_degrees: wide_face.crop.rotation_degrees,
+        });
+        let wide_runtime = NativePortraitRuntime::default();
+        wide_runtime
+            .0
+            .lock()
+            .unwrap()
+            .parsed
+            .insert(wide_key, wide_parsing);
+        attach_portrait_masks(&mut wide, &source, &wide_runtime).unwrap();
+        let wide_before = render_source_export_to_srgb8(&decoded, &wide).unwrap();
+        drop(wide_runtime);
+        wide.portrait_masks.clear();
+        attach_portrait_masks(&mut wide, &source, &NativePortraitRuntime::default()).unwrap();
+        assert_eq!(
+            render_source_export_to_srgb8(&decoded, &wide).unwrap(),
+            wide_before
+        );
+
+        let foreign_source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/wild-cherry-texture.jpg");
+        let mut foreign_skin = cold_settings.clone();
+        foreign_skin.portrait_masks.clear();
+        assert!(
+            attach_portrait_masks(&mut foreign_skin, &foreign_source, &cold_portrait)
+                .unwrap_err()
+                .starts_with("PortraitSourceMismatch:")
+        );
+        let mut foreign_mask = sky_settings.clone();
+        foreign_mask.generated_masks.clear();
+        assert!(
+            attach_generated_masks(&mut foreign_mask, &foreign_source, &cold_masks)
+                .unwrap_err()
+                .starts_with("MaskSourceMismatch:")
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), original_hash);
+        eprintln!(
+            "private NASA512² cold-restart exact native AI restoration + legacy/custom crop/source guards: {:.3}s; total {:.3}s",
             stage_started.elapsed().as_secs_f64(),
             total_started.elapsed().as_secs_f64()
         );
@@ -4957,6 +5747,46 @@ mod tests {
         }
         std::fs::write(root.join("keep"), b"user state").unwrap();
         assert!(release_self_test(&root).is_err());
+    }
+
+    #[test]
+    fn native_preview_deserializes_real_manual_lens_and_legacy_identity_contract() {
+        let optics: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-manual-lens.json"
+        ))
+        .unwrap();
+        let mut edit = serde_json::to_value(neutral_settings()).unwrap();
+        edit["optics"] = optics.clone();
+        let parsed: NativeEditSettings = serde_json::from_value(edit).unwrap();
+        let identity = parsed.optics.manual_identity.as_ref().unwrap();
+        assert!(identity.metadata_complete());
+        let profile = starroom_optics::LensfunProvider
+            .resolve_profile(identity, starroom_optics::LensMatchMode::Manual)
+            .unwrap();
+        assert_eq!(
+            profile.status,
+            starroom_optics::LensProfileStatus::ManualMatched
+        );
+        let expected: OpticsSettings = serde_json::from_value(optics).unwrap();
+        assert_eq!(parsed.optics, expected);
+        let wire_identity = serde_json::to_value(identity).unwrap();
+        assert!(wire_identity.get("cameraMake").is_some());
+        assert!(wire_identity.get("camera_make").is_none());
+        let mut legacy = serde_json::to_value(parsed).unwrap();
+        let lens = legacy["optics"]["manualIdentity"].as_object_mut().unwrap();
+        for (camel, snake) in [
+            ("cameraMake", "camera_make"),
+            ("cameraModel", "camera_model"),
+            ("lensMake", "lens_make"),
+            ("lensModel", "lens_model"),
+            ("focalLengthMm", "focal_length_mm"),
+            ("focusDistanceM", "focus_distance_m"),
+        ] {
+            let value = lens.remove(camel).unwrap();
+            lens.insert(snake.into(), value);
+        }
+        let restored: NativeEditSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.optics, expected);
     }
 
     #[test]
@@ -5475,6 +6305,124 @@ mod tests {
             serde_json::to_string(&tile_100_profile).unwrap(),
             serde_json::to_string(&tile_200_profile).unwrap(),
         );
+        // Exercise changed settings, not cached identical frames. These are production
+        // slider requests on the same 24 MP source, with five distinct edits per control.
+        type ControlMutation = fn(&mut NativeEditSettings, f32);
+        let controls: &[(&str, ControlMutation)] = &[
+            ("Exposure", |s, v| s.exposure = v / 30.0),
+            ("Contrast", |s, v| s.contrast = v),
+            ("Highlights", |s, v| s.highlights = -v),
+            ("Shadows", |s, v| s.shadows = v),
+            ("Whites", |s, v| s.whites = v),
+            ("Blacks", |s, v| s.blacks = -v),
+            ("Temperature", |s, v| s.temperature = v),
+            ("Tint", |s, v| s.tint = v),
+            ("Vibrance", |s, v| s.vibrance = v),
+            ("Saturation", |s, v| s.saturation = v),
+            ("MasterCurve", |s, v| {
+                s.curves.master = vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint {
+                        x: 0.5,
+                        y: 0.5 + v / 1000.0,
+                    },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ]
+            }),
+            ("RedCurve", |s, v| {
+                s.curves.red = vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint {
+                        x: 0.5,
+                        y: 0.5 + v / 1000.0,
+                    },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ]
+            }),
+            ("GreenCurve", |s, v| {
+                s.curves.green = vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint {
+                        x: 0.5,
+                        y: 0.5 + v / 1000.0,
+                    },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ]
+            }),
+            ("BlueCurve", |s, v| {
+                s.curves.blue = vec![
+                    CurvePoint { x: 0.0, y: 0.0 },
+                    CurvePoint {
+                        x: 0.5,
+                        y: 0.5 + v / 1000.0,
+                    },
+                    CurvePoint { x: 1.0, y: 1.0 },
+                ]
+            }),
+            ("MixerHue", |s, v| {
+                s.color_mixer.bands[0].hue_degrees = v / 2.0
+            }),
+            ("MixerChroma", |s, v| {
+                s.color_mixer.bands[0].chroma = v / 100.0
+            }),
+            ("MixerLightness", |s, v| {
+                s.color_mixer.bands[0].lightness = v / 100.0
+            }),
+            ("GradingGlobal", |s, v| {
+                s.grading.global.hue_degrees = 220.0;
+                s.grading.global.chroma = v / 300.0;
+            }),
+            ("GradingShadows", |s, v| {
+                s.grading.shadows.hue_degrees = 220.0;
+                s.grading.shadows.chroma = v / 300.0;
+            }),
+            ("GradingMidtones", |s, v| {
+                s.grading.midtones.hue_degrees = 35.0;
+                s.grading.midtones.chroma = v / 300.0;
+            }),
+            ("GradingHighlights", |s, v| {
+                s.grading.highlights.hue_degrees = 35.0;
+                s.grading.highlights.chroma = v / 300.0;
+            }),
+            ("Sharpen", |s, v| {
+                s.sharpness = v;
+                s.sharpen_settings.amount = v / 50.0;
+            }),
+            ("LumaDenoise", |s, v| {
+                s.noise_reduction = v;
+                s.denoise_settings.luminance = v / 100.0;
+            }),
+            ("ChromaDenoise", |s, v| {
+                s.denoise_settings.chroma = v / 100.0
+            }),
+            ("Texture", |s, v| s.local_detail.texture = v / 100.0),
+            ("Clarity", |s, v| s.local_detail.clarity = v / 100.0),
+            ("Dehaze", |s, v| s.local_detail.dehaze = v / 100.0),
+        ];
+        for (name, mutate) in controls {
+            let mut samples = Vec::with_capacity(5);
+            for index in 0..5 {
+                let mut edit = neutral_settings();
+                mutate(&mut edit, 32.0 + index as f32 * 3.0);
+                let (duration, profile) = render(
+                    &format!("control-{name}-{index}"),
+                    PreviewInteractionPhase::Interactive,
+                    PreviewResolutionMode::Fit,
+                    None,
+                    edit,
+                );
+                assert!(
+                    profile.stages.contains_key(&ProfileStage::Encode),
+                    "{name} changed request must render/encode, not reuse an identical cached frame"
+                );
+                samples.push(duration.as_secs_f64() * 1000.0);
+            }
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "NATIVE_CONTROL_PERF control={name} changed_samples=5 edge=1024 median_ms={:.3} p95_ms={:.3}",
+                samples[2], samples[4]
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

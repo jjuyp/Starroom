@@ -58,4 +58,18 @@ describe('Native history command ordering', () => {
     expect(nativeHistoryStateChanged(native, ui, false)).toBe(false)
     expect(nativeHistoryStateChanged(native, { ...ui, exposure: 0.1 }, false)).toBe(true)
   })
+  it('never commits a phantom edit while hydrating legacy nested LensIdentity aliases', () => {
+    const acknowledged: Record<string, unknown> = { optics: { matchMode: 'manual', manualIdentity: {
+      camera_make: 'Nikon', camera_model: 'Nikon D750', lens_make: 'Nikon', lens_model: '16-35mm',
+      focal_length_mm: 24, aperture: 5.6, focus_distance_m: null,
+    } } }
+    const current: Record<string, unknown> = { optics: { matchMode: 'manual', manualIdentity: {
+      cameraMake: 'Nikon', cameraModel: 'Nikon D750', lensMake: 'Nikon', lensModel: '16-35mm',
+      focalLengthMm: 24, aperture: 5.6, focusDistanceM: null,
+    } } }
+    const originalJson = JSON.stringify(acknowledged)
+    expect(nativeHistoryStateChanged(acknowledged, current, false)).toBe(false)
+    expect(nativeHistoryStateChanged(acknowledged, { ...current, exposure: 1 }, false)).toBe(true)
+    expect(JSON.stringify(acknowledged)).toBe(originalJson)
+  })
 })

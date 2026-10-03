@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { invertedMask, replaceRadialGeometry, selectedRadialMask, validLinearGeometry } from './maskWorkspace'
+import { hasNativeSkinSelection, invertedMask, replaceRadialGeometry, selectedRadialMask, validLinearGeometry } from './maskWorkspace'
 import { defaultAdjustments } from './editorState'
-import { toNativeSettings, type NativeAdjustmentLayer } from './nativeRender'
+import { defaultNativeSkinRetouch, toNativeSettings, type NativeAdjustmentLayer } from './nativeRender'
 
 describe('selected mask canvas contract', () => {
   const layer: NativeAdjustmentLayer = { id: 'local', name: '局部', enabled: true, opacity: .7, blendMode: 'normal',
@@ -31,5 +31,15 @@ describe('selected mask canvas contract', () => {
     expect(validLinearGeometry({ ...linear, endX: .2, endY: .3 })).toBe(false)
     expect(validLinearGeometry({ ...linear, endX: NaN })).toBe(false)
     expect(validLinearGeometry({ ...linear, startX: -1 })).toBe(false)
+  })
+  it('only enables AI skin protection when the shared graph references an actual Skin raster', () => {
+    const skin = defaultNativeSkinRetouch()
+    expect(hasNativeSkinSelection(skin, [layer])).toBe(false)
+    expect(hasNativeSkinSelection({ ...skin, faces: [{ faceId: 'face', cacheKey: 'real-cache' }] }, [])).toBe(true)
+    const semantic = { ...layer, mask: { type: 'portraitSemantic' as const, faceId: 'face', region: 'skin' as const,
+      cacheKey: 'real-cache', modelId: 'bisenet', modelVersion: 'local', modelHash: 'fixture-hash', threshold: .5, feather: .1 } }
+    expect(hasNativeSkinSelection(skin, [semantic])).toBe(true)
+    expect(hasNativeSkinSelection(skin, [{ ...semantic, enabled: false }])).toBe(false)
+    expect(hasNativeSkinSelection(skin, [{ ...semantic, mask: { operation: 'invert', children: [semantic.mask] } }])).toBe(true)
   })
 })

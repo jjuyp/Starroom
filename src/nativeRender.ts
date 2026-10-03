@@ -77,6 +77,10 @@ export const defaultNativeOpticsState: NativeOpticsState = { matchMode: 'auto', 
 export type NativePortraitRegion = 'face' | 'skin' | 'eyes' | 'leftEye' | 'rightEye' | 'brows' | 'leftBrow' | 'rightBrow' | 'lips' | 'mouth' | 'hair'
 export interface NativePortraitLandmark { x: number; y: number; z: number }
 export interface NativePortraitFace { id: string; confidence: number; bounds: { left: number; top: number; right: number; bottom: number }; landmarks: NativePortraitLandmark[]; crop: { centerX: number; centerY: number; side: number; rotationDegrees: number } }
+/** Native source-pixel crop coordinates, not normalized viewport coordinates. */
+export interface NativePortraitSourceCrop { version: 1; centerX: number; centerY: number; side: number; rotationDegrees: number }
+/** Persist Native crop intent for deterministic restart; never recompute face crop math in UI. */
+export const nativePortraitSourceCrop = (face: NativePortraitFace): NativePortraitSourceCrop => ({ version: 1, ...face.crop })
 export interface NativePortraitFailure { code: string; message: string }
 export interface NativePortraitDetection { status: 'ready' | 'noFace' | 'unavailable' | 'failed'; faces: Array<{ face: NativePortraitFace; cacheKey: string }>; detectorModelId: string; detectorModelVersion: string; detectorModelHash: string; parserModelId: string; parserModelVersion: string; parserModelHash: string; executionProvider: 'cpu' | 'directMl'; error: NativePortraitFailure | null }
 export type NativeAiMaskSemantic = 'subject' | 'background' | 'person' | 'sky' | 'skin' | 'hair'
@@ -91,12 +95,12 @@ export type NativeMaskDefinition =
   | { type: 'brush'; points: Array<{ x: number; y: number; pressure: number }>; radius: number; feather: number; flow: number; erase: boolean }
   | { type: 'luminance'; minimum: number; maximum: number; feather: number; invert: boolean }
   | { type: 'colorRange'; reference: [number, number, number]; tolerance: number; feather: number; invert: boolean }
-  | { type: 'portraitSemantic'; faceId: string; region: NativePortraitRegion; threshold: number; feather: number; modelId: string; modelVersion: string; modelHash: string; cacheKey: string }
+  | { type: 'portraitSemantic'; faceId: string; region: NativePortraitRegion; threshold: number; feather: number; modelId: string; modelVersion: string; modelHash: string; cacheKey: string; sourceCrop?: NativePortraitSourceCrop }
   | { type: 'generated'; providerId: string; modelId: string; modelVersion: string; modelHash: string; semanticClass: NativeAiMaskSemantic; threshold: number; feather: number; invert: boolean; cacheIdentity: string; metadata: Record<string, string> }
 export type NativeMaskTree = NativeMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeMaskTree[] }
 type NativeSerializedMaskDefinition = Exclude<NativeMaskDefinition, { type: 'linear' | 'portraitSemantic' | 'generated' }>
   | { type: 'linear'; start_x: number; start_y: number; end_x: number; end_y: number; feather: number; invert: boolean }
-  | { type: 'portraitSemantic'; face_id: string; region: NativePortraitRegion; threshold: number; feather: number; model_id: string; model_version: string; model_hash: string; cache_key: string }
+  | { type: 'portraitSemantic'; face_id: string; region: NativePortraitRegion; threshold: number; feather: number; model_id: string; model_version: string; model_hash: string; cache_key: string; source_crop?: NativePortraitSourceCrop }
   | { type: 'generated'; provider_id: string; model_id: string; model_version: string; model_hash: string; semantic_class: NativeAiMaskSemantic; threshold: number; feather: number; invert: boolean; cache_identity: string; metadata: Record<string, string> }
 export type NativeSerializedMaskTree = NativeSerializedMaskDefinition | { operation: 'add' | 'subtract' | 'intersect' | 'invert'; children: NativeSerializedMaskTree[] }
 
@@ -109,8 +113,9 @@ export function fromNativeMask(mask: NativeSerializedMaskTree | NativeMaskTree):
     return { ...rest, startX: start_x, startY: start_y, endX: end_x, endY: end_y }
   }
   if (mask.type === 'portraitSemantic' && 'face_id' in mask) {
-    const { face_id, model_id, model_version, model_hash, cache_key, ...rest } = mask
-    return { ...rest, faceId: face_id, modelId: model_id, modelVersion: model_version, modelHash: model_hash, cacheKey: cache_key }
+    const { face_id, model_id, model_version, model_hash, cache_key, source_crop, ...rest } = mask
+    return { ...rest, faceId: face_id, modelId: model_id, modelVersion: model_version, modelHash: model_hash, cacheKey: cache_key,
+      ...(source_crop ? { sourceCrop: structuredClone(source_crop) } : {}) }
   }
   if (mask.type === 'generated' && 'provider_id' in mask) {
     const { provider_id, model_id, model_version, model_hash, semantic_class, cache_identity, ...rest } = mask
@@ -129,8 +134,9 @@ export function toNativeMask(mask: NativeMaskTree | NativeSerializedMaskTree): N
     return { ...rest, start_x: startX, start_y: startY, end_x: endX, end_y: endY }
   }
   if (normalized.type === 'portraitSemantic') {
-    const { faceId, modelId, modelVersion, modelHash, cacheKey, ...rest } = normalized
-    return { ...rest, face_id: faceId, model_id: modelId, model_version: modelVersion, model_hash: modelHash, cache_key: cacheKey }
+    const { faceId, modelId, modelVersion, modelHash, cacheKey, sourceCrop, ...rest } = normalized
+    return { ...rest, face_id: faceId, model_id: modelId, model_version: modelVersion, model_hash: modelHash, cache_key: cacheKey,
+      ...(sourceCrop ? { source_crop: structuredClone(sourceCrop) } : {}) }
   }
   if (normalized.type === 'generated') {
     const { providerId, modelId, modelVersion, modelHash, semanticClass, cacheIdentity, ...rest } = normalized
@@ -188,7 +194,7 @@ export function toNativeLayers(layers: ReadonlyArray<NativeAdjustmentLayer | Nat
   })
 }
 export interface NativeSkinRetouchParameters { smooth: number; texture: number; toneEvenness: number; hueDegrees: number; chroma: number; exposureEv: number }
-export interface NativeSkinRetouchFace { faceId: string; cacheKey: string }
+export interface NativeSkinRetouchFace { faceId: string; cacheKey: string; sourceCrop?: NativePortraitSourceCrop }
 export interface NativeSkinRetouchSettings { parameters: NativeSkinRetouchParameters; faces: NativeSkinRetouchFace[] }
 export const defaultNativeSkinRetouch = (): NativeSkinRetouchSettings => ({ parameters: { smooth: 0, texture: .7, toneEvenness: 0, hueDegrees: 0, chroma: 0, exposureEv: 0 }, faces: [] })
 export type NativeHealingMode = 'clone' | 'heal' | 'aiInpaint'
@@ -263,6 +269,20 @@ export function normalizeNativeSettings(input: NativeEditSettings): NativeEditSe
   }
   if (!Array.isArray(raw.curve)) throw new Error('NativeEditContractInvalid: required legacy curve is missing.')
   const settings = { ...structuredClone(canonicalNativeDefaults), ...raw } as NativeEditSettings
+  // Historical native JSON used snake_case inside the nested lens identity. Project
+  // it into the current wire contract without rewriting acknowledged history JSON.
+  if (settings.optics.manualIdentity) {
+    const lens = settings.optics.manualIdentity as NativeLensIdentity & Record<string, unknown>
+    settings.optics = { ...settings.optics, manualIdentity: {
+      cameraMake: (lens.cameraMake ?? lens.camera_make) as string,
+      cameraModel: (lens.cameraModel ?? lens.camera_model) as string,
+      lensMake: (lens.lensMake ?? lens.lens_make) as string,
+      lensModel: (lens.lensModel ?? lens.lens_model) as string,
+      focalLengthMm: (lens.focalLengthMm ?? lens.focal_length_mm) as number,
+      aperture: lens.aperture,
+      focusDistanceM: (lens.focusDistanceM ?? lens.focus_distance_m ?? null) as number | null,
+    } }
+  }
   settings.curves = { ...structuredClone(canonicalNativeDefaults.curves), ...(raw.curves ?? {}) }
   // The production native graph gives the original curve precedence when the modern
   // master has fewer than two points. Preserve that same S-curve during UI hydration.
@@ -732,12 +752,20 @@ export async function queryNativeWhiteBalanceInfo(sourcePath: string) {
   return invoke<NativeWhiteBalanceInfo>('native_white_balance_info', { sourcePath })
 }
 
-export async function sampleNativeColor(sourcePath: string, x: number, y: number, adjustments: Adjustments,
-  curve: ToneCurvePoint[], whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
-  toneCurves: NativeToneCurves, opticsState: NativeOpticsState = defaultNativeOpticsState,
-  renderConstants: NativeRenderConstants = defaultNativeRenderConstants): Promise<NativeColorBand | null> {
+export function nativeColorSampleContract(sourcePath: string, x: number, y: number,
+  settings: NativeEditSettings, maxEdge = 1800) {
+  if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
+    || !Number.isInteger(maxEdge) || maxEdge < 256 || maxEdge > 4096) {
+    throw new Error('NativeColorSampleInvalid: canvas coordinates or decode edge are outside supported ranges.')
+  }
+  return { sourcePath, x, y, maxEdge, coordinateSpace: 'postGeometry' as const,
+    settings: structuredClone(settings) }
+}
+
+export async function sampleNativeColor(sourcePath: string, x: number, y: number,
+  settings: NativeEditSettings, maxEdge = 1800): Promise<NativeColorBand | null> {
   return invoke<NativeColorBand | null>('native_sample_color', {
-    request: { sourcePath, x, y, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, undefined, undefined, undefined, undefined, renderConstants) },
+    request: nativeColorSampleContract(sourcePath, x, y, settings, maxEdge),
   })
 }
 

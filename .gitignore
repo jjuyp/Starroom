@@ -14,7 +14,8 @@ models/local/
 release-models/
 fixtures/private/
 .env
-output/playwright/
+# Local installers, screenshots and isolated runtime profiles are delivery artifacts, not source.
+output/
 .tmp-*/
 .starroom-reports/
 *.sqlite

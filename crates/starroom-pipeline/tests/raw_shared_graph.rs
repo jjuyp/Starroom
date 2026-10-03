@@ -1,13 +1,93 @@
 use starroom_color::{CurvePoint, ToneParameters};
 use starroom_color_management::InputProfileSource;
+use starroom_geometry::{CropRect, GeometryParameters};
 use starroom_imageio::{DecodedSourceImage, decode_source_preview};
 use starroom_pipeline::{
-    RenderSettings, ToneCurveSet, render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    RenderSettings, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings,
+    prepare_source_for_ai_denoise, render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    sample_source_color_band,
 };
 use std::{path::PathBuf, time::Instant};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/raw/sources/nikon-d1.nef")
+}
+
+#[test]
+fn raw_native_sampling_and_neutral_picker_follow_visible_geometry_with_camera_profile() {
+    let source = fixture();
+    let source_before = std::fs::read(&source).unwrap();
+    let decoded = decode_source_preview(&source, 256).expect("real LibRaw sensor decode");
+    for geometry in [
+        GeometryParameters {
+            rotation_degrees: 90.0,
+            ..Default::default()
+        },
+        GeometryParameters {
+            flip_horizontal: true,
+            ..Default::default()
+        },
+        GeometryParameters {
+            crop: CropRect {
+                left: 0.1,
+                top: 0.1,
+                right: 0.9,
+                bottom: 0.9,
+            },
+            flip_vertical: true,
+            ..Default::default()
+        },
+    ] {
+        let settings = RenderSettings {
+            geometry,
+            white_balance: WhiteBalanceSettings {
+                mode: WhiteBalanceMode::NeutralPicker,
+                sample: Some(WhiteBalanceSample {
+                    x: 0.49,
+                    y: 0.49,
+                    width: 0.02,
+                    height: 0.02,
+                }),
+            },
+            ..Default::default()
+        };
+        let working = prepare_source_for_ai_denoise(&decoded, &settings).unwrap();
+        assert!(working.data.iter().all(|value| value.is_finite()));
+        // The actually visible sampled patch is neutral in the high-precision working stage.
+        let left = (0.49 * working.width as f32).floor() as usize;
+        let right = (0.51 * working.width as f32).ceil() as usize;
+        let top = (0.49 * working.height as f32).floor() as usize;
+        let bottom = (0.51 * working.height as f32).ceil() as usize;
+        let mut sum = [0.0_f32; 3];
+        for y in top..bottom {
+            for x in left..right {
+                for (channel, sum) in sum.iter_mut().enumerate() {
+                    *sum += working.data[(y * working.width + x) * 3 + channel];
+                }
+            }
+        }
+        assert!((sum[0] - sum[1]).abs() < 1.0e-4);
+        assert!((sum[1] - sum[2]).abs() < 1.0e-4);
+        sample_source_color_band(&decoded, &settings, 0.5, 0.5).expect("native RAW target picker");
+        let preview = render_source_preview_to_srgb8(&decoded, &settings).unwrap();
+        assert_eq!(preview.color.input, InputProfileSource::RawCameraMatrix);
+        assert!(
+            preview
+                .color
+                .camera_profile_id
+                .as_deref()
+                .is_some_and(|id| id.contains("nikon"))
+        );
+        assert_eq!(
+            preview,
+            render_source_export_to_srgb8(&decoded, &settings).unwrap()
+        );
+    }
+    assert_eq!(
+        source_before,
+        std::fs::read(source).unwrap(),
+        "RAW sensor file must remain immutable"
+    );
 }
 
 #[test]
