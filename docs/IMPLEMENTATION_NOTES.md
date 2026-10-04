@@ -1,5 +1,26 @@
 # Implementation Notes
 
+## 2026-10-04 M24 whole-catalog sidebar counts
+
+Replace page-local totals with `Library::count` using the same SQL predicates as queries,
+without fetching photo records or pixels. `library_counts` runs off the UI thread and returns
+All / latest import batch / five-star / persisted-edited counts. Deleted History identities
+cannot inflate the count. Missing/error results show an unknown marker and diagnostic, never
+a fabricated zero. Refresh is debounced after persisted changes; successful rating writes also
+invalidate the totals even if slower than the optimistic UI update.
+
+Targeted evidence: 17 Library tests passed (one unrelated release-only test ignored), 57 frontend
+tests passed, 100k metadata count assertions, scoped normal/smart collection counts, empty and
+stale ID counts; warning-denied desktop/Library Clippy, lint and TypeScript passed. Playwright
+checked production App presentation with synthetic IPC: one visible row retains totals 100000
+and 16666 instead of reporting page size. The earlier session/recovery cases still pass.
+No imaging, dependency, model-license or redistribution changes. Persisted History scanning
+remains proportional to saved history files; this batch does not claim a new performance parity
+result against Lightroom. A new same-SHA release package remains required for delivery.
+Full local candidate validation passed with 173 frontend tests, the complete Rust workspace
+and doc-test runners, warning-denied Clippy, format, JSON/schema, production build, photographic
+Golden and real LibRaw sensor regressions. License and release-resource validation also passed.
+
 ## 2026-10-04 M24/M29 Library session closure
 
 Continues from qualified `095926b`, without changing imaging math or model distribution.
@@ -26,7 +47,8 @@ across the actual debounce boundary, and both presented recovery choices. Full l
 passed (172 frontend tests, workspace Rust tests/doc-tests, warning-denied Clippy, format,
 lint, TypeScript, production build, JSON and Golden/RAW manifest validation). Release packaging
 and remote acceptance for this change are not implied by the previous qualified installer.
-The browser audit additionally exposed incorrect page-local sidebar counts; this remains open.
+The browser audit additionally exposed incorrect page-local sidebar counts; the follow-up above
+repairs that defect separately.
 
 
 ## 2026-10-04 color interaction, whole-person and collection repairs

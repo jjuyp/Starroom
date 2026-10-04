@@ -31,7 +31,7 @@ import {
   queryNativeAiAvailability, installLocalPortraitModels, type NativeAiAvailability,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, defaultNativeRenderConstants, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings, type NativeRenderConstants,
   addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollections, nativeLibraryThumbnail,
-  openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
+  openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, queryNativeLibraryCounts, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
   refreshNativeLibraryMetadata,
   nativePreviewViewportContract,
   nativePortraitSourceCrop,
@@ -1107,6 +1107,8 @@ export function App() {
   const [sessionReady, setSessionReady] = useState(() => !nativeRuntimeAvailable())
   const [restoreRequest, setRestoreRequest] = useState<NativeSessionState | null>(null)
   const [libraryReady, setLibraryReady] = useState(false)
+  const [catalogCounts, setCatalogCounts] = useState<Awaited<ReturnType<typeof queryNativeLibraryCounts>> | null>(null)
+  const [catalogRevision, setCatalogRevision] = useState(0)
   const currentSession = useRef<NativeSessionState | null>(null)
   const transientEditsPending = useRef(false)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<WhiteBalanceClipboard | null>(null)
@@ -1530,16 +1532,26 @@ export function App() {
     ? photos.filter((photo) => Boolean(photo.libraryAsset))
     : photos, [photos])
 
+  useEffect(() => {
+    if (!nativeRuntimeAvailable() || !libraryReady) return
+    let active = true
+    // Refresh after persisted changes settle, never on every slider pointer event.
+    const timer = window.setTimeout(() => {
+      void queryNativeLibraryCounts().then((result) => { if (active) setCatalogCounts(result) })
+        .catch((error) => { if (active) { setCatalogCounts(null); setNotice(formatUserError(error, '圖庫數量讀取失敗')) } })
+    }, 750)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [libraryReady, libraryAssets, nativeHistory, view, catalogRevision])
+
   const counts = useMemo(() => {
-    const nativePhotos = photos.filter((photo) => photo.libraryAsset)
-    const visible = nativeRuntimeAvailable() ? nativePhotos : photos
+    if (nativeRuntimeAvailable()) return catalogCounts ?? { all: '—', recent: '—', five: '—', edited: '—' }
     return {
-      all: nativeRuntimeAvailable() ? libraryAssets.length : visible.length,
-      recent: visible.filter((photo) => photo.imported).length,
-      five: visible.filter((photo) => photo.rating === 5).length,
-      edited: visible.filter(hasPhotoEdits).length,
+      all: photos.length,
+      recent: photos.filter((photo) => photo.imported).length,
+      five: photos.filter((photo) => photo.rating === 5).length,
+      edited: photos.filter(hasPhotoEdits).length,
     }
-  }, [libraryAssets.length, photos])
+  }, [catalogCounts, photos])
 
   function nativeQuery(queryText: string, page: number, activeFilter: LibraryFilter, collection = activeLibraryCollection): NativeLibraryQuery {
     return { collectionId: collection?.id ?? null, editedOnly: activeFilter === 'edited', text: queryText.trim() || null, limit: 200, offset: page * 200,
@@ -1655,6 +1667,7 @@ export function App() {
       : photo))
     try {
       await updateNativeLibraryWorkflow([assetId], { rating: nextRating })
+      setCatalogRevision((revision) => revision + 1)
       if (filter === 'five-star' && nextRating !== 5) await refreshLibrary(librarySearch, 0, filter)
     } catch (error) {
       setNotice(formatUserError(error, 'Rating update failed'))

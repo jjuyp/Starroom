@@ -810,6 +810,11 @@ export async function importNativeLibraryPaths(paths: readonly string[]) {
   return invoke<{ imported: number[]; alreadyPresent: string[]; duplicates: string[]; relinkCandidates: Array<[number, string]>; failed: Array<[string, string]>; unsupported: string[]; cancelled: boolean }>('library_import_folder', { root: null, paths })
 }
 
+export type NativeLibraryCounts = { all: number; recent: number; five: number; edited: number }
+export async function queryNativeLibraryCounts() {
+  return invoke<NativeLibraryCounts>('library_counts')
+}
+
 export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {
   return invoke<NativeLibraryAsset[]>('library_query', { editedOnly: query.editedOnly ?? false, query: {
     text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,

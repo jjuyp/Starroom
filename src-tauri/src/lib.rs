@@ -264,6 +264,47 @@ async fn library_query(
     .map_err(|error| format!("InvalidQuery: worker failed: {error}"))?
 }
 
+#[derive(Serialize)]
+struct LibraryCounts {
+    all: u64,
+    recent: u64,
+    five: u64,
+    edited: u64,
+}
+
+#[tauri::command]
+async fn library_counts(runtime: State<'_, NativeLibraryRuntime>) -> Result<LibraryCounts, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let edited = persisted_edited_asset_ids(&history_path(0)?.with_file_name(""))?;
+        let guard = runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+        let library = guard
+            .as_ref()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
+        let count = |query| library.count(&query).map_err(|error| error.to_string());
+        Ok(LibraryCounts {
+            all: count(LibraryQuery::default())?,
+            recent: count(LibraryQuery {
+                recent_batch: true,
+                ..Default::default()
+            })?,
+            five: count(LibraryQuery {
+                minimum_rating: Some(5),
+                ..Default::default()
+            })?,
+            edited: count(LibraryQuery {
+                asset_ids: Some(edited),
+                ..Default::default()
+            })?,
+        })
+    })
+    .await
+    .map_err(|error| format!("InvalidQuery: count worker failed: {error}"))?
+}
+
 #[tauri::command]
 async fn library_query_ids(
     runtime: State<'_, NativeLibraryRuntime>,
@@ -4545,6 +4586,7 @@ pub fn run() {
             library_cancel_import,
             library_query,
             library_query_ids,
+            library_counts,
             library_refresh_metadata,
             library_set_workflow,
             library_add_keywords,

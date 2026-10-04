@@ -557,6 +557,18 @@ impl Library {
         Ok(assets)
     }
 
+    /// Count the entire matching catalog, never the current page or loaded thumbnails.
+    pub fn count(&self, query: &LibraryQuery) -> Result<u64, LibraryError> {
+        let (where_sql, values) = self.query_where(query)?;
+        self.connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM assets a {where_sql}"),
+                params_from_iter(values),
+                |row| row.get(0),
+            )
+            .map_err(sql_error)
+    }
+
     pub fn asset(&self, id: i64) -> Result<Option<AssetRecord>, LibraryError> {
         let query = LibraryQuery {
             limit: 1,
@@ -1880,6 +1892,16 @@ mod tests {
             ids[2..3]
         );
         assert_eq!(library.query_ids(&query).unwrap(), ids[..3]);
+        assert_eq!(library.count(&query).unwrap(), 3);
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    recent_batch: true,
+                    ..Default::default()
+                })
+                .unwrap(),
+            4
+        );
         assert!(
             library
                 .query(&LibraryQuery {
@@ -1916,6 +1938,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(library.query_ids(&query).unwrap(), ids[1..3]);
+        assert_eq!(library.count(&query).unwrap(), 2);
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    text: Some("photo-2".into()),
+                    ..query.clone()
+                })
+                .unwrap(),
+            1
+        );
         assert_eq!(
             library
                 .query_ids(&LibraryQuery {
@@ -2239,6 +2271,43 @@ mod tests {
             })
             .unwrap();
         assert_eq!(page.len(), 200);
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    limit: 200,
+                    offset: 99_800,
+                    ..Default::default()
+                })
+                .unwrap(),
+            100_000
+        );
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    minimum_rating: Some(5),
+                    ..Default::default()
+                })
+                .unwrap(),
+            16_666
+        );
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    asset_ids: Some(vec![]),
+                    ..Default::default()
+                })
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            library
+                .count(&LibraryQuery {
+                    asset_ids: Some(vec![1, 2, 999_999]),
+                    ..Default::default()
+                })
+                .unwrap(),
+            2
+        );
         assert!(page.windows(2).all(|pair| pair[0].id > pair[1].id));
         eprintln!(
             "M28 100,000 metadata rows insert+query: {:.3} ms",

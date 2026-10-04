@@ -52,9 +52,11 @@ recorded in the dated delivery report under `output/`; they do not qualify subse
   restore after Library initialization, before autosave. Old version-1 sessions remain readable;
   corrupt/missing-collection sessions stay intact until explicit discard. Verified by seven UI
   intent tests, Native session/workflow tests and actual App browser IPC-ordering audit.
-- **Product defect still open:** sidebar album totals use the current working page rather than
-  whole-catalog counts. Browser restore audit showed All Photos=1 and Recent=2 for a one-row
-  page plus an off-page editor photo. Implement native aggregate counts, not cosmetic relabeling.
+- **Repaired, release qualification pending:** sidebar album totals now use Native SQL COUNT
+  over the catalog, not the visible page or loaded editor records. Edited totals use persisted
+  History identities intersected with existing catalog rows. The 100k metadata regression and
+  production-App synthetic IPC audit verify that a one-row filtered page still shows catalog
+  totals. This is not a new installer qualification or a claim that all M1-M30 gaps are closed.
 - **Product audit:** finish original requirement-to-click-path checks beyond the baseline test
   inventory, including remaining multi-asset workflow actions.
 - **Performance:** the expanded private AI test passed in 82.12 seconds including first cold
