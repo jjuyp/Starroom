@@ -4089,6 +4089,16 @@ impl Default for NativeExportRuntime {
     }
 }
 
+struct ExportRunGuard(NativeExportRuntime);
+
+impl Drop for ExportRunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut progress) = self.0.progress.lock() {
+            progress.running = false;
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfessionalExportItemRequest {
@@ -4106,42 +4116,247 @@ struct ProfessionalExportItemRequest {
     edit_settings: NativeEditSettings,
 }
 
+impl ProfessionalExportItemRequest {
+    fn professional(
+        &self,
+        destination: &Path,
+        settings: &ExportSettings,
+    ) -> ProfessionalExportRequest {
+        ProfessionalExportRequest {
+            asset_id: self.asset_id,
+            source_path: self.source_path.clone(),
+            destination_directory: destination.to_owned(),
+            original_name: self.original_name.clone(),
+            capture_date: self.capture_date.clone(),
+            rating: self.rating,
+            keywords: self.keywords.clone(),
+            camera: self.camera.clone(),
+            look: self.look.clone(),
+            sequence: self.sequence,
+            source_fingerprint: self.source_fingerprint.clone(),
+            edit_state_identity: self.edit_state_identity.clone(),
+            settings: settings.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfessionalExportBatchRequest {
     destination_directory: PathBuf,
     settings: ExportSettings,
+    #[serde(default)]
     items: Vec<ProfessionalExportItemRequest>,
+    #[serde(default)]
+    asset_ids: Vec<i64>,
+    active_edit: Option<LibraryExportActiveEdit>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryExportActiveEdit {
+    asset_id: i64,
+    edit_settings: NativeEditSettings,
+}
+
+fn library_export_item(
+    library: &Library,
+    history_root: &Path,
+    asset_id: i64,
+    sequence: u32,
+    active: Option<&LibraryExportActiveEdit>,
+) -> Result<ProfessionalExportItemRequest, String> {
+    let asset = library
+        .asset(asset_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("MissingSource: library asset {asset_id}"))?;
+    let path = history_root.join(format!("asset-{asset_id}.history.json"));
+    // Even an active override cannot hide damaged durable edits. Only a genuinely absent
+    // History file means neutral; permission/corruption errors must fail this item explicitly.
+    let history = match std::fs::metadata(&path) {
+        Ok(_) => Some(
+            EditHistory::load(&path)
+                .map_err(|error| format!("HistoryCorrupt: asset {asset_id}: {error}"))?,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(format!(
+                "HistoryPersistenceFailed: asset {asset_id}: {error}"
+            ));
+        }
+    };
+    let durable: Option<NativeEditSettings> = history
+        .as_ref()
+        .map(|history| {
+            let state: NativeEditSettings = serde_json::from_value(history.state().clone())
+                .map_err(|error| format!("HistoryCorrupt: asset {asset_id}: {error}"))?;
+            state
+                .clone()
+                .validated()
+                .map_err(|error| format!("HistoryCorrupt: asset {asset_id}: {error}"))?;
+            Ok::<_, String>(state)
+        })
+        .transpose()?;
+    let edit_settings = if let Some(active) = active.filter(|edit| edit.asset_id == asset_id) {
+        active.edit_settings.clone()
+    } else if let Some(state) = durable {
+        state
+    } else {
+        serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-default-settings.json"
+        ))
+        .map_err(|error| format!("HistoryCorrupt: neutral contract: {error}"))?
+    };
+    edit_settings.clone().validated()?;
+    let edit_state_identity = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&edit_settings)
+                .map_err(|error| format!("ProjectInvalid: {error}"))?
+        )
+    );
+    let original_name = asset
+        .source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("ProjectInvalid: invalid source name for asset {asset_id}"))?
+        .to_owned();
+    let camera = [
+        asset.metadata.camera_make.as_deref(),
+        asset.metadata.camera_model.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+    Ok(ProfessionalExportItemRequest {
+        asset_id,
+        original_name,
+        capture_date: library
+            .export_capture_date(asset_id)
+            .map_err(|error| error.to_string())?,
+        source_path: asset.source_path,
+        rating: asset.rating,
+        keywords: asset.keywords,
+        camera: (!camera.is_empty()).then_some(camera),
+        look: None,
+        sequence,
+        source_fingerprint: asset.content_fingerprint,
+        edit_state_identity,
+        edit_settings,
+    })
 }
 
 #[tauri::command]
 async fn native_export_batch(
+    library_runtime: State<'_, NativeLibraryRuntime>,
     portrait_runtime: State<'_, NativePortraitRuntime>,
     ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
     ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
     export_runtime: State<'_, NativeExportRuntime>,
     request: ProfessionalExportBatchRequest,
 ) -> Result<BatchExportResult, String> {
-    export_runtime.cancelled.store(false, Ordering::Relaxed);
-    let total = request.items.len();
-    set_export_progress(&export_runtime, true, total, &BatchExportResult::default())?;
-    let mut result = BatchExportResult::default();
-    for item in request.items {
-        let professional = ProfessionalExportRequest {
-            asset_id: item.asset_id,
-            source_path: item.source_path.clone(),
-            destination_directory: request.destination_directory.clone(),
-            original_name: item.original_name,
-            capture_date: item.capture_date,
-            rating: item.rating,
-            keywords: item.keywords,
-            camera: item.camera,
-            look: item.look,
-            sequence: item.sequence,
-            source_fingerprint: item.source_fingerprint,
-            edit_state_identity: item.edit_state_identity,
-            settings: request.settings.clone(),
+    if request.items.is_empty() && request.asset_ids.is_empty() {
+        return Err("ProjectInvalid: export selection is empty".into());
+    }
+    if !request.items.is_empty() && !request.asset_ids.is_empty() {
+        return Err("ProjectInvalid: choose either direct items or Library IDs".into());
+    }
+    if request.asset_ids.iter().any(|id| *id <= 0)
+        || request
+            .asset_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != request.asset_ids.len()
+        || request
+            .active_edit
+            .as_ref()
+            .is_some_and(|edit| !request.asset_ids.contains(&edit.asset_id))
+    {
+        return Err(
+            "ProjectInvalid: invalid/duplicate Library selection or active override".into(),
+        );
+    }
+    let total = request.items.len() + request.asset_ids.len();
+    {
+        let mut progress = export_runtime
+            .progress
+            .lock()
+            .map_err(|_| "export progress lock was poisoned".to_owned())?;
+        if progress.running {
+            return Err("ProjectInvalid: another export batch is running".into());
+        }
+        export_runtime.cancelled.store(false, Ordering::Relaxed);
+        *progress = NativeExportProgress {
+            running: true,
+            progress: BatchProgress {
+                total,
+                ..Default::default()
+            },
         };
+    }
+    let _run_guard = ExportRunGuard(export_runtime.inner().clone());
+    let mut result = BatchExportResult::default();
+    let mut direct = request.items.into_iter();
+    for index in 0..total {
+        let item = if let Some(item) = direct.next() {
+            item
+        } else {
+            let asset_id = request.asset_ids[index];
+            if export_runtime.cancelled.load(Ordering::Relaxed) {
+                result.cancelled.push(ExportItemResult {
+                    asset_id,
+                    status: ExportItemStatus::Cancelled,
+                    destination: None,
+                    width: None,
+                    height: None,
+                    recipe_identity: String::new(),
+                    error: Some("Cancelled".into()),
+                });
+                set_export_progress(&export_runtime, true, total, &result)?;
+                continue;
+            }
+            let runtime = library_runtime.inner().clone();
+            let active = request.active_edit.clone();
+            let prepared = tauri::async_runtime::spawn_blocking(move || {
+                let path = history_path(asset_id)?;
+                let guard = runtime
+                    .library
+                    .lock()
+                    .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+                let library = guard
+                    .as_ref()
+                    .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?;
+                library_export_item(
+                    library,
+                    path.parent().unwrap(),
+                    asset_id,
+                    (index + 1) as u32,
+                    active.as_ref(),
+                )
+            })
+            .await
+            .map_err(|error| format!("ProjectInvalid: Library export worker failed: {error}"))
+            .and_then(|prepared| prepared);
+            match prepared {
+                Ok(item) => item,
+                Err(error) => {
+                    result.failed.push(ExportItemResult {
+                        asset_id,
+                        status: ExportItemStatus::Failed,
+                        destination: None,
+                        width: None,
+                        height: None,
+                        recipe_identity: String::new(),
+                        error: Some(error),
+                    });
+                    set_export_progress(&export_runtime, true, total, &result)?;
+                    continue;
+                }
+            }
+        };
+        let professional = item.professional(&request.destination_directory, &request.settings);
         if export_runtime.cancelled.load(Ordering::Relaxed) {
             result.cancelled.push(export_failure(
                 &professional,
@@ -4214,7 +4429,6 @@ async fn native_export_batch(
         }
         set_export_progress(&export_runtime, true, total, &result)?;
     }
-    set_export_progress(&export_runtime, false, total, &result)?;
     Ok(result)
 }
 
@@ -4411,22 +4625,31 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         .set_workflow(&[asset_id], Some(5), Some(AssetFlag::Pick), None)
         .map_err(|error| error.to_string())?;
 
-    let mut history = EditHistory::new(serde_json::json!({"exposure": 0.0, "layers": []}))
+    library
+        .add_keywords(&[asset_id], &["release-self-test".into()])
         .map_err(|error| error.to_string())?;
+    let initial: serde_json::Value = serde_json::from_str(include_str!(
+        "../../fixtures/contracts/native-default-settings.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    let mut changed = initial.clone();
+    changed["exposure"] = serde_json::json!(0.25);
+    let mut history = EditHistory::new(initial).map_err(|error| error.to_string())?;
     history
         .commit(
             "Release exposure",
             "tone",
             EditCommand::ReplaceState {
                 before: history.state().clone(),
-                after: serde_json::json!({"exposure": 0.25, "layers": []}),
+                after: changed,
             },
         )
         .map_err(|error| error.to_string())?;
     history
         .create_snapshot("Release checkpoint")
         .map_err(|error| error.to_string())?;
-    let history_path = root.join("history.json");
+    let history_root = root.join("history");
+    let history_path = history_root.join(format!("asset-{asset_id}.history.json"));
     history
         .persist(&history_path)
         .map_err(|error| error.to_string())?;
@@ -4467,23 +4690,17 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         return Err("release Session clean close did not preserve complete workspace state".into());
     }
 
-    let mut render_settings = RenderSettings::default();
-    render_settings.tone.exposure_ev = 0.25;
-    let request = ProfessionalExportRequest {
-        asset_id,
-        source_path: source.clone(),
-        destination_directory: root.join("exports"),
-        original_name: "release-self-test.jpg".into(),
-        capture_date: None,
-        rating: 5,
-        keywords: vec!["release-self-test".into()],
-        camera: None,
-        look: None,
-        sequence: 1,
-        source_fingerprint: "release-self-test-fixture".into(),
-        edit_state_identity: loaded_history.state_version().0,
-        settings: ExportSettings::default(),
-    };
+    drop(library);
+    let library = Library::open(root.join("library.sqlite")).map_err(|error| error.to_string())?;
+    let item = library_export_item(&library, &history_root, asset_id, 1, None)?;
+    let render_settings = item.edit_settings.clone().validated()?;
+    if render_settings.tone.exposure_ev != 0.25
+        || item.rating != 5
+        || item.keywords != ["release-self-test"]
+    {
+        return Err("release Library export did not restore persisted edits and metadata".into());
+    }
+    let request = item.professional(&root.join("exports"), &ExportSettings::default());
     let first = export_one(
         &NativeSharedGraphRenderer,
         &request,
@@ -4620,6 +4837,124 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_export_reads_off_page_durable_edits_and_does_not_hide_corruption() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-library-export-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/raw/sources/nikon-d1.nef");
+        let source_before = std::fs::read(&source).unwrap();
+        let mut library = Library::open(root.join("library.sqlite")).unwrap();
+        let id = library
+            .import_paths(std::slice::from_ref(&source), &AtomicBool::new(false))
+            .unwrap()
+            .imported[0];
+        library.set_workflow(&[id], Some(4), None, None).unwrap();
+        library.add_keywords(&[id], &["批次".into()]).unwrap();
+        let mut metadata = Library::extract_metadata(&source).unwrap();
+        metadata.capture_time = Some(0);
+        library.update_metadata(id, &metadata).unwrap();
+        let neutral = library_export_item(&library, &root, id, 501, None).unwrap();
+        assert_eq!(neutral.sequence, 501);
+        assert_eq!(neutral.rating, 4);
+        assert_eq!(neutral.keywords, vec!["批次"]);
+        assert_eq!(neutral.capture_date.as_deref(), Some("1970-01-01"));
+        assert_eq!(neutral.edit_settings.exposure, 0.0);
+        let initial = serde_json::to_value(&neutral.edit_settings).unwrap();
+        let mut changed = initial.clone();
+        changed["exposure"] = serde_json::json!(1.25);
+        let mut history = EditHistory::new(initial.clone()).unwrap();
+        history
+            .commit(
+                "Exposure",
+                "tone",
+                EditCommand::ReplaceState {
+                    before: initial,
+                    after: changed,
+                },
+            )
+            .unwrap();
+        let history_path = root.join(format!("asset-{id}.history.json"));
+        history.persist(&history_path).unwrap();
+        let history_bytes = std::fs::read(&history_path).unwrap();
+        let saved = library_export_item(&library, &root, id, 501, None).unwrap();
+        assert_eq!(saved.edit_settings.exposure, 1.25);
+        assert_ne!(saved.edit_state_identity, neutral.edit_state_identity);
+        let active = LibraryExportActiveEdit {
+            asset_id: id,
+            edit_settings: NativeEditSettings {
+                exposure: 2.0,
+                ..neutral.edit_settings.clone()
+            },
+        };
+        let active_item = library_export_item(&library, &root, id, 501, Some(&active)).unwrap();
+        assert_eq!(active_item.edit_settings.exposure, 2.0);
+        assert_ne!(active_item.edit_state_identity, saved.edit_state_identity);
+        assert_eq!(std::fs::read(&history_path).unwrap(), history_bytes);
+        assert!(
+            library_export_item(&library, &root, id + 10000, 1, None)
+                .unwrap_err()
+                .starts_with("MissingSource:")
+        );
+        // Actual sensor decode -> shared graph -> output, not a mocked renderer or thumbnail.
+        let settings = saved.edit_settings.clone().validated().unwrap();
+        let professional = saved.professional(&root.join("out"), &ExportSettings::default());
+        let output = export_one(
+            &NativeSharedGraphRenderer,
+            &professional,
+            &settings,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(output.width.unwrap() > 1000);
+        let exported_bytes = std::fs::read(output.destination.unwrap()).unwrap();
+        assert!(!exported_bytes.is_empty());
+        let mut reference = professional.clone();
+        reference.destination_directory = root.join("reference");
+        let repeated = export_one(
+            &NativeSharedGraphRenderer,
+            &reference,
+            &settings,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(repeated.destination.unwrap()).unwrap(),
+            exported_bytes
+        );
+        reference.destination_directory = root.join("neutral");
+        let unedited = export_one(
+            &NativeSharedGraphRenderer,
+            &reference,
+            &neutral.edit_settings.validated().unwrap(),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_ne!(
+            std::fs::read(unedited.destination.unwrap()).unwrap(),
+            exported_bytes
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        std::fs::write(&history_path, b"{corrupt").unwrap();
+        assert!(
+            library_export_item(&library, &root, id, 1, Some(&active))
+                .unwrap_err()
+                .starts_with("HistoryCorrupt:")
+        );
+        metadata.capture_time = None;
+        library.update_metadata(id, &metadata).unwrap();
+        assert_eq!(library.export_capture_date(id).unwrap(), None);
+        drop(library);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn edited_album_uses_saved_state_across_restart_undo_and_corruption() {

@@ -51,7 +51,12 @@ export interface NativeProfessionalExportItem {
   camera: string | null; look: string | null; sequence: number; sourceFingerprint: string
   editStateIdentity: string; editSettings: NativeEditSettings
 }
-export interface NativeBatchExportResult { completed: unknown[]; failed: unknown[]; cancelled: unknown[]; skipped: unknown[] }
+export interface NativeExportItemResult {
+  assetId: number; status: 'pending' | 'rendering' | 'encoding' | 'completed' | 'failed' | 'cancelled' | 'skipped'
+  destination: string | null; width: number | null; height: number | null
+  recipeIdentity: string; error: string | null
+}
+export interface NativeBatchExportResult { completed: NativeExportItemResult[]; failed: NativeExportItemResult[]; cancelled: NativeExportItemResult[]; skipped: NativeExportItemResult[] }
 export interface NativeExportProgress {
   running: boolean
   progress: { processed: number; total: number; completed: number; failed: number; cancelled: number }
@@ -879,6 +884,18 @@ export async function chooseNativeExportDirectory() {
 
 export async function exportNativeBatch(destinationDirectory: string, settings: NativeProfessionalExportSettings, items: NativeProfessionalExportItem[]) {
   return invoke<NativeBatchExportResult>('native_export_batch', { request: { destinationDirectory, settings, items } })
+}
+
+export function nativeLibraryExportContract(destinationDirectory: string, settings: NativeProfessionalExportSettings, assetIds: number[], activeEdit: { assetId: number; editSettings: NativeEditSettings } | null) {
+  if (!assetIds.length || assetIds.some((id) => !Number.isSafeInteger(id) || id <= 0) || new Set(assetIds).size !== assetIds.length) {
+    throw new Error('ProjectInvalid: invalid or duplicate Library export selection')
+  }
+  if (activeEdit && !assetIds.includes(activeEdit.assetId)) throw new Error('ProjectInvalid: active export edit is outside selection')
+  return { destinationDirectory, settings, assetIds: [...assetIds], activeEdit }
+}
+
+export async function exportNativeLibraryBatch(destinationDirectory: string, settings: NativeProfessionalExportSettings, assetIds: number[], activeEdit: { assetId: number; editSettings: NativeEditSettings } | null) {
+  return invoke<NativeBatchExportResult>('native_export_batch', { request: nativeLibraryExportContract(destinationDirectory, settings, assetIds, activeEdit) })
 }
 
 export async function cancelNativeExport() { return invoke<boolean>('native_export_cancel') }

@@ -1,5 +1,40 @@
 # Implementation Notes
 
+## 2026-10-05 M24/M25/M26 cross-page export closure
+
+The previous React batch adapter intersected Select All IDs with the currently loaded photo page.
+Off-page selections silently disappeared, and unvisited photos carried neutral in-memory settings
+instead of their persisted edits. The Library path now sends compact asset IDs plus at most one
+captured active workspace override. Rust resolves one catalog record/History file at a time on a
+blocking worker, validates durable settings, derives the recipe-state hash from the actual settings,
+and feeds the existing full-resolution shared graph/encoder/atomic writer. No pixel JSON, new
+renderer, schema/dependency/license change or secondary edit-state database is introduced.
+
+Only missing History means neutral. Missing assets, inaccessible files and corrupt/invalid History
+produce per-item failures; even an active override cannot conceal corrupt saved edits. The entire
+selection contributes to progress/cancellation. A batch guard prevents overlapping queues from
+resetting cancellation and clears running state on worker errors. UTC capture naming uses SQLite's
+calendar conversion; absent dates stay absent. The active edit is captured before the directory
+picker and pending History writes are drained. Other assets are resolved from durable state when
+their queue item is prepared, not from an invented page-local snapshot.
+
+Targeted checks: 176 frontend tests across 26 files, including three new compact-selection tests
+covering 500 IDs, active overrides and invalid identities; export regression/Golden/RAW validators,
+lint, TypeScript, production build and warning-denied desktop/Library Clippy passed. A real Nikon
+sensor fixture exercises saved exposure, neutral vs edited output, repeat-byte determinism,
+metadata/date preservation, explicit missing/corrupt state and source immutability. The installed
+executable self-test now restores canonical Native edit state and real Library metadata through the
+same Library-export adapter after reopening the database, rather than constructing export edits
+separately. Final same-SHA full/release qualification is required before delivering this change.
+
+Final local validation passed: 330 ordinary Rust tests (four opt-in release/private-model tests
+remain separately gated), all doc-test runners, warning-denied workspace Clippy, format and
+photographic Golden/real LibRaw regressions; 176 Vitest tests, lint, TypeScript, production build,
+JSON/schema, 561-package Rust / six-production-package npm license audit and release-resource /
+offline-source validators. The last UI diagnostic addition was rechecked with the complete frontend
+suite/build after the Rust full run began. Remote same-SHA and installed-runtime gates remain
+distinct from these local results; no Lightroom performance/completeness claim is inferred.
+
 ## 2026-10-04 M24 whole-catalog sidebar counts
 
 Replace page-local totals with `Library::count` using the same SQL predicates as queries,

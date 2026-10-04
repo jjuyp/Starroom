@@ -37,6 +37,11 @@ The active field hotfix is recorded in `docs/41_RC3_RELEASE_NOTES.md`.
 
 ## Relevant modules
 
+Current repair group: M24/M25/M26 cross-page batch export. Resolve the complete selected
+asset ID set and each durable History state natively, one item at a time. Preserve the active
+workspace override, isolate missing/corrupt items explicitly, and reuse the existing export
+graph, cancellation, metadata and atomic writer. Do not repeat M2/M3 or add new image math.
+
 - `.github/workflows`, `scripts/test-target.mjs`, packaging/release validation
 - `src-tauri`, Tauri configuration and Windows installer/runtime smoke
 - `crates/starroom-library`, `starroom-history`, `starroom-session`, `starroom-export`

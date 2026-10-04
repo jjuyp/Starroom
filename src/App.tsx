@@ -38,7 +38,7 @@ import {
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeLibraryQuery, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
-  cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
+  cancelNativeExport, chooseNativeExportDirectory, exportNativeBatch, exportNativeLibraryBatch, queryNativeExportProgress, type NativeProfessionalExportSettings,
   autosaveNativeSession, discardNativeRecovery, markNativeSessionClean, openNativeSession, type NativeSessionState,
 } from './nativeRender'
 import { resolveCommandShortcut, searchCommands, type CommandId } from './commands'
@@ -2427,15 +2427,21 @@ export function App() {
     try {
       if (selected.renderBackend === 'native') {
         if (!selected.sourcePath) throw new Error('Native photo is missing its source path.')
+        // Capture selection and the visible edit before the picker yields. Off-page assets and
+        // their durable edits are resolved by Rust, never by the currently loaded UI page.
+        const assetIds = view === 'library' && selectedLibraryIds.length
+          ? [...selectedLibraryIds] : selected.libraryAsset ? [selected.libraryAsset.id] : []
+        const activeEdit = selected.libraryAsset && assetIds.includes(selected.libraryAsset.id)
+          ? { assetId: selected.libraryAsset.id, editSettings: nativeSettingsForPhoto(selected) } : null
+        setExportBusy(true)
+        await flushNativeHistory()
         const destination = await chooseNativeExportDirectory()
         if (!destination) {
           setRenderStatus('Export cancelled')
+          setExportBusy(false)
           return
         }
-        setExportBusy(true)
-        const requestedPhotos = view === 'library' && selectedLibraryIds.length
-          ? selectedLibraryIds.map((assetId) => photos.find((photo) => photo.libraryAsset?.id === assetId)).filter((photo): photo is PhotoItem => Boolean(photo))
-          : [selected]
+        const requestedPhotos = [selected]
         if (requestedPhotos.some((photo) => photo.renderBackend !== 'native' || !photo.sourcePath)) throw new Error('Batch export requires Native source paths; Browser fallback is never silent.')
         const progressTimer = window.setInterval(() => {
           void queryNativeExportProgress().then(({ progress }) => {
@@ -2444,6 +2450,7 @@ export function App() {
         }, 250)
         const result = await (async () => {
           try {
+            if (assetIds.length) return await exportNativeLibraryBatch(destination, exportSettings, assetIds, activeEdit)
             return await exportNativeBatch(destination, exportSettings, requestedPhotos.map((photo, index) => ({
               assetId: photo.libraryAsset?.id ?? 0, sourcePath: photo.sourcePath!, originalName: photo.name,
               captureDate: photo.libraryAsset?.metadata.captureTime ? new Date(photo.libraryAsset.metadata.captureTime * 1000).toISOString().slice(0, 10) : null,
@@ -2456,7 +2463,8 @@ export function App() {
             window.clearInterval(progressTimer)
           }
         })()
-        setNotice(`專業匯出 · ${result.completed.length} 個完成 · ${result.failed.length} 個失敗`)
+        const failure = result.failed[0]
+        setNotice(`專業匯出 · ${result.completed.length} 個完成 · ${result.failed.length} 個失敗 · ${result.cancelled.length} 個取消${failure ? ` · 項目 ${failure.assetId}：${formatUserError(failure.error, 'Export failed')}` : ''}`)
         setRenderStatus(`Native full-resolution · ${exportSettings.colorSpace}`)
         setExportBusy(false)
         return

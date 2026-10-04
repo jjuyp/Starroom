@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultNativeRenderConstants, fromNativeLayers, fromNativeMask, fromNativeSettings, nativePortraitSourceCrop, nativePreviewViewportContract, normalizeNativeSettings, parseNativePreviewFrame, toNativeLayers, toNativeMask, toNativeSettings,
+import { defaultNativeRenderConstants, fromNativeLayers, fromNativeMask, fromNativeSettings, nativeLibraryExportContract, nativePortraitSourceCrop, nativePreviewViewportContract, normalizeNativeSettings, parseNativePreviewFrame, toNativeLayers, toNativeMask, toNativeSettings,
   type NativeAdjustmentLayer, type NativeEditSettings, type NativeMaskTree, type NativeSerializedAdjustmentLayer } from './nativeRender'
 import { defaultAdjustments } from './editorState'
 import localLayersFixture from '../fixtures/contracts/native-local-layers.json'
@@ -7,6 +7,28 @@ import localWorkflowFixture from '../fixtures/contracts/native-local-workflow.js
 import canonicalNativeDefaults from '../fixtures/contracts/native-default-settings.json'
 import manualLensFixture from '../fixtures/contracts/native-manual-lens.json'
 import portraitCropFixture from '../fixtures/contracts/native-portrait-source-crop.json'
+
+describe('Library export selection contract', () => {
+  const settings = { format: 'png' } as Parameters<typeof nativeLibraryExportContract>[1]
+  it('preserves all 500 cross-page IDs without photo records or pixel payloads', () => {
+    const ids = Array.from({ length: 500 }, (_, index) => index + 1)
+    const contract = nativeLibraryExportContract('destination', settings, ids, null)
+    ids.pop()
+    expect(contract.assetIds).toHaveLength(500)
+    expect(contract.assetIds.at(-1)).toBe(500)
+    expect(contract).not.toHaveProperty('items')
+  })
+  it('captures only the selected active workspace edit, not neutral edits for other assets', () => {
+    const active = { assetId: 501, editSettings: canonicalNativeDefaults as NativeEditSettings }
+    expect(nativeLibraryExportContract('out', settings, [501, 700], active).activeEdit).toBe(active)
+    expect(() => nativeLibraryExportContract('out', settings, [700], active)).toThrow('outside selection')
+  })
+  it('rejects empty, duplicate, unsafe and invalid identities rather than silently dropping assets', () => {
+    for (const ids of [[], [1, 1], [0], [-1], [NaN], [1.5], [Number.MAX_SAFE_INTEGER + 1]]) {
+      expect(() => nativeLibraryExportContract('out', settings, ids, null)).toThrow('selection')
+    }
+  })
+})
 
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 

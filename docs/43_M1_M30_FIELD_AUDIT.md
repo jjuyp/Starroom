@@ -59,6 +59,12 @@ recorded in the dated delivery report under `output/`; they do not qualify subse
   totals. This is not a new installer qualification or a claim that all M1-M30 gaps are closed.
 - **Product audit:** finish original requirement-to-click-path checks beyond the baseline test
   inventory, including remaining multi-asset workflow actions.
+- **Repaired, release qualification pending:** cross-page export previously discarded selected
+  IDs outside the loaded UI page and used neutral settings for unvisited assets. The real command
+  now resolves compact Library IDs and durable History one item at a time, with an explicit active
+  workspace override, per-item missing/corrupt failures and bounded shared-graph export. Tests
+  cover 500-ID transport and real sensor edited/deterministic output; installed self-test uses
+  the same persisted-state adapter. Remaining multi-asset copy/paste/sync paths still need audit.
 - **Performance:** the expanded private AI test passed in 82.12 seconds including first cold
   scene-session startup. Profile cold vs warm inference separately; do not advertise this as
   instant AI or compare that whole-test duration with slider latency.

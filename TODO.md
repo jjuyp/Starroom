@@ -14,6 +14,7 @@ usable. The older alternative M2–M18 outline is not a renumbering of the accep
 - [x] Keep Pick/Reject on the current editor photo and prevent repeated Advisor Preview/Apply from accumulating the same suggestion twice.
 - [x] Persist/restore collection, Unicode search, page, filter and off-page selected photo; wait for the Library before enabling autosave; retain invalid recovery until an explicit user decision.
 - [x] Replace page-local sidebar album counts with Native whole-catalog SQL counts; validate 100k metadata assets, collection scope, empty/deleted IDs, and UI presentation independent of the visible page.
+- [x] Resolve cross-page batch export from the full Native Library ID selection, loading each asset's durable History rather than neutral UI-page records; retain the active workspace edit, reject corrupt histories explicitly, and reuse the shared full-resolution export graph.
 - [ ] Complete the original M1–M30 requirement-to-runtime audit and remaining field fixes.
 - [ ] Qualify and package the new immutable SHA; the existing `aa5ed01` installer does not contain these edits.
 - [ ] Same-hardware Lightroom A/B, multi-monitor hardware and second-machine field validation remain unverified; do not call the product perfect or faster than Lightroom.

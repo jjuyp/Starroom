@@ -595,6 +595,20 @@ impl Library {
         Ok(asset)
     }
 
+    /// UTC capture date for export naming. SQLite performs calendar conversion; absent capture
+    /// metadata remains absent rather than being replaced by an import or filesystem date.
+    pub fn export_capture_date(&self, id: i64) -> Result<Option<String>, LibraryError> {
+        self.connection
+            .query_row(
+                "SELECT strftime('%Y-%m-%d', capture_time, 'unixepoch') FROM assets WHERE id=?",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
+            .map_err(sql_error)
+    }
+
     /// Return the complete current query identity set without loading pixels, metadata records,
     /// keywords or only the visible page. This is the native contract for filtered Ctrl/Cmd+A.
     pub fn query_ids(&self, query: &LibraryQuery) -> Result<Vec<i64>, LibraryError> {
