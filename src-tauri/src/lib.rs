@@ -4406,6 +4406,11 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         zoom_mode: "fit".into(),
         zoom_scale: 1.0,
         library_context: "all".into(),
+        library_browser: Some(starroom_session::LibraryBrowserState {
+            collection_id: None,
+            search: "release-self-test".into(),
+            page: 0,
+        }),
     };
     starroom_session::autosave(&session_path, &session).map_err(|error| error.to_string())?;
     if !starroom_session::open(&session_path)
@@ -4415,11 +4420,10 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         return Err("release Session autosave did not expose recovery state".into());
     }
     starroom_session::mark_clean(&session_path, &session).map_err(|error| error.to_string())?;
-    if starroom_session::open(&session_path)
-        .map_err(|error| error.to_string())?
-        .recovery_available
-    {
-        return Err("release Session clean close retained recovery state".into());
+    let restored_session =
+        starroom_session::open(&session_path).map_err(|error| error.to_string())?;
+    if restored_session.recovery_available || restored_session.state.as_ref() != Some(&session) {
+        return Err("release Session clean close did not preserve complete workspace state".into());
     }
 
     let mut render_settings = RenderSettings::default();

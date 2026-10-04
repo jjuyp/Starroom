@@ -1,5 +1,34 @@
 # Implementation Notes
 
+## 2026-10-04 M24/M29 Library session closure
+
+Continues from qualified `095926b`, without changing imaging math or model distribution.
+`SessionState.libraryBrowser` is an additive optional field: existing version-1 filter-only files
+still load. Native persistence validates collection identity, bounded search and page/offset
+arithmetic before atomic write. Invalid data cannot replace the prior recovery file.
+
+The actual App waits for Library initialization before scoped restore, loads selected off-page
+catalog records separately, then enables autosave. History hydration is reopened after replacing
+restored editor records. Corrupt sessions and missing collections retain their recovery data;
+users can explicitly discard only the session, not photos/History. Closing during incomplete
+restore asks first and never marks the partial state as the saved clean session. Import resets
+the stale collection/search scope and invalidates older queries.
+
+Evidence: seven frontend restore/query tests; four Native session tests; the real Native
+Library/History/Snapshot/Session/Export integration now restores an actual smart collection and
+searches it before deterministic re-export. The production release self-test compares every
+restored Session field, not merely the clean flag. A Playwright audit ran the production App with
+synthetic IPC responses, delayed Library initialization, collection 4/search 京都/page 2 and a
+selected off-page asset 700. UI scope and the first autosave matched the saved state. This is UI
+ordering evidence only; Native processing is proven by Rust integration, not the browser fixture.
+The missing-collection and corrupt-session UI cases also passed: neither wrote an autosave
+across the actual debounce boundary, and both presented recovery choices. Full local validation
+passed (172 frontend tests, workspace Rust tests/doc-tests, warning-denied Clippy, format,
+lint, TypeScript, production build, JSON and Golden/RAW manifest validation). Release packaging
+and remote acceptance for this change are not implied by the previous qualified installer.
+The browser audit additionally exposed incorrect page-local sidebar counts; this remains open.
+
+
 ## 2026-10-04 color interaction, whole-person and collection repairs
 
 This batch continues from `aa5ed01`; its existing installer/CI are baseline evidence only.

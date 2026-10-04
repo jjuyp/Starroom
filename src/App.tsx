@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { selectLibraryRange, smartCollectionRule, workflowAssetIds } from './librarySelection'
 import { advisorAdjustments } from './advisorInteraction'
+import { loadSessionLibrary, type LibraryFilter } from './librarySession'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
@@ -56,7 +57,6 @@ import { generatedMaskActions, manualMaskTypes, maskLabel, maskLabels, portraitR
 import { MaskOverlay, LinearMaskOverlay } from './MaskOverlay'
 import { canApplyWhiteBalanceMode, copyWhiteBalanceState, pasteWhiteBalanceState, type WhiteBalanceClipboard } from './whiteBalanceClipboard'
 
-type LibraryFilter = 'all' | 'recent' | 'five-star' | 'edited'
 type WorkspaceView = 'library' | 'edit' | 'compare'
 
 interface PhotoItem {
@@ -1103,8 +1103,10 @@ export function App() {
   const [commandQuery, setCommandQuery] = useState('')
   const [copiedSettings, setCopiedSettings] = useState<EditSnapshot | null>(null)
   const [recoveryState, setRecoveryState] = useState<NativeSessionState | null>(null)
+  const [sessionFailure, setSessionFailure] = useState<string | null>(null)
   const [sessionReady, setSessionReady] = useState(() => !nativeRuntimeAvailable())
-  const pendingSession = useRef<NativeSessionState | null>(null)
+  const [restoreRequest, setRestoreRequest] = useState<NativeSessionState | null>(null)
+  const [libraryReady, setLibraryReady] = useState(false)
   const currentSession = useRef<NativeSessionState | null>(null)
   const transientEditsPending = useRef(false)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<WhiteBalanceClipboard | null>(null)
@@ -1201,17 +1203,19 @@ export function App() {
   }, [])
 
   const restoreSession = useCallback((state: NativeSessionState) => {
+    currentSession.current = null
+    setSessionFailure(null)
+    setLibraryBusy(true)
     const workspaces: WorkspaceView[] = ['library', 'edit', 'compare']
     const tools = toolItems.map(({ id }) => id)
-    const filters: LibraryFilter[] = ['all', 'recent', 'five-star', 'edited']
     if (workspaces.includes(state.workspace)) setView(state.workspace)
     if (tools.includes(state.activeTool as Tool)) setTool(state.activeTool as Tool)
-    if (filters.includes(state.libraryContext as LibraryFilter)) setFilter(state.libraryContext as LibraryFilter)
     setLeftOpen(state.libraryPanelOpen)
     setFilmstripOpen(state.filmstripOpen)
     setZoom(state.zoomMode)
     setZoomScale(state.zoomScale)
-    pendingSession.current = state
+    setSessionReady(false)
+    setRestoreRequest(state)
   }, [setFilmstripOpen, setLeftOpen])
 
   useEffect(() => () => { thumbnailEpoch.current++; objectUrls.current.forEach((url) => URL.revokeObjectURL(url)) }, [])
@@ -1226,8 +1230,11 @@ export function App() {
     if (!nativeRuntimeAvailable()) return
     void openNativeSession().then((result) => {
       if (result.recoveryAvailable && result.state) setRecoveryState(result.state)
-      else { if (result.state) restoreSession(result.state); setSessionReady(true) }
-    }).catch((error) => { setNotice(formatUserError(error, 'Session restore failed')); setSessionReady(true) })
+      else { if (result.state) restoreSession(result.state); else setSessionReady(true) }
+    }).catch((error) => {
+      setSessionFailure(formatUserError(error, '工作階段還原失敗'))
+      setSessionReady(false)
+    })
   }, [restoreSession])
   useEffect(() => {
     const finish = () => setPreviewInteraction('final')
@@ -1256,6 +1263,7 @@ export function App() {
         if (!active) return
         setLibraryAssets(assets)
         setLibraryCollections(collections)
+        setLibraryReady(true)
         const libraryPhotos = assets.map((asset) => libraryPhoto(asset, ''))
         if (libraryPhotos.length) {
           setPhotos((current) => [...libraryPhotos, ...current.filter((photo) => !photo.libraryAsset)])
@@ -1315,6 +1323,8 @@ export function App() {
 
   const importNativePaths = useCallback((paths: readonly string[]) => {
     if (!paths.length) return
+    libraryQueryEpoch.current++
+    setActiveLibraryCollection(null)
     setLibraryBusy(true)
     void (async () => {
       try {
@@ -1387,19 +1397,41 @@ export function App() {
   }, [filmstripOpen, selectedId, view])
   useEffect(() => { transientEditsPending.current = !selected.libraryAsset && hasPhotoEdits(selected) }, [selected])
   useEffect(() => {
-    const pending = pendingSession.current
-    if (!pending) return
-    const photo = photos.find((candidate) => candidate.libraryAsset?.id === pending.selectedAssetId
-      || (pending.selectedSourcePath && candidate.sourcePath === pending.selectedSourcePath))
-    if (photo) { setSelectedId(photo.id); pendingSession.current = null }
-  }, [photos])
+    if (!restoreRequest || !libraryReady) return
+    let active = true
+    const epoch = ++libraryQueryEpoch.current
+    void loadSessionLibrary(restoreRequest, libraryCollections, queryNativeLibrary).then((restored) => {
+      if (!active || epoch !== libraryQueryEpoch.current) return
+      setFilter(restored.filter)
+      setActiveLibraryCollection(restored.collection)
+      setLibrarySearch(restored.search)
+      setLibraryPage(restored.page)
+      setLibraryAssets(restored.assets)
+      openedHistoryAsset.current = null
+      setPhotos((current) => [...restored.editorAssets.map((asset) => libraryPhoto(asset, '')), ...current.filter((photo) => !photo.libraryAsset)])
+      loadLibraryThumbnails(restored.editorAssets)
+      if (restored.selected) setSelectedId(`library-${restored.selected.id}`)
+      else if (restoreRequest.selectedAssetId !== null) setNotice('原先選取的照片已不在圖庫，其他照片與編輯已保留。')
+      setSelectedLibraryIds(restored.selected && restored.assets.some((asset) => asset.id === restored.selected!.id) ? [restored.selected.id] : [])
+      setRestoreRequest(null)
+      setSessionReady(true)
+    }).catch((error) => {
+      if (!active || epoch !== libraryQueryEpoch.current) return
+      setNotice(formatUserError(error, '工作階段還原失敗'))
+      setSessionFailure(formatUserError(error, '工作階段還原失敗'))
+      setRecoveryState(restoreRequest)
+      setRestoreRequest(null)
+    }).finally(() => { if (active && epoch === libraryQueryEpoch.current) setLibraryBusy(false) })
+    return () => { active = false }
+  }, [restoreRequest, libraryReady, libraryCollections, loadLibraryThumbnails])
   const sessionState = useMemo<NativeSessionState>(() => ({
     version: 1, workspace: view, selectedAssetId: selected.libraryAsset?.id ?? null,
     selectedSourcePath: selected.sourcePath ?? null, activeTool: tool,
     libraryPanelOpen: leftOpen, filmstripOpen, zoomMode: zoom, zoomScale,
     libraryContext: filter,
-  }), [view, selected.libraryAsset?.id, selected.sourcePath, tool, leftOpen, filmstripOpen, zoom, zoomScale, filter])
-  useEffect(() => { currentSession.current = sessionState }, [sessionState])
+    libraryBrowser: { collectionId: activeLibraryCollection?.id ?? null, search: librarySearch, page: libraryPage },
+  }), [view, selected.libraryAsset?.id, selected.sourcePath, tool, leftOpen, filmstripOpen, zoom, zoomScale, filter, activeLibraryCollection?.id, librarySearch, libraryPage])
+  useEffect(() => { currentSession.current = sessionReady ? sessionState : null }, [sessionReady, sessionState])
   useEffect(() => {
     if (!sessionReady || !nativeRuntimeAvailable()) return
     const timer = window.setTimeout(() => {
@@ -1414,6 +1446,7 @@ export function App() {
       const windowHandle = getCurrentWindow()
       unlisten = await windowHandle.onCloseRequested(async (event) => {
         event.preventDefault()
+        if (!currentSession.current && !window.confirm('工作階段尚未完成還原。仍要關閉嗎？原有復原資料會保留，不會以未還原的畫面覆蓋。')) return
         if (transientEditsPending.current && !window.confirm('This Browser fallback photo has edits that are not stored in Native History. Close Starroom and discard those transient edits?')) return
         try {
           await flushNativeHistory()
@@ -1570,10 +1603,14 @@ export function App() {
   async function importLibraryFolder() {
     const root = await chooseNativeLibraryFolder()
     if (!root) return
+    libraryQueryEpoch.current++
+    setActiveLibraryCollection(null)
+    setLibrarySearch('')
+    setFilter('all')
     setLibraryBusy(true)
     try {
       const result = await importNativeLibraryFolder(root)
-      await refreshLibrary()
+      await refreshLibrary('', 0, 'all', null)
       setNotice(`圖庫匯入 · 已加入 ${result.imported.length} 個 · ${result.duplicates.length} 個重複 · ${result.unsupported.length} 個不支援`)
     } catch (error) { setNotice(formatUserError(error, 'Library import failed')) }
     finally { setLibraryBusy(false) }
@@ -2464,11 +2501,12 @@ export function App() {
   return <main className={`app theme-${theme}`} data-theme={theme}>
     {dragActive && <div className="native-drop-overlay" role="status" aria-live="polite">將照片拖放到此處，以原生處理管線開啟</div>}
     {commandPaletteOpen && <CommandPalette query={commandQuery} setQuery={setCommandQuery} execute={executeCommand} close={() => setCommandPaletteOpen(false)} />}
-    {recoveryState && <div className="command-backdrop" role="presentation"><section className="recovery-dialog" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
-      <span className="eyebrow">當機復原</span><h2 id="recovery-title">Starroom 發現中斷的工作階段</h2>
+    {(recoveryState || sessionFailure) && <div className="command-backdrop" role="presentation"><section className="recovery-dialog" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title">
+      <span className="eyebrow">工作階段復原</span><h2 id="recovery-title">{sessionFailure ? '工作階段尚未還原，原資料已保留' : 'Starroom 發現中斷的工作階段'}</h2>
+      {sessionFailure && <p>{sessionFailure}</p>}
       <p>可還原先前的工作區、所選照片、面板與縮放狀態，或只捨棄復原資料。來源照片絕不會被修改。</p>
-      <div><button className="export-button" autoFocus onClick={() => { restoreSession(recoveryState); setRecoveryState(null); setSessionReady(true) }}>還原</button>
-        <button onClick={() => void discardNativeRecovery().then(() => { setRecoveryState(null); setSessionReady(true) }).catch((error) => setNotice(formatUserError(error, '無法捨棄復原資料')))}>捨棄</button></div>
+      <div>{recoveryState && <button className="export-button" autoFocus onClick={() => { restoreSession(recoveryState); setRecoveryState(null) }}>還原</button>}
+        <button autoFocus={!recoveryState} onClick={() => void discardNativeRecovery().then(() => { setRecoveryState(null); setSessionFailure(null); setSessionReady(true) }).catch((error) => setNotice(formatUserError(error, '無法捨棄復原資料')))}>捨棄工作階段復原（保留照片與編輯）</button></div>
     </section></div>}
     <AppHeader view={view} setView={(next) => { setView(next); setAiHubOpen(false); setBefore(false) }} aiHubOpen={aiHubOpen} theme={theme} setTheme={setTheme} before={before} setBefore={setBefore}
       canUndo={selected.libraryAsset ? Boolean(nativeHistory?.canUndo) : selected.history.length > 0}

@@ -12,6 +12,8 @@ usable. The older alternative M2–M18 outline is not a renumbering of the accep
 - [x] Keep collection search, pagination and Select All scoped to the selected collection; fix tagged smart-rule IPC and preserve source files.
 - [x] Query durable edited-state histories before Library pagination; cover restart, Undo/Redo, neutral curves and typed corruption without a database schema change.
 - [x] Keep Pick/Reject on the current editor photo and prevent repeated Advisor Preview/Apply from accumulating the same suggestion twice.
+- [x] Persist/restore collection, Unicode search, page, filter and off-page selected photo; wait for the Library before enabling autosave; retain invalid recovery until an explicit user decision.
+- [ ] Replace page-local sidebar album counts with whole-catalog counts; the restored-page UI audit exposed this remaining mismatch.
 - [ ] Complete the original M1–M30 requirement-to-runtime audit and remaining field fixes.
 - [ ] Qualify and package the new immutable SHA; the existing `aa5ed01` installer does not contain these edits.
 - [ ] Same-hardware Lightroom A/B, multi-monitor hardware and second-machine field validation remain unverified; do not call the product perfect or faster than Lightroom.

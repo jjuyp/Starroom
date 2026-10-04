@@ -48,8 +48,15 @@ recorded in the dated delivery report under `output/`; they do not qualify subse
   background query worker and applies matching IDs in SQL before pagination/Select All. The
   regression checks restart, Undo/Redo, neutral endpoint equivalence, corrupt state and empty
   subsets. No source pixels are loaded and no second edit-state database can become stale.
+- **Repaired product defect:** collection/search/page/filter and off-page editor selection now
+  restore after Library initialization, before autosave. Old version-1 sessions remain readable;
+  corrupt/missing-collection sessions stay intact until explicit discard. Verified by seven UI
+  intent tests, Native session/workflow tests and actual App browser IPC-ordering audit.
+- **Product defect still open:** sidebar album totals use the current working page rather than
+  whole-catalog counts. Browser restore audit showed All Photos=1 and Recent=2 for a one-row
+  page plus an off-page editor photo. Implement native aggregate counts, not cosmetic relabeling.
 - **Product audit:** finish original requirement-to-click-path checks beyond the baseline test
-  inventory, including collection/session context and multi-asset workflow actions.
+  inventory, including remaining multi-asset workflow actions.
 - **Performance:** the expanded private AI test passed in 82.12 seconds including first cold
   scene-session startup. Profile cold vs warm inference separately; do not advertise this as
   instant AI or compare that whole-test duration with slider latency.

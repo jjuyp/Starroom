@@ -11,6 +11,14 @@ pub const SESSION_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryBrowserState {
+    pub collection_id: Option<i64>,
+    pub search: String,
+    pub page: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionState {
     pub version: u32,
     pub workspace: String,
@@ -22,6 +30,8 @@ pub struct SessionState {
     pub zoom_mode: String,
     pub zoom_scale: f32,
     pub library_context: String,
+    #[serde(default)]
+    pub library_browser: Option<LibraryBrowserState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,6 +89,11 @@ fn validate(state: &SessionState) -> Result<(), SessionError> {
     if state.version != SESSION_VERSION
         || !state.zoom_scale.is_finite()
         || !(0.25..=6.0).contains(&state.zoom_scale)
+        || state.library_browser.as_ref().is_some_and(|browser| {
+            browser.collection_id.is_some_and(|id| id <= 0)
+                || browser.search.len() > 16384
+                || browser.page > u32::MAX / 200
+        })
     {
         return Err(SessionError::Invalid(
             "unsupported version or zoom state".into(),
@@ -126,6 +141,7 @@ mod tests {
             zoom_mode: "fit".into(),
             zoom_scale: 1.0,
             library_context: "recent".into(),
+            library_browser: None,
         }
     }
     #[test]
@@ -160,5 +176,41 @@ mod tests {
             mark_clean(&root.path().join("invalid-zoom.json"), &invalid_zoom),
             Err(SessionError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn library_scope_round_trips_and_legacy_sessions_remain_readable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("session.json");
+        let mut saved = state();
+        saved.library_browser = Some(LibraryBrowserState {
+            collection_id: Some(17),
+            search: "京都 RAW".into(),
+            page: 3,
+        });
+        autosave(&path, &saved).unwrap();
+        assert_eq!(open(&path).unwrap().state, Some(saved.clone()));
+        mark_clean(&path, &saved).unwrap();
+        assert_eq!(open(&path).unwrap().state, Some(saved));
+        let mut legacy = serde_json::to_value(state()).unwrap();
+        legacy.as_object_mut().unwrap().remove("libraryBrowser");
+        let migrated: SessionState = serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated, state());
+    }
+
+    #[test]
+    fn invalid_browser_state_never_overwrites_valid_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("session.json");
+        autosave(&path, &state()).unwrap();
+        let before = fs::read(&path).unwrap();
+        let mut invalid = state();
+        invalid.library_browser = Some(LibraryBrowserState {
+            collection_id: Some(-1),
+            search: String::new(),
+            page: 0,
+        });
+        assert!(mark_clean(&path, &invalid).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 }

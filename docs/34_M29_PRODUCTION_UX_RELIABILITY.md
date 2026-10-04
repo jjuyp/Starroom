@@ -18,6 +18,13 @@ filmstrip, zoom and Library context. Corrupt, future or invalid session data is 
 If the clean-session write fails, the close request is cancelled, the diagnostic is shown and the
 interrupted recovery envelope is retained; Starroom never destroys the window after a failed save.
 
+October field closure adds optional `libraryBrowser` (collection ID, search, page), retaining old
+version-1 filter-only compatibility. Library initialization completes before scoped restore and
+autosave. A selected asset outside the current page is loaded by ID without widening the grid.
+Missing collections/corrupt state are visible recovery failures, never silent All Photos
+substitution; explicit discard affects only the session. Closing before restoration completes
+preserves the old recovery envelope instead of saving the incomplete display.
+
 Native History remains the durable edit record. Browser fallback edits are explicitly transient;
 closing with such edits requires confirmation. Neither autosave nor session restore serializes source
 pixels or overwrites source photos.

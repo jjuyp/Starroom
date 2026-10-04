@@ -132,12 +132,34 @@ fn scenario_a_library_history_snapshot_export_return() {
         filmstrip_open: true,
         zoom_mode: "fit".into(),
         zoom_scale: 1.0,
-        library_context: "collection:Kyoto Five".into(),
+        library_context: "all".into(),
+        library_browser: Some(starroom_session::LibraryBrowserState {
+            collection_id: Some(smart),
+            search: "kyoto".into(),
+            page: 0,
+        }),
     };
     autosave(&session_path, &session).unwrap();
     assert!(open(&session_path).unwrap().recovery_available);
     mark_clean(&session_path, &session).unwrap();
-    assert_eq!(open(&session_path).unwrap().state, Some(session));
+    let restored = open(&session_path).unwrap().state.unwrap();
+    assert_eq!(restored, session);
+    let browser = restored.library_browser.unwrap();
+    let restored_assets = library
+        .query(&starroom_library::LibraryQuery {
+            collection_id: browser.collection_id,
+            text: Some(browser.search),
+            offset: browser.page * 200,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        restored_assets
+            .iter()
+            .map(|asset| asset.id)
+            .collect::<Vec<_>>(),
+        vec![asset_id]
+    );
 
     let second = export_one(
         &NativeSharedGraphRenderer,

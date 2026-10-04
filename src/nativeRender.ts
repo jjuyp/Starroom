@@ -22,6 +22,7 @@ export interface NativeLibraryAsset {
     aperture: number | null; shutterSpeed: number | null; iso: number | null }
 }
 export interface NativeLibraryQuery {
+  assetIds?: number[] | null
   collectionId?: number | null
   editedOnly?: boolean
   text?: string | null; filename?: string | null; camera?: string | null; lens?: string | null
@@ -59,6 +60,7 @@ export interface NativeSessionState {
   version: 1; workspace: 'library' | 'edit' | 'compare'; selectedAssetId: number | null
   selectedSourcePath: string | null; activeTool: string; libraryPanelOpen: boolean
   filmstripOpen: boolean; zoomMode: 'fit' | '100'; zoomScale: number; libraryContext: string
+  libraryBrowser?: { collectionId: number | null; search: string; page: number } | null
 }
 export interface NativeSessionOpen { state: NativeSessionState | null; recoveryAvailable: boolean }
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }

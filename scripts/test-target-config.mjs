@@ -12,12 +12,12 @@ export const targets = {
   },
   library: {
     rust: [['test', '--locked', '-p', 'starroom-library']],
-    web: ['src/nativeRender.test.ts', 'src/nativeLibraryQuery.test.ts', 'src/librarySelection.test.ts', 'src/progressiveThumbnails.test.ts'],
+    web: ['src/nativeRender.test.ts', 'src/nativeLibraryQuery.test.ts', 'src/librarySelection.test.ts', 'src/librarySession.test.ts', 'src/progressiveThumbnails.test.ts'],
     golden: [],
   },
   history: {
-    rust: [['test', '--locked', '-p', 'starroom-history']],
-    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts', 'src/historyCommandQueue.test.ts'],
+    rust: [['test', '--locked', '-p', 'starroom-history', '-p', 'starroom-session']],
+    web: ['src/editorState.test.ts', 'src/nativeRender.test.ts', 'src/historyCommandQueue.test.ts', 'src/librarySession.test.ts'],
     golden: [],
   },
   export: {
