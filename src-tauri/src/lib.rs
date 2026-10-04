@@ -238,34 +238,56 @@ fn library_cancel_import(runtime: State<'_, NativeLibraryRuntime>) -> bool {
 }
 
 #[tauri::command]
-fn library_query(
+async fn library_query(
     runtime: State<'_, NativeLibraryRuntime>,
-    query: LibraryQuery,
+    mut query: LibraryQuery,
+    edited_only: Option<bool>,
 ) -> Result<Vec<AssetRecord>, String> {
-    let guard = runtime
-        .library
-        .lock()
-        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
-    guard
-        .as_ref()
-        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
-        .query(&query)
-        .map_err(|error| error.to_string())
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if edited_only.unwrap_or(false) {
+            query.asset_ids = Some(persisted_edited_asset_ids(
+                &history_path(0)?.with_file_name(""),
+            )?);
+        }
+        let guard = runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+            .query(&query)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("InvalidQuery: worker failed: {error}"))?
 }
 
 #[tauri::command]
-fn library_query_ids(
+async fn library_query_ids(
     runtime: State<'_, NativeLibraryRuntime>,
-    query: LibraryQuery,
+    mut query: LibraryQuery,
+    edited_only: Option<bool>,
 ) -> Result<Vec<i64>, String> {
-    runtime
-        .library
-        .lock()
-        .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?
-        .as_ref()
-        .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
-        .query_ids(&query)
-        .map_err(|error| error.to_string())
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if edited_only.unwrap_or(false) {
+            query.asset_ids = Some(persisted_edited_asset_ids(
+                &history_path(0)?.with_file_name(""),
+            )?);
+        }
+        runtime
+            .library
+            .lock()
+            .map_err(|_| "CorruptDatabase: library lock poisoned".to_owned())?
+            .as_ref()
+            .ok_or_else(|| "DatabaseOpenFailed: library is not open".to_owned())?
+            .query_ids(&query)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("InvalidQuery: worker failed: {error}"))?
 }
 
 fn library_metadata_refresh_snapshot(
@@ -577,6 +599,69 @@ fn history_path(asset_id: i64) -> Result<PathBuf, String> {
         .ok_or_else(|| "HistoryPersistenceFailed: invalid app data directory".to_owned())?
         .join("history");
     Ok(root.join(format!("asset-{asset_id}.history.json")))
+}
+
+// History is the durable edit authority. Query only its small state files, never source pixels,
+// and apply the resulting IDs in SQL before paging. No second, potentially stale edit database.
+fn persisted_edited_asset_ids(root: &Path) -> Result<Vec<i64>, String> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("HistoryPersistenceFailed: {error}")),
+    };
+    let neutral: NativeEditSettings = serde_json::from_str(include_str!(
+        "../../fixtures/contracts/native-default-settings.json"
+    ))
+    .map_err(|error| format!("HistoryCorrupt: neutral contract: {error}"))?;
+    let neutral =
+        serde_json::to_value(neutral).map_err(|error| format!("HistoryCorrupt: {error}"))?;
+    let mut ids = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("HistoryPersistenceFailed: {error}"))?;
+        let name = entry.file_name();
+        let Some(id) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("asset-"))
+            .and_then(|name| name.strip_suffix(".history.json"))
+            .and_then(|value| value.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let history = EditHistory::load(entry.path())
+            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
+        let mut state: NativeEditSettings = serde_json::from_value(history.state().clone())
+            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
+        state
+            .clone()
+            .validated()
+            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
+        // Execution backend is not a photographic edit.
+        state.ai_denoise_provider = default_denoise_execution_provider();
+        // The UI serializes its two identity endpoints; Native defaults use an empty curve.
+        for curve in [
+            &mut state.curve,
+            &mut state.curves.master,
+            &mut state.curves.red,
+            &mut state.curves.green,
+            &mut state.curves.blue,
+        ] {
+            if curve.len() == 2
+                && curve[0].x == 0.0
+                && curve[0].y == 0.0
+                && curve[1].x == 1.0
+                && curve[1].y == 1.0
+            {
+                curve.clear();
+            }
+        }
+        if serde_json::to_value(state).map_err(|error| format!("HistoryCorrupt: {error}"))?
+            != neutral
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    Ok(ids)
 }
 
 fn session_path() -> Result<PathBuf, String> {
@@ -2774,10 +2859,15 @@ fn attach_generated_masks(
                 "foreground",
             ),
             GeneratedMaskSemantic::Sky => (AiMaskSemantic::Sky, &registry.scene, "semantic-scene"),
-            _ => return Err(
-                "PortraitProviderRequired: use the verified portrait provider for Person/Skin/Hair"
-                    .into(),
-            ),
+            GeneratedMaskSemantic::Person => {
+                (AiMaskSemantic::Person, &registry.scene, "semantic-scene")
+            }
+            _ => {
+                return Err(
+                    "PortraitProviderRequired: use the verified portrait provider for Skin/Hair"
+                        .into(),
+                );
+            }
         };
         if reference.provider_id != provider_id
             || reference.model_id != descriptor.id
@@ -3195,7 +3285,7 @@ fn ai_mask_generate(
     }
     if matches!(
         request.semantic,
-        AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair
+        AiMaskSemantic::Skin | AiMaskSemantic::Hair
     ) {
         return Err(AiMaskError::PortraitProviderRequired(request.semantic).into());
     }
@@ -4486,6 +4576,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn edited_album_uses_saved_state_across_restart_undo_and_corruption() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-edited-album-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(persisted_edited_asset_ids(&root).unwrap().is_empty());
+        std::fs::create_dir_all(&root).unwrap();
+        let neutral: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/contracts/native-default-settings.json"
+        ))
+        .unwrap();
+        let mut history = EditHistory::new(neutral.clone()).unwrap();
+        let mut changed = neutral.clone();
+        changed["exposure"] = serde_json::json!(1.0);
+        history
+            .commit(
+                "Exposure",
+                "tone",
+                EditCommand::ReplaceState {
+                    before: neutral.clone(),
+                    after: changed,
+                },
+            )
+            .unwrap();
+        let path = root.join("asset-7.history.json");
+        history.persist(&path).unwrap();
+        assert_eq!(persisted_edited_asset_ids(&root).unwrap(), vec![7]);
+        let mut reopened = EditHistory::load(&path).unwrap();
+        reopened.undo().unwrap();
+        reopened.persist(&path).unwrap();
+        assert!(persisted_edited_asset_ids(&root).unwrap().is_empty());
+        reopened.redo().unwrap();
+        reopened.persist(&path).unwrap();
+        let mut ui_neutral = neutral;
+        ui_neutral["curve"] = serde_json::json!([{"x":0,"y":0},{"x":1,"y":1}]);
+        ui_neutral["curves"]["red"] = ui_neutral["curve"].clone();
+        ui_neutral["aiDenoiseProvider"] = serde_json::json!("cpu");
+        EditHistory::new(ui_neutral)
+            .unwrap()
+            .persist(root.join("asset-8.history.json"))
+            .unwrap();
+        assert_eq!(persisted_edited_asset_ids(&root).unwrap(), vec![7]);
+        std::fs::write(root.join("asset-9.history.json"), b"broken").unwrap();
+        assert!(
+            persisted_edited_asset_ids(&root)
+                .unwrap_err()
+                .contains("HistoryCorrupt: asset 9")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn native_ai_restoration_rejects_foreign_source_and_model_before_inference() {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
@@ -5367,6 +5513,91 @@ mod tests {
             "private NASA512² SegFormer + native mask parity: {:.3}s",
             stage_started.elapsed().as_secs_f64()
         );
+
+        // Whole Person is ADE20K class 12. Reuse the scene session, never substitute a face mask.
+        assert!(sky.supports(AiMaskSemantic::Person));
+        let person_result = sky
+            .generate(
+                width,
+                height,
+                &rgba,
+                &original_hash,
+                AiMaskSemantic::Person,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_ne!(person_result.cache_identity, sky_result.cache_identity);
+        assert!(
+            person_result
+                .mask
+                .values
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        );
+        let probability = |x: f32, y: f32| {
+            let mask = &person_result.mask;
+            mask.values[(y * mask.height as f32) as usize * mask.width as usize
+                + (x * mask.width as f32) as usize]
+        };
+        eprintln!(
+            "Person body={}, background={}",
+            probability(0.45, 0.75),
+            probability(0.95, 0.05)
+        );
+        assert!(
+            probability(0.45, 0.75) > 0.5,
+            "whole-person mask must include the suit below the face"
+        );
+        assert!(
+            probability(0.95, 0.05) < 0.5,
+            "whole-person mask must exclude the background"
+        );
+        let mut person_settings = RenderSettings::default();
+        person_settings.generated_masks.push(GeneratedMaskRaster {
+            cache_identity: person_result.cache_identity.clone(),
+            semantic: GeneratedMaskSemantic::Person,
+            width: person_result.mask.width,
+            height: person_result.mask.height,
+            values: person_result.mask.values.clone(),
+        });
+        let mut person_layer = sky_settings.layers[0].clone();
+        person_layer.id = "actual-person".into();
+        person_layer.name = "Actual whole person".into();
+        person_layer.mask = MaskDefinition::Generated {
+            provider_id: person_result.provider_id.clone(),
+            model_id: person_result.model_id.clone(),
+            model_version: person_result.model_version.clone(),
+            model_hash: person_result.model_hash.clone(),
+            semantic_class: GeneratedMaskSemantic::Person,
+            threshold: 0.5,
+            feather: 0.1,
+            invert: false,
+            cache_identity: person_result.cache_identity.clone(),
+            metadata: BTreeMap::new(),
+        }
+        .into();
+        person_settings.layers.push(person_layer);
+        let person_preview = render_source_preview_to_srgb8(&decoded, &person_settings).unwrap();
+        let person_export = render_source_export_to_srgb8(&decoded, &person_settings).unwrap();
+        assert_eq!(person_preview.data, person_export.data);
+        assert_ne!(
+            person_export.data, original.data,
+            "Person must affect production pixels"
+        );
+        // Persist only the editable model reference, then regenerate from the actual file on restart.
+        let saved_layers = serde_json::to_string(&person_settings.layers).unwrap();
+        person_settings.layers = serde_json::from_str(&saved_layers).unwrap();
+        person_settings.generated_masks.clear();
+        let person_runtime = NativeAiMaskRuntime::default();
+        attach_generated_masks(&mut person_settings, &source, &person_runtime).unwrap();
+        assert_eq!(person_runtime.cache.lock().unwrap().len(), 1);
+        assert_eq!(
+            render_source_export_to_srgb8(&decoded, &person_settings)
+                .unwrap()
+                .data,
+            person_export.data
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), original_hash);
 
         let stage_started = Instant::now();
         let mut denoise =

@@ -122,8 +122,8 @@ pub struct BandAdjustment {
 #[serde(rename_all = "camelCase")]
 pub struct ColorMixer {
     pub bands: [BandAdjustment; 8],
-    /// Hue lock means chroma/lightness controls preserve the source hue exactly; only the
-    /// explicitly weighted Hue control may rotate it. Enabled by default.
+    /// Legacy serialized flag retained for project compatibility. The OKLCh implementation
+    /// always preserves hue under chroma/lightness edits; only the Hue control rotates it.
     #[serde(default = "default_hue_lock")]
     pub hue_lock: bool,
     /// Smooth transition half-width in degrees. The inner half has full influence and the
@@ -409,19 +409,19 @@ fn color_band_weight(hue: f32, band: ColorBand, width: f32) -> f32 {
     1.0 - smoothstep(outer * 0.42, outer, distance)
 }
 
-/// Picks the strongest of the eight circular bands. Achromatic samples are rejected because
+/// Picks the nearest of the eight circular band centers. Flat-top overlap weights can tie
+/// even away from the midpoint; selection must not depend on enum iteration order.
+/// Achromatic samples are rejected because
 /// assigning an arbitrary hue to neutral grey would make the targeted tool unstable.
 pub fn sample_color_band(rgb: LinearRgb) -> Option<ColorBand> {
     let lch = oklab_to_oklch(rec2020_to_oklab(rgb));
     if !lch.l.is_finite() || !lch.c.is_finite() || lch.c < 1.0e-4 {
         return None;
     }
-    ColorBand::ALL.into_iter().max_by(|left, right| {
-        color_band_weight(lch.h_deg, *left, default_band_width()).total_cmp(&color_band_weight(
-            lch.h_deg,
-            *right,
-            default_band_width(),
-        ))
+    ColorBand::ALL.into_iter().min_by(|left, right| {
+        circular_distance_degrees(lch.h_deg, left.center_degrees()).total_cmp(
+            &circular_distance_degrees(lch.h_deg, right.center_degrees()),
+        )
     })
 }
 
@@ -1077,6 +1077,47 @@ mod tests {
         assert!(circular_distance_degrees(before.h_deg, after.h_deg) < 0.02);
         assert!(after.c > before.c);
         assert!(after.l < before.l);
+    }
+
+    #[test]
+    fn targeted_mixer_picks_nearest_center_in_flat_top_overlap() {
+        for (hue, expected) in [
+            (35.0, ColorBand::Red),
+            (45.0, ColorBand::Orange),
+            (315.0, ColorBand::Purple),
+            (325.0, ColorBand::Magenta),
+        ] {
+            let source = oklab_to_rec2020(oklch_to_oklab(Oklch {
+                l: 0.65,
+                c: 0.12,
+                h_deg: hue,
+            }));
+            assert_eq!(
+                sample_color_band(source),
+                Some(expected),
+                "sample hue {hue}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_hue_lock_flag_does_not_change_existing_project_pixels() {
+        let source = LinearRgb {
+            r: 0.62,
+            g: 0.22,
+            b: 0.08,
+        };
+        let mut mixer = ColorMixer::default().with_band(
+            ColorBand::Orange,
+            BandAdjustment {
+                hue_degrees: 12.0,
+                chroma: 0.5,
+                lightness: -0.2,
+            },
+        );
+        let locked = apply_color_mixer(source, mixer);
+        mixer.hue_lock = false;
+        assert_eq!(apply_color_mixer(source, mixer), locked);
     }
 
     #[test]

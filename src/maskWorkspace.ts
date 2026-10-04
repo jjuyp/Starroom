@@ -3,6 +3,13 @@ import type { RadialMask } from './previewPresentation'
 
 export const manualMaskTypes = ['radial', 'linear', 'brush', 'luminance', 'colorRange'] as const
 export type ManualMaskType = typeof manualMaskTypes[number]
+// Scene availability is shared by Sky and whole Person; Face/Skin keep their own provider.
+export const generatedMaskActions = [
+  { semantic: 'subject', label: '主體', availability: 'subjectBackground' },
+  { semantic: 'background', label: '背景', availability: 'subjectBackground' },
+  { semantic: 'person', label: '人物', availability: 'sky' },
+  { semantic: 'sky', label: '天空', availability: 'sky' },
+] as const
 export const maskLabels: Record<NativeMaskDefinition['type'], string> = {
   none: '全圖', radial: '放射漸層', linear: '線性漸層', brush: '筆刷', luminance: '明度範圍',
   colorRange: '色彩範圍', portraitSemantic: '人像區域', generated: 'AI 選取',

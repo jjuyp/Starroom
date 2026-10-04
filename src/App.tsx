@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { selectLibraryRange } from './librarySelection'
+import { selectLibraryRange, smartCollectionRule, workflowAssetIds } from './librarySelection'
+import { advisorAdjustments } from './advisorInteraction'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
@@ -28,7 +29,7 @@ import {
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
   queryNativeAiAvailability, installLocalPortraitModels, type NativeAiAvailability,
   applyNativeLook, chooseNativeLookPath, chooseNativeReferencePath, defaultNativeRenderConstants, fromNativeSettings, matchNativeReference, mixNativeLooks, saveNativeLook, toNativeSettings, type NativeRenderConstants,
-  addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollectionAssets, nativeLibraryCollections, nativeLibraryThumbnail,
+  addNativeLibraryCollectionAssets, addNativeLibraryKeywords, chooseNativeLibraryFolder, createNativeLibraryCollection, importNativeLibraryFolder, nativeLibraryCollections, nativeLibraryThumbnail,
   openNativeLibrary, queryNativeLibrary, queryNativeLibraryIds, removeNativeLibraryAssets, removeNativeLibraryKeywords, updateNativeLibraryWorkflow,
   refreshNativeLibraryMetadata,
   nativePreviewViewportContract,
@@ -49,8 +50,9 @@ import {
   prependInteractiveHistory,
   scrollFilmstripFromWheel,
 } from './interactiveState'
-import { controlGradient, formatNumericValue, gradingGradient, kelvinToRelative, wheelPosition, wheelValue, whiteBalancePresentation, type MixerBand } from './editControls'
-import { manualMaskTypes, maskLabel, maskLabels, portraitRegionLabels, validLinearGeometry, selectedRadialMask, replaceRadialGeometry, invertedMask, hasNativeSkinSelection, type ManualMaskType } from './maskWorkspace'
+import { controlGradient, formatNumericValue, gradingGradient, kelvinToRelative, whiteBalancePresentation, type MixerBand } from './editControls'
+import { ColorWheel } from './ColorWheel'
+import { generatedMaskActions, manualMaskTypes, maskLabel, maskLabels, portraitRegionLabels, validLinearGeometry, selectedRadialMask, replaceRadialGeometry, invertedMask, hasNativeSkinSelection, type ManualMaskType } from './maskWorkspace'
 import { MaskOverlay, LinearMaskOverlay } from './MaskOverlay'
 import { canApplyWhiteBalanceMode, copyWhiteBalanceState, pasteWhiteBalanceState, type WhiteBalanceClipboard } from './whiteBalanceClipboard'
 
@@ -510,34 +512,6 @@ function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit,
   </>
 }
 
-function ColorWheel({ hue, chroma, label, onBeginEdit, onChange }: {
-  hue: number; chroma: number; label: string; onBeginEdit: () => void
-  onChange: (hue: number, chroma: number) => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const position = wheelPosition(hue, chroma)
-  const update = (event: React.PointerEvent<HTMLDivElement>) => {
-    const bounds = ref.current?.getBoundingClientRect()
-    if (!bounds) return
-    const next = wheelValue((event.clientX - bounds.left) / bounds.width * 100, (event.clientY - bounds.top) / bounds.height * 100)
-    onChange(next.hue, next.chroma)
-  }
-  return <div className="grading-wheel-shell"><div ref={ref} className="grading-wheel" role="slider" tabIndex={0}
-    aria-label={`${label} color wheel`} aria-valuemin={-180} aria-valuemax={180} aria-valuenow={Math.round(hue)} aria-valuetext={`${Math.round(hue)} degrees, ${Math.round(chroma)} chroma`}
-    onPointerDown={(event) => { onBeginEdit(); event.currentTarget.setPointerCapture(event.pointerId); update(event) }}
-    onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) update(event) }}
-    onKeyDown={(event) => {
-      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
-      event.preventDefault(); onBeginEdit()
-      if (event.key === 'ArrowLeft') onChange(hue - 2, chroma)
-      if (event.key === 'ArrowRight') onChange(hue + 2, chroma)
-      if (event.key === 'ArrowUp') onChange(hue, Math.min(100, chroma + 2))
-      if (event.key === 'ArrowDown') onChange(hue, Math.max(0, chroma - 2))
-    }}>
-    <span className="grading-wheel-center" /><span className="grading-wheel-handle" style={{ left: `${position.x}%`, top: `${position.y}%`, '--wheel-hue': hue } as CSSProperties} />
-  </div><small>{Math.round(hue)}° · C {Math.round(chroma)}</small></div>
-}
-
 const libraryPhoto = (asset: NativeLibraryAsset, thumbnail: string): PhotoItem => ({
   id: `library-${asset.id}`,
   name: asset.sourcePath.split(/[\\/]/).pop() ?? asset.sourcePath,
@@ -901,8 +875,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
       </div>
       <div className="color-bento-column">
       <div className="mixer-panel" aria-label="Eight-band Color Mixer">
-        <div className="mixer-heading"><strong>色彩混合器</strong><button className={mixerPicking ? 'active' : ''} onClick={onMixerPicking}>目標調整</button><label><input type="checkbox" checked={values.mixerHueLock !== 0}
-          onFocus={onBeginAdjustment} onChange={(event) => onAdjust('mixerHueLock', event.target.checked ? 1 : 0)} /> 鎖定色相</label></div>
+        <div className="mixer-heading"><strong>色彩混合器</strong><button className={mixerPicking ? 'active' : ''} onClick={onMixerPicking}>取色選取色域</button><small title="彩度與明度調整保持色相；只有色相滑桿會旋轉色相。">自動保持色相</small></div>
         <div className="mixer-tabs" role="tablist" aria-label="Color Mixer bands">
           {mixerBands.map((band) => <button key={band} role="tab" aria-selected={band === mixerBand}
             className={band === mixerBand ? `active band-${band.toLowerCase()}` : `band-${band.toLowerCase()}`}
@@ -922,7 +895,7 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
           {gradingZones.map((zone) => <button key={zone} role="tab" aria-selected={zone === gradingZone}
             className={zone === gradingZone ? 'active' : ''} onClick={() => setGradingZone(zone)}>{gradingLabels[zone]}</button>)}
         </div>
-        <ColorWheel label={gradingZone} hue={values[`grade${gradingZone}Hue` as AdjustmentKey]} chroma={values[`grade${gradingZone}Chroma` as AdjustmentKey]}
+        <ColorWheel label={gradingLabels[gradingZone]} hue={values[`grade${gradingZone}Hue` as AdjustmentKey]} chroma={values[`grade${gradingZone}Chroma` as AdjustmentKey]}
           onBeginEdit={onBeginAdjustment} onChange={(hue, chroma) => { onAdjust(`grade${gradingZone}Hue` as AdjustmentKey, hue, false); onAdjust(`grade${gradingZone}Chroma` as AdjustmentKey, chroma, false) }} />
         {([['Hue', -180, 180, 1, '°'], ['Chroma', -100, 100, 1, ''], ['Lightness', -100, 100, 1, '']] as const)
           .map(([control, min, max, step, suffix]) => {
@@ -1163,6 +1136,8 @@ export function App() {
   const [lookBWeight, setLookBWeight] = useState(30)
   const [libraryAssets, setLibraryAssets] = useState<NativeLibraryAsset[]>([])
   const [libraryCollections, setLibraryCollections] = useState<NativeLibraryCollection[]>([])
+  const [activeLibraryCollection, setActiveLibraryCollection] = useState<NativeLibraryCollection | null>(null)
+  const libraryQueryEpoch = useRef(0)
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<number[]>([])
   const [librarySearch, setLibrarySearch] = useState('')
   const [libraryBusy, setLibraryBusy] = useState(false)
@@ -1533,15 +1508,16 @@ export function App() {
     }
   }, [libraryAssets.length, photos])
 
-  function nativeQuery(queryText: string, page: number, activeFilter: LibraryFilter): NativeLibraryQuery {
-    return { text: queryText.trim() || null, limit: 200, offset: page * 200,
+  function nativeQuery(queryText: string, page: number, activeFilter: LibraryFilter, collection = activeLibraryCollection): NativeLibraryQuery {
+    return { collectionId: collection?.id ?? null, editedOnly: activeFilter === 'edited', text: queryText.trim() || null, limit: 200, offset: page * 200,
       sort: 'importTime', direction: 'descending', recentBatch: activeFilter === 'recent',
       minimumRating: activeFilter === 'five-star' ? 5 : null }
   }
 
   function chooseFilter(next: LibraryFilter) {
+    setActiveLibraryCollection(null)
     setFilter(next)
-    if (nativeRuntimeAvailable() && next !== 'edited') { void refreshLibrary(librarySearch, 0, next); return }
+    if (nativeRuntimeAvailable()) { void flushNativeHistory().then(() => refreshLibrary(librarySearch, 0, next, null)); return }
     const first = photos.find((photo) => next === 'all' || (next === 'recent' && photo.imported) || (next === 'five-star' && photo.rating === 5) || (next === 'edited' && hasPhotoEdits(photo)))
     if (first) selectPhoto(first.id)
   }
@@ -1568,11 +1544,14 @@ export function App() {
     setNotice(`已匯入 ${imported.length} 張照片`)
   }
 
-  async function refreshLibrary(queryText = librarySearch, page = libraryPage, activeFilter = filter) {
+  async function refreshLibrary(queryText = librarySearch, page = libraryPage, activeFilter = filter, collection = activeLibraryCollection) {
     if (!nativeRuntimeAvailable()) return
+    const epoch = ++libraryQueryEpoch.current
     setLibraryBusy(true)
     try {
-      const assets = await queryNativeLibrary(nativeQuery(queryText, page, activeFilter))
+      if (activeFilter === 'edited') await flushNativeHistory()
+      const assets = await queryNativeLibrary(nativeQuery(queryText, page, activeFilter, collection))
+      if (epoch !== libraryQueryEpoch.current) return
       const existing = new Map(photos.filter((photo) => photo.libraryAsset).map((photo) => [photo.libraryAsset!.id, photo]))
       const rows = assets.map((asset) => {
         const current = existing.get(asset.id)
@@ -1584,7 +1563,8 @@ export function App() {
       setPhotos((current) => [...rows, ...current.filter((photo) => !photo.libraryAsset)])
       loadLibraryThumbnails(assets.filter((asset) => !existing.get(asset.id)?.src))
       setSelectedLibraryIds((current) => current.filter((id) => assets.some((asset) => asset.id === id)))
-    } finally { setLibraryBusy(false) }
+    } catch (error) { if (epoch === libraryQueryEpoch.current) { setLibraryAssets([]); setSelectedLibraryIds([]); setNotice(formatUserError(error, '圖庫查詢失敗')) } }
+    finally { if (epoch === libraryQueryEpoch.current) setLibraryBusy(false) }
   }
 
   async function importLibraryFolder() {
@@ -1622,9 +1602,10 @@ export function App() {
   }
 
   async function updateLibraryWorkflow(values: { rating?: number; flag?: NativeAssetFlag; colorLabel?: NativeColorLabel }) {
-    if (!selectedLibraryIds.length) return
+    const ids = workflowAssetIds(view === 'library', selectedLibraryIds, selected.libraryAsset?.id)
+    if (!ids.length) return
     try {
-      await updateNativeLibraryWorkflow(selectedLibraryIds, values)
+      await updateNativeLibraryWorkflow(ids, values)
       await refreshLibrary()
     } catch (error) { setNotice(formatUserError(error, '圖庫欄位更新失敗')) }
   }
@@ -1657,13 +1638,15 @@ export function App() {
   }
 
   async function createLibraryCollection(kind: 'normal' | 'smart') {
-    const name = window.prompt(kind === 'normal' ? 'Collection name' : 'Smart collection name')?.trim()
+    const name = window.prompt(kind === 'normal' ? '收藏集名稱' : '智慧型收藏集名稱')?.trim()
     if (!name) return
     let rule: { all: NativeSmartPredicate[] } | null = null
     if (kind === 'smart') {
-      const rating = Math.max(0, Math.min(5, Number(window.prompt('Minimum rating (0-5)', '4')) || 0))
-      const keyword = window.prompt('Required keyword (optional)', '')?.trim()
-      rule = { all: [{ rating: { minimum: rating } }, ...(keyword ? [{ keyword: { value: keyword } } as NativeSmartPredicate] : [])] }
+      const ratingInput = window.prompt('最低評分（0–5）', '4')
+      if (ratingInput === null) return
+      const rating = Math.max(0, Math.min(5, Math.trunc(Number(ratingInput)) || 0))
+      const keyword = window.prompt('指定關鍵字（可留空）', '')?.trim()
+      rule = smartCollectionRule(rating, keyword)
     }
     const id = await createNativeLibraryCollection(name, kind, rule)
     if (kind === 'normal' && selectedLibraryIds.length) await addNativeLibraryCollectionAssets(id, selectedLibraryIds)
@@ -1672,13 +1655,12 @@ export function App() {
   }
 
   async function openLibraryCollection(collection: NativeLibraryCollection) {
-    const assets = await nativeLibraryCollectionAssets(collection.id, 200, 0)
-    setLibraryAssets(assets)
-    setPhotos((current) => [...assets.map((asset) => libraryPhoto(asset, '')), ...current.filter((photo) => !photo.libraryAsset)])
-    loadLibraryThumbnails(assets)
-    setSelectedLibraryIds(assets.length ? [assets[0].id] : [])
+    setActiveLibraryCollection(collection)
+    setFilter('all')
+    setLibrarySearch('')
+    setSelectedLibraryIds([])
     setView('library')
-    setNotice(`${collection.name} · ${assets.length} asset${assets.length === 1 ? '' : 's'}`)
+    await refreshLibrary('', 0, 'all', collection)
   }
 
   async function requestPhotoImport() {
@@ -1982,19 +1964,20 @@ export function App() {
 
   async function pickMixerBand(x: number, y: number) {
     if (!selected.sourcePath || selected.renderBackend !== 'native') {
-      setNotice('Color Mixer targeting requires a Native photo; no Browser color fallback was used.')
+      setNotice('取色需要原生照片；請先匯入照片，不使用瀏覽器替代調色。')
       return
     }
     const current = editorRequests.current.begin('colorSample')
     try {
       const band = await sampleNativeColor(selected.sourcePath, x, y, selectedNativeSettings())
       if (!current()) return
-      if (!band) { setNotice('The sampled area is neutral; no color band was selected.'); return }
+      if (!band) { setNotice('取樣位置接近中性色，請點選有顏色的區域。'); return }
       setMixerBand(`${band[0].toUpperCase()}${band.slice(1)}`)
       setMixerPicking(false)
-      setNotice(`${band} band selected from Native working color`)
+      const labels = { red: '紅', orange: '橙', yellow: '黃', green: '綠', cyan: '青', blue: '藍', purple: '紫', magenta: '洋紅' }
+      setNotice(`已選取${labels[band]}色色域，可調整色相、彩度與明度。`)
     } catch (error) {
-      if (current()) setNotice(formatUserError(error, 'Native Color Mixer sampling failed'))
+      if (current()) setNotice(formatUserError(error, '色彩混合器取色失敗'))
     }
   }
 
@@ -2101,21 +2084,22 @@ export function App() {
     setNotice(`已建立${layer.name}遮罩群組`)
   }
 
-  async function generateAiMask(semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'sky'>) {
+  async function generateAiMask(semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'person' | 'sky'>) {
+    const label = generatedMaskActions.find((action) => action.semantic === semantic)!.label
     if (!selected.sourcePath || selected.renderBackend !== 'native') {
-      setNotice('AI Mask requires a Native photo; Browser fallback is intentionally unavailable.')
+      setNotice('AI 遮罩需要匯入原生照片；不以瀏覽器示範替代。')
       return
     }
     const current = editorRequests.current.begin('aiMask')
     const requestId = crypto.randomUUID()
     activeAiMaskRequest.current = requestId
     setAiMaskRequestId(requestId)
-    setRenderStatus(`Generating ${semantic} mask locally…`)
+    setRenderStatus(`正在本機建立${label}遮罩…`)
     try {
       const result = await generateNativeAiMask(selected.sourcePath, semantic, requestId)
       if (!current()) return
       const layer = defaultLayer()
-      layer.name = `AI・${{ subject: '主體', background: '背景', sky: '天空' }[semantic]}`
+      layer.name = `AI・${label}`
       layer.mask = {
         type: 'generated', providerId: result.providerId, modelId: result.modelId,
         modelVersion: result.modelVersion, modelHash: result.modelHash,
@@ -2127,12 +2111,12 @@ export function App() {
       setSelectedLayerId(layer.id)
       setAiMaskResult(result)
       setMaskOverlayVisible(true)
-      setNotice(`${semantic} mask ${result.status} · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
-      setRenderStatus(`AI Mask · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU fallback'}`)
+      setNotice(`已建立${label}遮罩 · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU'}`)
+      setRenderStatus(`AI 遮罩 · ${result.executionProvider === 'directMl' ? 'DirectML' : 'CPU'}`)
     } catch (error) {
       if (!current()) return
-      setNotice(formatUserError(error, `${semantic} mask generation failed`))
-      setRenderStatus('AI Mask unavailable')
+      setNotice(formatUserError(error, `${label}遮罩建立失敗`))
+      setRenderStatus('AI 遮罩無法使用')
     } finally {
       if (activeAiMaskRequest.current === requestId) activeAiMaskRequest.current = null
       if (current()) setAiMaskRequestId(null)
@@ -2189,29 +2173,18 @@ export function App() {
   }
 
   function applyAdvisorSuggestions(suggestions: NativeAdvisorSuggestion[]) {
-    const allowed = new Set<AdjustmentKey>(['exposure', 'shadows', 'highlights', 'contrast', 'temperature', 'tint'])
     updateSelected((photo) => {
-      const adjustments = { ...photo.adjustments }
-      for (const suggestion of suggestions) {
-        if (!allowed.has(suggestion.control as AdjustmentKey)) continue
-        const key = suggestion.control as AdjustmentKey
-        const min = key === 'exposure' ? -5 : -100
-        const max = key === 'exposure' ? 5 : 100
-        adjustments[key] = Math.max(min, Math.min(max, adjustments[key] + suggestion.amount))
-      }
-      return { ...photo, adjustments, history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }
+      const base = advisorPreview ?? takeSnapshot(photo)
+      return { ...applySnapshot(photo, base), adjustments: advisorAdjustments(base.adjustments, suggestions), history: appendInteractiveHistory(photo.history, base), future: [] }
     })
+    setAdvisorPreview(null)
     setBefore(false)
   }
 
   function previewAdvisorSuggestion(suggestion: NativeAdvisorSuggestion) {
-    if (!advisorPreview) setAdvisorPreview(takeSnapshot(selected))
-    const allowed = new Set<AdjustmentKey>(['exposure', 'shadows', 'highlights', 'contrast', 'temperature', 'tint'])
-    if (!allowed.has(suggestion.control as AdjustmentKey)) return
-    const key = suggestion.control as AdjustmentKey
-    const min = key === 'exposure' ? -5 : -100
-    const max = key === 'exposure' ? 5 : 100
-    updateSelected((photo) => ({ ...photo, adjustments: { ...photo.adjustments, [key]: Math.max(min, Math.min(max, photo.adjustments[key] + suggestion.amount)) } }))
+    const base = advisorPreview ?? takeSnapshot(selected)
+    if (!advisorPreview) setAdvisorPreview(base)
+    updateSelected((photo) => ({ ...applySnapshot(photo, base), adjustments: advisorAdjustments(base.adjustments, [suggestion]) }))
     setBefore(false)
   }
 
@@ -2457,12 +2430,14 @@ export function App() {
         setCommandPaletteOpen(true)
         return
       }
-      if (modifier && event.key.toLowerCase() === 'a' && view === 'library') {
+      if (modifier && event.key.toLowerCase() === 'a' && view === 'library' && !typing && !commandPaletteOpen) {
         event.preventDefault()
+        const epoch = libraryQueryEpoch.current
         void queryNativeLibraryIds(nativeQuery(librarySearch, 0, filter)).then((ids) => {
+          if (epoch !== libraryQueryEpoch.current) return
           setSelectedLibraryIds(ids)
           libraryAnchor.current = ids[0] ?? null
-          setNotice(`${ids.length} photos selected in current Library result`)
+          setNotice(`已選取目前圖庫結果中的 ${ids.length} 張照片`)
         }).catch((error) => setNotice(formatUserError(error, 'Select all failed')))
         return
       }
@@ -2558,7 +2533,7 @@ export function App() {
       {!leftOpen && <button className="edge-toggle left" aria-label="開啟圖庫" onClick={() => setLeftOpen(true)}><PanelLeftOpen size={17} /></button>}
 
       {view === 'library' ? <section className="library-browser" aria-label="照片圖庫">
-        <div className="library-browser-head"><div><span className="eyebrow">本機優先圖庫</span><h1>{libraryAssets.length} 個項目</h1></div>
+        <div className="library-browser-head"><div><span className="eyebrow">{activeLibraryCollection?.name ?? '本機優先圖庫'}</span><h1>本頁 {libraryAssets.length} 個項目</h1></div>
           <div className="library-actions"><input aria-label="搜尋圖庫" value={librarySearch} placeholder="檔名、相機、鏡頭、關鍵字" onChange={(event) => setLibrarySearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void refreshLibrary(librarySearch, 0) }} />
             <button disabled={libraryBusy} onClick={() => void refreshLibrary(librarySearch, 0)}>{libraryBusy ? '處理中…' : '搜尋'}</button>
             <button disabled={libraryBusy || libraryPage === 0} onClick={() => void refreshLibrary(librarySearch, libraryPage - 1)}>上一頁</button><button disabled={libraryBusy || libraryAssets.length < 200} onClick={() => void refreshLibrary(librarySearch, libraryPage + 1)}>下一頁</button>
@@ -2685,7 +2660,7 @@ export function App() {
           <div className="ai-tool-hub-heading"><Sparkles size={17} /><div><strong>本機 AI 工具</strong><small>所有影像處理都在這台電腦完成</small></div></div>
           <div className="ai-tool-hub-actions">
             <button onClick={() => { setTool('masks'); setAiHubOpen(false) }}><ScanFace size={17} /><span>人像與肌膚<small>{aiAvailability?.faceSkin.state === 'ready' ? '模型已就緒' : '目前無法使用'}</small></span></button>
-            <button onClick={() => { setTool('masks'); setAiHubOpen(false) }}><ScanLine size={17} /><span>主體・背景・天空<small>{aiAvailability?.subjectBackground.state === 'ready' ? '主體模型已就緒' : '目前無法使用'}</small></span></button>
+            <button onClick={() => { setTool('masks'); setAiHubOpen(false) }}><ScanLine size={17} /><span>主體・背景・人物・天空<small>{aiAvailability?.subjectBackground.state === 'ready' ? '主體模型已就緒' : '目前無法使用'}</small></span></button>
             <button onClick={() => { setTool('detail'); setAiHubOpen(false) }}><Sparkles size={17} /><span>AI 降噪<small>{aiAvailability?.denoise.state === 'ready' ? '模型已就緒' : '目前無法使用'}</small></span></button>
             <button onClick={() => { setTool('looks'); setAiHubOpen(false) }}><Blend size={17} /><span>參考照片色彩匹配<small>使用原生統計分析，不需要雲端模型</small></span></button>
             <button onClick={() => { setTool('heal'); setAiHubOpen(false) }}><SlidersHorizontal size={17} /><span>本機編輯建議<small>展開「本機編輯建議」即可分析照片</small></span></button>
@@ -2719,8 +2694,7 @@ export function App() {
             <div className="layer-stack-head"><strong>AI 遮罩</strong>{aiMaskRequestId && <button onClick={cancelAiMask}>取消</button>}</div>
             <small>選擇照片區域，自動建立可編輯的局部調整遮罩。</small>
             <div className="portrait-regions">
-              {(['subject', 'background', 'sky'] as const).map((semantic) => { const availability = semantic === 'sky' ? aiAvailability?.sky : aiAvailability?.subjectBackground; return <button className="ai-mask-action" key={semantic} title={availability?.detail} disabled={selected.renderBackend !== 'native' || aiMaskRequestId !== null || availability?.state !== 'ready'} onClick={() => generateAiMask(semantic)}><Sparkles size={16} />{semantic === 'subject' ? '主體' : semantic === 'background' ? '背景' : '天空'}</button> })}
-              <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('face')}>人物</button>
+              {generatedMaskActions.map((action) => { const availability = aiAvailability?.[action.availability]; return <button className="ai-mask-action" key={action.semantic} title={availability?.detail} disabled={selected.renderBackend !== 'native' || aiMaskRequestId !== null || availability?.state !== 'ready'} onClick={() => generateAiMask(action.semantic)}><Sparkles size={16} />{action.label}</button> })}
               <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('skin')}>肌膚</button>
               <button disabled={!portraitDetection?.faces.length} onClick={() => addAllPortraitMasks('hair')}>頭髮</button>
             </div>

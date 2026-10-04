@@ -12,7 +12,7 @@ export const targets = {
   },
   library: {
     rust: [['test', '--locked', '-p', 'starroom-library']],
-    web: ['src/nativeRender.test.ts', 'src/librarySelection.test.ts', 'src/progressiveThumbnails.test.ts'],
+    web: ['src/nativeRender.test.ts', 'src/nativeLibraryQuery.test.ts', 'src/librarySelection.test.ts', 'src/progressiveThumbnails.test.ts'],
     golden: [],
   },
   history: {
@@ -27,7 +27,7 @@ export const targets = {
   },
   color: {
     rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/whiteBalanceClipboard.test.ts'],
+    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/whiteBalanceClipboard.test.ts', 'src/editControls.test.ts'],
     golden: ['color', 'camera-color'],
   },
   tone: {
@@ -124,7 +124,7 @@ export const targets = {
       ['test', '--locked', '-p', 'starroom-pipeline', 'm21_'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'm23_'],
     ],
-    web: ['src/nativeRender.test.ts'],
+    web: ['src/nativeRender.test.ts', 'src/maskWorkspace.test.ts', 'src/advisorInteraction.test.ts'],
     golden: ['ai', 'portrait', 'skin', 'mask'],
   },
   performance: {

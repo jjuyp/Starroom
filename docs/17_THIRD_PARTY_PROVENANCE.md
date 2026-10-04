@@ -23,6 +23,16 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## CI-only tooling
 
+### October M20 whole-person correction
+
+The existing NVIDIA SegFormer-B0 ADE20K ONNX adapter now extracts Person class 12 as well
+as Sky class 2. Upstream pin `489d5cd81a0b59fab9b7ea758d3548ebe99677da`, ONNX SHA-256
+`56d255beface9e9f82ab68a1292b8b03881aa45161dffe914b7fb9657133dc58`, exact upstream config
+URL and license decision remain in `MODEL_PROVENANCE.md`. This is adapter routing, not a model
+port or new model acquisition. Rust adapter code enters the binary; restricted weights do not.
+Private local installation only; no redistribution approval is implied by the new UI action.
+No Cargo/npm lockfile or license closure changed.
+
 ### October tone correctness repair
 
 The 2026-10-03 tone batch reuses the darktable revision above for normalized shadow response

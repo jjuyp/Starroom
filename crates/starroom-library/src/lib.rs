@@ -198,6 +198,9 @@ pub enum SortDirection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LibraryQuery {
+    pub collection_id: Option<i64>,
+    /// An optional native identity subset, applied before pagination (empty means no matches).
+    pub asset_ids: Option<Vec<i64>>,
     pub text: Option<String>,
     pub filename: Option<String>,
     pub camera: Option<String>,
@@ -222,6 +225,8 @@ pub struct LibraryQuery {
 impl Default for LibraryQuery {
     fn default() -> Self {
         Self {
+            collection_id: None,
+            asset_ids: None,
             text: None,
             filename: None,
             camera: None,
@@ -522,7 +527,7 @@ impl Library {
         if query.minimum_rating.is_some_and(|value| value > 5) {
             return Err(LibraryError::InvalidQuery("rating must be 0..5".into()));
         }
-        let (where_sql, values) = build_where(query)?;
+        let (where_sql, values) = self.query_where(query)?;
         let sort = match query.sort {
             SortField::CaptureTime => "a.capture_time",
             SortField::ImportTime => "a.import_time",
@@ -581,7 +586,7 @@ impl Library {
     /// Return the complete current query identity set without loading pixels, metadata records,
     /// keywords or only the visible page. This is the native contract for filtered Ctrl/Cmd+A.
     pub fn query_ids(&self, query: &LibraryQuery) -> Result<Vec<i64>, LibraryError> {
-        let (where_sql, values) = build_where(query)?;
+        let (where_sql, values) = self.query_where(query)?;
         let sort = match query.sort {
             SortField::CaptureTime => "a.capture_time",
             SortField::ImportTime => "a.import_time",
@@ -601,6 +606,43 @@ impl Library {
             .map_err(sql_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql_error)
+    }
+
+    /// Apply collection scope before pagination and selection. Smart rules and user search
+    /// are intersected instead of replacing one another or filtering only the visible page.
+    fn query_where(
+        &self,
+        query: &LibraryQuery,
+    ) -> Result<(String, Vec<rusqlite::types::Value>), LibraryError> {
+        let (mut clause, mut values) = build_where(query)?;
+        if let Some(id) = query.collection_id {
+            let collection = self
+                .collection(id)?
+                .ok_or(LibraryError::InvalidCollection(id))?;
+            let (scope, scoped_values) = match collection.kind {
+                CollectionKind::Normal => (
+                    "EXISTS (SELECT 1 FROM collection_assets ca WHERE ca.asset_id=a.id AND ca.collection_id=?)".to_owned(),
+                    vec![rusqlite::types::Value::Integer(id)],
+                ),
+                CollectionKind::Smart => {
+                    let rule = collection.rule.as_ref().ok_or(LibraryError::InvalidCollection(id))?;
+                    let (where_sql, bound) = build_where(&rule_to_query(rule, query.limit, query.offset)?)?;
+                    (where_sql.trim_start_matches(" WHERE ").to_owned(), bound)
+                }
+            };
+            if !scope.is_empty() {
+                clause.push_str(if clause.is_empty() {
+                    " WHERE "
+                } else {
+                    " AND "
+                });
+                clause.push('(');
+                clause.push_str(&scope);
+                clause.push(')');
+                values.extend(scoped_values);
+            }
+        }
+        Ok((clause, values))
     }
 
     pub fn set_workflow(
@@ -1351,6 +1393,13 @@ fn build_where(
     if query.recent_batch {
         clauses.push("a.import_batch_id=(SELECT MAX(import_batch_id) FROM assets)".into());
     }
+    if let Some(ids) = &query.asset_ids {
+        clauses.push("a.id IN (SELECT value FROM json_each(?))".into());
+        values
+            .push(Value::Text(serde_json::to_string(ids).map_err(
+                |error| LibraryError::InvalidQuery(error.to_string()),
+            )?));
+    }
     Ok((
         if clauses.is_empty() {
             String::new()
@@ -1761,6 +1810,128 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION + 1);
+    }
+
+    #[test]
+    fn collection_search_paging_and_select_all_remain_scoped() {
+        let root = temp("collection-query-scope");
+        let mut library = Library::open(root.join("library.sqlite")).unwrap();
+        let paths: Vec<_> = (0..4)
+            .map(|index| {
+                let path = root.join(format!("photo-{index}.png"));
+                png(&path, [index, 20, 30]);
+                path
+            })
+            .collect();
+        let imported = library
+            .import_paths(&paths, &AtomicBool::new(false))
+            .unwrap();
+        let ids = imported.imported;
+        assert!(
+            library
+                .query(&LibraryQuery {
+                    asset_ids: Some(vec![]),
+                    ..Default::default()
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .query_ids(&LibraryQuery {
+                    asset_ids: Some(vec![ids[2], ids[1]]),
+                    sort: SortField::Filename,
+                    direction: SortDirection::Ascending,
+                    ..Default::default()
+                })
+                .unwrap(),
+            ids[1..3]
+        );
+        let normal = library
+            .create_collection("Only first three", CollectionKind::Normal, None)
+            .unwrap();
+        library.add_collection_assets(normal, &ids[..3]).unwrap();
+        let query = LibraryQuery {
+            collection_id: Some(normal),
+            limit: 2,
+            sort: SortField::Filename,
+            direction: SortDirection::Ascending,
+            ..Default::default()
+        };
+        assert_eq!(
+            library
+                .query(&query)
+                .unwrap()
+                .iter()
+                .map(|asset| asset.id)
+                .collect::<Vec<_>>(),
+            ids[..2]
+        );
+        assert_eq!(
+            library
+                .query(&LibraryQuery {
+                    offset: 2,
+                    ..query.clone()
+                })
+                .unwrap()
+                .iter()
+                .map(|asset| asset.id)
+                .collect::<Vec<_>>(),
+            ids[2..3]
+        );
+        assert_eq!(library.query_ids(&query).unwrap(), ids[..3]);
+        assert!(
+            library
+                .query(&LibraryQuery {
+                    text: Some("photo-3".into()),
+                    ..query.clone()
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            library
+                .query_ids(&LibraryQuery {
+                    collection_id: None,
+                    ..query
+                })
+                .unwrap(),
+            ids
+        );
+        let rule: SmartCollectionRuleV1 = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/native-smart-collection.json"
+        ))
+        .unwrap();
+        library
+            .set_workflow(&ids[..3], Some(5), None, None)
+            .unwrap();
+        library.add_keywords(&ids[1..], &["Japan".into()]).unwrap();
+        let smart = library
+            .create_collection("Smart", CollectionKind::Smart, Some(&rule))
+            .unwrap();
+        let query = LibraryQuery {
+            collection_id: Some(smart),
+            sort: SortField::Filename,
+            direction: SortDirection::Ascending,
+            ..Default::default()
+        };
+        assert_eq!(library.query_ids(&query).unwrap(), ids[1..3]);
+        assert_eq!(
+            library
+                .query_ids(&LibraryQuery {
+                    text: Some("photo-2".into()),
+                    ..query.clone()
+                })
+                .unwrap(),
+            ids[2..3]
+        );
+        assert!(matches!(
+            library.query(&LibraryQuery {
+                collection_id: Some(-1),
+                ..query
+            }),
+            Err(LibraryError::InvalidCollection(-1))
+        ));
     }
 
     #[test]

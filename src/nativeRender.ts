@@ -9,7 +9,7 @@ export type RenderBackend = 'native' | 'browserFallback'
 export type NativePreviewInteractionPhase = 'interactive' | 'final'
 export type NativeAssetFlag = 'unflagged' | 'pick' | 'reject'
 export type NativeColorLabel = 'none' | 'red' | 'yellow' | 'green' | 'blue' | 'purple'
-export type NativeSmartPredicate = { rating: { minimum: number } } | { flag: { value: NativeAssetFlag } } | { colorLabel: { value: NativeColorLabel } } | { camera: { value: string } } | { lens: { value: string } } | { fileType: { value: string } } | { keyword: { value: string } }
+export type NativeSmartPredicate = { field: 'rating'; minimum: number } | { field: 'flag'; value: NativeAssetFlag } | { field: 'colorLabel'; value: NativeColorLabel } | { field: 'camera' | 'lens' | 'fileType' | 'keyword'; value: string }
 export interface NativeLibraryCollection { id: number; name: string; kind: 'normal' | 'smart'; rule: { all: NativeSmartPredicate[] } | null }
 export interface NativeLibraryAsset {
   id: number; sourcePath: string; sourceIdentity: string; contentFingerprint: string
@@ -22,6 +22,8 @@ export interface NativeLibraryAsset {
     aperture: number | null; shutterSpeed: number | null; iso: number | null }
 }
 export interface NativeLibraryQuery {
+  collectionId?: number | null
+  editedOnly?: boolean
   text?: string | null; filename?: string | null; camera?: string | null; lens?: string | null
   keyword?: string | null; minimumRating?: number | null; flag?: NativeAssetFlag | null
   colorLabel?: NativeColorLabel | null; fileTypes?: string[]; minimumIso?: number | null
@@ -654,7 +656,7 @@ export async function detectNativePortrait(sourcePath: string, faceCropScale = 1
   return invoke<NativePortraitDetection>('portrait_detect', { request: { sourcePath, faceCropScale } })
 }
 
-export async function generateNativeAiMask(sourcePath: string, semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'sky'>, requestId: string): Promise<NativeAiMaskResult> {
+export async function generateNativeAiMask(sourcePath: string, semantic: Extract<NativeAiMaskSemantic, 'subject' | 'background' | 'person' | 'sky'>, requestId: string): Promise<NativeAiMaskResult> {
   return invoke<NativeAiMaskResult>('ai_mask_generate', { request: { sourcePath, semantic, requestId } })
 }
 
@@ -807,7 +809,7 @@ export async function importNativeLibraryPaths(paths: readonly string[]) {
 }
 
 export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {
-  return invoke<NativeLibraryAsset[]>('library_query', { query: {
+  return invoke<NativeLibraryAsset[]>('library_query', { editedOnly: query.editedOnly ?? false, query: {
     text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,
     flag: null, colorLabel: null, fileTypes: [], minimumIso: null, maximumIso: null,
     captureFrom: null, captureTo: null, missing: null, recentBatch: false, sort: 'importTime', direction: 'descending',
@@ -815,7 +817,7 @@ export async function queryNativeLibrary(query: NativeLibraryQuery = {}) {
   } })
 }
 export async function queryNativeLibraryIds(query: NativeLibraryQuery = {}) {
-  return invoke<number[]>('library_query_ids', { query: {
+  return invoke<number[]>('library_query_ids', { editedOnly: query.editedOnly ?? false, query: {
     text: null, filename: null, camera: null, lens: null, keyword: null, minimumRating: null,
     flag: null, colorLabel: null, fileTypes: [], minimumIso: null, maximumIso: null,
     captureFrom: null, captureTo: null, missing: null, recentBatch: false,

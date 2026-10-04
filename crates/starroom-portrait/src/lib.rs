@@ -1284,6 +1284,8 @@ pub const SEGFORMER_MODEL_VERSION: &str = "489d5cd81a0b59fab9b7ea758d3548ebe9967
 pub const SEGFORMER_MODEL_SHA256: &str =
     "56d255beface9e9f82ab68a1292b8b03881aa45161dffe914b7fb9657133dc58";
 pub const SEGFORMER_SKY_CLASS_ID: usize = 2;
+// ADE20K IDs from the pinned upstream config.json; Person includes the body, not just a face.
+pub const SEGFORMER_PERSON_CLASS_ID: usize = 12;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
@@ -1477,8 +1479,8 @@ impl AiMaskOnnxProvider {
     ) -> Result<Self, AiMaskError> {
         let descriptor = match semantic {
             AiMaskSemantic::Subject | AiMaskSemantic::Background => &registry.foreground,
-            AiMaskSemantic::Sky => &registry.scene,
-            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair => {
+            AiMaskSemantic::Sky | AiMaskSemantic::Person => &registry.scene,
+            AiMaskSemantic::Skin | AiMaskSemantic::Hair => {
                 return Err(AiMaskError::PortraitProviderRequired(semantic));
             }
         };
@@ -1523,8 +1525,8 @@ impl AiMaskOnnxProvider {
     pub fn supports(&self, semantic: AiMaskSemantic) -> bool {
         match semantic {
             AiMaskSemantic::Subject | AiMaskSemantic::Background => self.foreground.is_some(),
-            AiMaskSemantic::Sky => self.scene.is_some(),
-            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair => false,
+            AiMaskSemantic::Sky | AiMaskSemantic::Person => self.scene.is_some(),
+            AiMaskSemantic::Skin | AiMaskSemantic::Hair => false,
         }
     }
 
@@ -1551,10 +1553,7 @@ impl AiMaskProvider for AiMaskOnnxProvider {
         if cancellation.load(Ordering::Relaxed) {
             return Err(AiMaskError::Cancelled);
         }
-        if matches!(
-            semantic,
-            AiMaskSemantic::Person | AiMaskSemantic::Skin | AiMaskSemantic::Hair
-        ) {
+        if matches!(semantic, AiMaskSemantic::Skin | AiMaskSemantic::Hair) {
             return Err(AiMaskError::PortraitProviderRequired(semantic));
         }
         let (descriptor, format, classes, class_id, invert, provider_id): (
@@ -1586,6 +1585,14 @@ impl AiMaskProvider for AiMaskOnnxProvider {
                 ModelInputFormat::segformer(),
                 150,
                 SEGFORMER_SKY_CLASS_ID,
+                false,
+                "semantic-scene",
+            ),
+            AiMaskSemantic::Person => (
+                &self.registry.scene,
+                ModelInputFormat::segformer(),
+                150,
+                SEGFORMER_PERSON_CLASS_ID,
                 false,
                 "semantic-scene",
             ),
@@ -1939,6 +1946,19 @@ mod tests {
         assert_eq!(registry.foreground.sha256, BIREFNET_MODEL_SHA256);
         assert_eq!(registry.scene.version, SEGFORMER_MODEL_VERSION);
         assert_eq!(SEGFORMER_SKY_CLASS_ID, 2);
+        assert_eq!(SEGFORMER_PERSON_CLASS_ID, 12);
+        assert_ne!(
+            AiMaskOnnxProvider::cache_identity(
+                "photo",
+                AiMaskSemantic::Person,
+                SEGFORMER_MODEL_SHA256
+            ),
+            AiMaskOnnxProvider::cache_identity(
+                "photo",
+                AiMaskSemantic::Sky,
+                SEGFORMER_MODEL_SHA256
+            )
+        );
         assert!(matches!(
             registry.foreground.verify(),
             Err(AiMaskError::ModelMissing { .. })
@@ -1954,10 +1974,12 @@ mod tests {
             Err(AiMaskError::ModelMissing { path }) if path == expected
         ));
         assert!(matches!(
-            AiMaskOnnxProvider::initialize_for(registry, AiMaskSemantic::Person),
-            Err(AiMaskError::PortraitProviderRequired(
-                AiMaskSemantic::Person
-            ))
+            AiMaskOnnxProvider::initialize_for(registry.clone(), AiMaskSemantic::Person),
+            Err(AiMaskError::ModelMissing { path }) if path == registry.scene.path
+        ));
+        assert!(matches!(
+            AiMaskOnnxProvider::initialize_for(registry, AiMaskSemantic::Skin),
+            Err(AiMaskError::PortraitProviderRequired(AiMaskSemantic::Skin))
         ));
     }
 

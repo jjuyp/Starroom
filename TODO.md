@@ -1,5 +1,21 @@
 # Complete Internal Build Plan
 
+## M1–M30 field completeness audit (2026-10-04, active)
+
+The current request covers the original sequential M1–M30 roadmap, not only the last installer.
+Historical checkmarks below are implementation records, not proof that every present UI path is
+usable. The older alternative M2–M18 outline is not a renumbering of the accepted M1–M30 sequence.
+
+- [x] Fix signed grading-wheel placement, out-of-circle pointer angle and neutral/keyboard semantics; remove inert hue-lock checkbox without changing saved history or native hue preservation.
+- [x] Fix targeted mixer sampling to choose the nearest circular color band.
+- [x] Replace the face-only Person button with the existing SegFormer whole-person class; test actual local inference, body/background semantics, shared graph and saved-reference restoration.
+- [x] Keep collection search, pagination and Select All scoped to the selected collection; fix tagged smart-rule IPC and preserve source files.
+- [x] Query durable edited-state histories before Library pagination; cover restart, Undo/Redo, neutral curves and typed corruption without a database schema change.
+- [x] Keep Pick/Reject on the current editor photo and prevent repeated Advisor Preview/Apply from accumulating the same suggestion twice.
+- [ ] Complete the original M1–M30 requirement-to-runtime audit and remaining field fixes.
+- [ ] Qualify and package the new immutable SHA; the existing `aa5ed01` installer does not contain these edits.
+- [ ] Same-hardware Lightroom A/B, multi-monitor hardware and second-machine field validation remain unverified; do not call the product perfect or faster than Lightroom.
+
 ## Edit workspace UI V2 field redesign (2026-09-19)
 
 - [x] Apply shared navy glass design tokens and module-level Bento grouping to the real editor.

@@ -1,4 +1,13 @@
 export interface LibrarySelection { ids: number[]; anchor: number | null }
+import type { NativeSmartPredicate } from './nativeRender'
+
+export function smartCollectionRule(minimum: number, keyword = ''): { all: NativeSmartPredicate[] } {
+  return { all: [{ field: 'rating', minimum }, ...(keyword.trim() ? [{ field: 'keyword' as const, value: keyword.trim() }] : [])] }
+}
+
+export function workflowAssetIds(inLibrary: boolean, selectedIds: readonly number[], editingId: number | undefined): number[] {
+  return inLibrary ? [...selectedIds] : editingId === undefined ? [] : [editingId]
+}
 
 /** The supplied order is the displayed query order, never database insertion order. */
 export function selectLibraryRange(

@@ -1,4 +1,43 @@
 # Implementation Notes
+
+## 2026-10-04 color interaction, whole-person and collection repairs
+
+This batch continues from `aa5ed01`; its existing installer/CI are baseline evidence only.
+No dependency or private-model redistribution decision changes.
+
+- M7/M8: native color-band sampling now selects the nearest circular center instead of a
+  flat-top weight tie. Signed grading chroma displays its real vector; captured drags preserve
+  angle beyond the circle, neutral drags preserve hue, and keyboard changes wrap hue. The
+  production wheel is separately testable and accessible. The legacy hue-lock flag is retained
+  in state, but the inert toggle is replaced by a truthful always-hue-preserving description.
+- M20: integrate (not replace) the existing pinned SegFormer ADE20K Person class 12. The UI
+  dispatches `person`, shares scene-model availability with Sky, and no longer creates a face-only
+  mask under a Person label. Restore verifies exact model/source identity and regenerates the
+  same raster. Actual NASA fixture body probability 0.99277, background 0.00002235; shared
+  Preview/Export and cold-restored output are exact. The expanded real-model release test passed
+  in 82.12 s; this includes a new cold scene-session startup and is not an interaction-latency claim.
+- M24: collection scope is applied in native SQL before search/pagination/Select All, including
+  intersection with smart rules. The UI retains selected scope between pages, rejects stale query
+  completions, and keeps existing editor state/thumbnails. Smart predicates now use Rust's
+  internally tagged `field` contract; a shared JSON fixture validates both languages.
+- M24/M25: Edited album reads validated persisted History state rather than only the current
+  in-memory page, normalizes neutral two-endpoint curves and execution backend, and applies
+  selected IDs through SQLite `json_each` before paging/Select All. Both query handlers run on
+  background workers. No schema migration, stale secondary index, pixel load or source mutation.
+  Tests cover reopen, Undo/Redo, empty subsets, identity curves and visible corruption errors.
+
+- M19/M29: repeatable Advisor preview and Apply both use the immutable pre-preview baseline;
+  changing suggestions replaces the staged delta instead of accumulating it. Pick/Reject in Edit
+  targets the displayed photo, while Library keeps explicit multi-selection. Added UI intent tests.
+
+Local batch evidence: 327 ordinary Rust tests (331 registered, four opt-in heavy/private tests),
+165 frontend tests, warning-denied workspace Clippy, rustfmt, doc tests, lint, TypeScript/production
+build, Golden 11/11 manifest and photographic regression, six RAW manifest entries and two actual
+sensor regressions passed. The private actual-model opt-in test separately passed. Full local run:
+`.starroom-reports/test-timing-1791107713790.json`; subsequent frontend-only repairs passed the
+complete 165-test frontend suite. Remote/installer qualification must still match this batch's
+commit, not earlier green CI. Original photos and public model policy remain
+unchanged. All M1–M30 requirements remain in scope; no M31 work is started.
 ## 2026-09-15 GPU-resident creative preview and production dirty regions
 
 - `GpuRenderer` now owns a persistent wgpu Device/Queue, two compiled pipelines and reusable

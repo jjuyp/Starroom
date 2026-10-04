@@ -55,15 +55,35 @@ export function whiteBalancePresentation(baseKelvin: number | null, relative: nu
 
 export function wheelPosition(hue: number, chroma: number) {
   const radians = (hue - 90) * Math.PI / 180
-  const radius = Math.min(1, Math.abs(chroma) / 100) * 46
+  // Signed radius mirrors the Native wheel's signed chroma vector. This is UI geometry,
+  // not image processing; do not silently canonicalize the saved adjustment/history.
+  const radius = Math.min(1, Math.max(-1, chroma / 100)) * 46
   return { x: 50 + Math.cos(radians) * radius, y: 50 + Math.sin(radians) * radius }
 }
 
-export function wheelValue(x: number, y: number) {
-  const dx = Math.min(50, Math.max(-50, x - 50))
-  const dy = Math.min(50, Math.max(-50, y - 50))
-  const radius = Math.min(46, Math.hypot(dx, dy))
-  const scale = radius === 0 ? 0 : radius / Math.hypot(dx, dy)
-  const hue = ((Math.atan2(dy * scale, dx * scale) * 180 / Math.PI) + 90 + 360) % 360
-  return { hue: hue > 180 ? hue - 360 : hue, chroma: radius / 46 * 100 }
+export function wrapWheelHue(hue: number) {
+  return Number.isFinite(hue) ? ((hue + 180) % 360 + 360) % 360 - 180 : 0
+}
+
+export function wheelValue(x: number, y: number, neutralHue = 0) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return { hue: wrapWheelHue(neutralHue), chroma: 0 }
+  const dx = x - 50
+  const dy = y - 50
+  const distance = Math.hypot(dx, dy)
+  // Clamp the radius, not each axis: pointer capture allows dragging outside the element.
+  // At zero chroma preserve the chosen hue rather than inventing a 90-degree selection.
+  return {
+    hue: distance < 1e-8 ? wrapWheelHue(neutralHue) : wrapWheelHue(Math.atan2(dy, dx) * 180 / Math.PI + 90),
+    chroma: Math.min(46, distance) / 46 * 100,
+  }
+}
+
+export function wheelKeyboardValue(hue: number, chroma: number, key: string, coarse = false) {
+  const step = coarse ? 10 : 2
+  if (key === 'ArrowLeft') return { hue: wrapWheelHue(hue - step), chroma }
+  if (key === 'ArrowRight') return { hue: wrapWheelHue(hue + step), chroma }
+  if (key === 'ArrowUp') return { hue: wrapWheelHue(hue), chroma: Math.min(100, chroma + step) }
+  if (key === 'ArrowDown') return { hue: wrapWheelHue(hue), chroma: Math.max(-100, chroma - step) }
+  if (key === 'Home') return { hue: wrapWheelHue(hue), chroma: 0 }
+  return null
 }

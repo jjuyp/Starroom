@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { hasNativeSkinSelection, invertedMask, replaceRadialGeometry, selectedRadialMask, validLinearGeometry } from './maskWorkspace'
+import { generatedMaskActions, hasNativeSkinSelection, invertedMask, replaceRadialGeometry, selectedRadialMask, validLinearGeometry } from './maskWorkspace'
 import { defaultAdjustments } from './editorState'
 import { defaultNativeSkinRetouch, toNativeSettings, type NativeAdjustmentLayer } from './nativeRender'
 
 describe('selected mask canvas contract', () => {
+  it('routes whole-person selection through the scene model rather than face detection', () => {
+    expect(generatedMaskActions.find((action) => action.label === '人物')).toEqual({ semantic: 'person', label: '人物', availability: 'sky' })
+    expect(generatedMaskActions.map((action) => action.semantic)).toEqual(['subject', 'background', 'person', 'sky'])
+  })
   const layer: NativeAdjustmentLayer = { id: 'local', name: '局部', enabled: true, opacity: .7, blendMode: 'normal',
     adjustments: { tone: { exposureEv: 1, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 } },
     mask: { type: 'radial', x: .5, y: .5, width: .4, height: .3, rotation: 0, feather: .2, invert: true } }

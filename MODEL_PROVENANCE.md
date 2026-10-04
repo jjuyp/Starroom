@@ -14,6 +14,17 @@ request, uploads no image/landmark/mask data, and requires no telemetry.
 
 ## Runtime pin
 
+### October whole-person routing correction
+
+The existing pinned SegFormer model also provides whole Person class **12**, alongside Sky
+class **2**. These labels were verified against the exact upstream
+[config.json](https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512/raw/489d5cd81a0b59fab9b7ea758d3548ebe99677da/config.json).
+The table's historical Sky-only description is superseded by this scope correction; model ID,
+revision, SHA-256 and private-only distribution restrictions are unchanged. No weights are
+added to the repository or installer. Existing face masks retain the BiSeNet provider; they
+are not silently migrated to whole-person masks. The real NASA portrait regression verifies
+body inclusion, background exclusion, native Preview/Export parity and cold-cache restoration.
+
 `ort = 2.0.0-rc.10` (MIT OR Apache-2.0) is the single local ONNX Runtime binding. The Rust
 adapter verifies each model file SHA-256 before opening a session, attempts the explicitly
 requested DirectML provider, and creates a documented CPU session when DirectML is unavailable.
