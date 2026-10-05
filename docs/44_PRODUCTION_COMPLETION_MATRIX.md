@@ -89,6 +89,10 @@ private model weights. All original requirements remain active.
    non-commuting combinations. Fix correctness before optimizing the final stage.
    The Native RTX 3050 / DX12 probe confirms a maximum 21-code RGB8 difference with a local
    contrast/shadow layer, not merely a theoretical noncommutativity claim.
+   **Targeted repair evidence:** identity-tail-only fusion now keeps finishing vignette after
+   non-commuting work. The identical probe measures zero; six coupled cases meet the unchanged
+   one-code bound and the complete pipeline/photographic/RAW suite passes. This is not completion
+   of GPU spatial migration, direct presentation or the final performance requirement.
 6. **Graph metadata:** default DAG lists optics/geometry after detail and labels nearly all stages
    GPU-capable; actual execution prepares optics/geometry before AI/creative and keeps spatial/local
    stages on CPU. Cache/planning declarations must reflect the real production graph.

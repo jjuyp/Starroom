@@ -1420,6 +1420,29 @@ fn gpu_curve_luts(settings: &RenderSettings) -> [f32; 8192] {
     lut
 }
 
+/// Finishing vignette belongs after layers/Skin/Healing/spatial detail/grain. It can join the
+/// earlier global GPU pass only when every intervening operator is an identity. Otherwise the
+/// existing shared CPU finishing stage owns it; no duplicate or reordered creative operation.
+fn gpu_can_fuse_vignette(settings: &RenderSettings) -> bool {
+    settings
+        .layers
+        .iter()
+        .all(|layer| !layer.enabled || layer.opacity <= f32::EPSILON)
+        && skin_retouch_is_identity(settings.skin_retouch.parameters)
+        && settings
+            .healing_operations
+            .iter()
+            .all(|operation| !operation.enabled)
+        && settings.denoise.luminance.abs() <= f32::EPSILON
+        && settings.denoise.chroma.abs() <= f32::EPSILON
+        && settings.denoise.high_iso.abs() <= f32::EPSILON
+        && settings.local_detail.texture.abs() <= f32::EPSILON
+        && settings.local_detail.clarity.abs() <= f32::EPSILON
+        && settings.local_detail.dehaze.abs() <= f32::EPSILON
+        && settings.sharpen.amount.abs() <= f32::EPSILON
+        && settings.grain.amount.abs() <= f32::EPSILON
+}
+
 fn gpu_creative_parameters(
     settings: &RenderSettings,
     pixel_count: usize,
@@ -1442,7 +1465,11 @@ fn gpu_creative_parameters(
     values[2] = [
         settings.relative_color.vibrance,
         settings.relative_color.saturation,
-        settings.vignette.amount,
+        if gpu_can_fuse_vignette(settings) {
+            settings.vignette.amount
+        } else {
+            0.0
+        },
         settings.vignette.midpoint,
     ];
     values[3] = [
@@ -1477,7 +1504,8 @@ fn gpu_creative_parameters(
         (!settings.curve.is_empty() || settings.curves != ToneCurveSet::default()) as u8 as f32,
         (settings.color_mixer != ColorMixer::default()) as u8 as f32,
         (settings.grading != GradingParameters::default()) as u8 as f32,
-        (settings.vignette.amount.abs() > f32::EPSILON) as u8 as f32,
+        (gpu_can_fuse_vignette(settings) && settings.vignette.amount.abs() > f32::EPSILON) as u8
+            as f32,
     ];
     GpuCreativeParameters { values }
 }
@@ -1984,10 +2012,12 @@ fn render_prepared_working_graph(
     .map_err(|_| PipelineError::DetailBuffer)?;
     checkpoint()?;
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
-        if gpu.is_some() && settings.vignette.amount.abs() > f32::EPSILON {
-            // Vignette is part of the fused GPU creative pass. Keep grain and every other
-            // spatial/detail operation on the shared CPU reference path without applying the
-            // finishing vignette a second time.
+        if gpu.is_some()
+            && gpu_can_fuse_vignette(settings)
+            && settings.vignette.amount.abs() > f32::EPSILON
+        {
+            // Only a mathematically safe identity-tail vignette is already fused. Non-commuting
+            // combinations retain the canonical shared finishing order below.
             let mut detail_settings = settings.clone();
             detail_settings.vignette = VignetteSettings::default();
             apply_detail_stage(creative, &detail_settings)
@@ -3662,6 +3692,138 @@ mod tests {
                     .all(
                         |(actual, expected)| i16::from(*actual).abs_diff(i16::from(*expected)) <= 1
                     )
+            );
+        }
+    }
+
+    #[test]
+    fn vignette_fusion_rejects_every_nonidentity_tail_and_keeps_original_settings() {
+        let mut base = RenderSettings::default();
+        base.vignette.amount = 0.72;
+        assert!(gpu_can_fuse_vignette(&base));
+        let mut cases = Vec::new();
+        let mut settings = base.clone();
+        settings.sharpen.amount = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.denoise.luminance = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.denoise.chroma = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.denoise.high_iso = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.local_detail.texture = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.local_detail.clarity = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.local_detail.dehaze = 0.5;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.grain.amount = 0.3;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.skin_retouch.parameters.smooth = 0.5;
+        cases.push(settings);
+        for settings in cases {
+            assert!(!gpu_can_fuse_vignette(&settings));
+            let parameters = gpu_creative_parameters(&settings, 32, 8, 4);
+            assert_eq!(parameters.values[2][2], 0.0);
+            assert_eq!(parameters.values[19][3], 0.0);
+            assert_eq!(settings.vignette.amount, 0.72);
+        }
+    }
+
+    #[test]
+    fn vignette_with_local_tone_colour_spatial_and_grain_matches_cpu_export() {
+        let mut pixels = Vec::new();
+        for y in 0..24 {
+            for x in 0..32 {
+                let value = 0.15 + 0.6 * (x + y) as f32 / 54.0;
+                pixels.push([value, value * 0.8, value * 0.6, 1.0]);
+            }
+        }
+        let decoded = DecodedSourceImage::Rendered(DecodedRenderedImage {
+            width: 32,
+            height: 24,
+            ..fixture(&pixels)
+        });
+        let base = RenderSettings {
+            vignette: VignetteSettings {
+                amount: 0.8,
+                midpoint: 0.2,
+                feather: 0.5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut layer = LayerAdjustments::default();
+        layer.tone.contrast = 0.7;
+        layer.tone.shadows = 0.5;
+        let local = NativeAdjustmentLayer {
+            id: "vignette-tail".into(),
+            name: "Local".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
+            adjustments: layer,
+        };
+        let mut cases = Vec::new();
+        let mut settings = base.clone();
+        settings.layers.push(local.clone());
+        cases.push(settings);
+        let mut settings = base.clone();
+        let mut colour = local;
+        colour.adjustments.tone = ToneParameters::default();
+        colour.adjustments.relative_color.temperature = 0.4;
+        colour.adjustments.relative_color.tint = -0.3;
+        settings.layers.push(colour);
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.sharpen.amount = 0.6;
+        settings.sharpen.radius = 1.2;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.local_detail.texture = 0.4;
+        settings.local_detail.clarity = 0.25;
+        settings.local_detail.dehaze = 0.3;
+        cases.push(settings);
+        let mut settings = base.clone();
+        settings.denoise.luminance = 0.4;
+        settings.denoise.chroma = 0.3;
+        cases.push(settings);
+        let mut settings = base;
+        settings.grain.amount = 0.25;
+        settings.grain.seed = 42;
+        settings.image_identity = "vignette-grain".into();
+        cases.push(settings);
+        let gpu = match GpuRenderer::try_new() {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                eprintln!("GPU parity unavailable: {error}");
+                return;
+            }
+        };
+        for (index, settings) in cases.iter().enumerate() {
+            assert!(!gpu_can_fuse_vignette(settings));
+            let cpu = render_source_export_to_srgb8(&decoded, settings).unwrap();
+            let accelerated =
+                render_source_preview_with_gpu_to_srgb8(&decoded, settings, &gpu).unwrap();
+            let difference = cpu
+                .data
+                .iter()
+                .zip(&accelerated.data)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(
+                difference <= 1,
+                "case {index}: GPU/Export max code difference {difference}"
             );
         }
     }

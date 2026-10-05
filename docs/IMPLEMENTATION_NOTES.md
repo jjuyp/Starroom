@@ -1,5 +1,23 @@
 # Implementation Notes
 
+## 2026-10-06 canonical finishing-vignette order
+
+The real RTX 3050/DX12 counterexample combined vignette with a local contrast/shadow layer and
+showed 21 RGB8-code max difference between GPU preview and CPU export. Fusing a finishing effect
+before non-commuting layers/Skin/Healing/spatial detail/grain is invalid even when isolated shaders
+match. `gpu_can_fuse_vignette` now permits the existing fused kernel only with an identity tail;
+otherwise the unchanged mature shared CPU finishing stage owns vignette in the canonical order.
+Creative GPU acceleration remains active, source settings are unchanged and vignette is never
+applied twice. Completing a later GPU finishing/spatial stage must preserve this same order.
+
+The identical real probe now measures max difference zero. New tests verify every nonidentity-tail
+family disables early fusion and six actual CPU/GPU combinations (local tone, local relative color,
+sharpen, Texture/Clarity/Dehaze, classical NR, deterministic grain) stay within the existing one-code
+bound. All 64 pipeline unit tests, historical migration fixture, photographic Golden test, three
+real RAW shared-graph tests, doc-test runner and warning-denied pipeline Clippy passed. No tolerance
+was increased, source photo altered, provider replaced or weaker algorithm introduced. Final
+same-SHA full acceptance and end-to-end performance remain separate requirements.
+
 ## 2026-10-06 Production audit / P0 source and atomic-output safety
 
 The new user master prompt requires a complete Phase 0-30 production/quality/performance pass,
