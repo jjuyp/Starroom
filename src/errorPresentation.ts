@@ -9,6 +9,7 @@ const categoryNames: Record<ErrorCategory, string> = {
 
 const categoryFor = (diagnostic: string): ErrorCategory => {
   const value = diagnostic.toLowerCase()
+  if (value.includes('sourceoverwriteforbidden')) return 'Export'
   if (['masksourcemismatch', 'portraitsourcemismatch', 'portraitrestoremetadatamissing'].some((code) => value.includes(code))) return 'AI'
   if (value.includes('outofmemory') || value.includes('out of memory')) return 'Memory'
   if (value.includes('permission') || value.includes('access denied')) return 'Permission'
@@ -27,7 +28,8 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
 export function presentError(error: unknown, fallback: string): PresentedError {
   const diagnostic = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
   const category = categoryFor(diagnostic)
-  const message = diagnostic.includes('MaskSourceMismatch') ? '這個 AI 遮罩屬於另一張照片，請在目前照片重新產生遮罩。'
+  const message = diagnostic.includes('SourceOverwriteForbidden') ? '匯出不能覆寫原始照片。請更換檔名或匯出資料夾。'
+    : diagnostic.includes('MaskSourceMismatch') ? '這個 AI 遮罩屬於另一張照片，請在目前照片重新產生遮罩。'
     : diagnostic.includes('PortraitSourceMismatch') ? '這個人像或肌膚選取屬於另一張照片，請重新偵測並選取人臉。'
       : diagnostic.includes('PortraitRestoreMetadataMissing') ? '這個舊人像選取缺少還原資料，請重新偵測並選取人臉。'
         : category === 'Memory' ? 'Starroom 沒有足夠的記憶體執行這項操作。'

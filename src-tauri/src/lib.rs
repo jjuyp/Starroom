@@ -15,7 +15,7 @@ use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameter
 use starroom_export::{
     BatchExportResult, BatchProgress, ExportItemResult, ExportItemStatus,
     ExportRequest as ProfessionalExportRequest, ExportSettings, NativeSharedGraphRenderer,
-    export_one, export_recipe_identity,
+    export_one, export_one_with_destination_guard, export_recipe_identity,
 };
 use starroom_geometry::GeometryParameters;
 use starroom_grading::GradingParameters;
@@ -4146,6 +4146,27 @@ impl ProfessionalExportItemRequest {
     }
 }
 
+fn guard_library_export_destination(
+    runtime: &NativeLibraryRuntime,
+    destination: &Path,
+) -> Result<(), starroom_export::ExportError> {
+    let guard = runtime.library.lock().map_err(|_| {
+        starroom_export::ExportError::ProjectInvalid(
+            "CorruptDatabase: library lock poisoned".into(),
+        )
+    })?;
+    if let Some(library) = guard.as_ref()
+        && library
+            .is_registered_source_destination(destination)
+            .map_err(|error| starroom_export::ExportError::ProjectInvalid(error.to_string()))?
+    {
+        return Err(starroom_export::ExportError::SourceOverwriteForbidden(
+            destination.to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfessionalExportBatchRequest {
@@ -4409,12 +4430,14 @@ async fn native_export_batch(
             }
         };
         let cancelled = Arc::clone(&export_runtime.cancelled);
+        let library = library_runtime.inner().clone();
         let (professional, item_result) = tauri::async_runtime::spawn_blocking(move || {
-            let result = export_one(
+            let result = export_one_with_destination_guard(
                 &NativeSharedGraphRenderer,
                 &professional,
                 &settings,
                 &cancelled,
+                |destination| guard_library_export_destination(&library, destination),
             );
             (professional, result)
         })
@@ -4843,6 +4866,76 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn professional_desktop_export_protects_another_library_original() {
+        let root = std::env::temp_dir().join(format!(
+            "starroom-desktop-export-safety-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("source-a.png");
+        let protected = root.join("source-b.png");
+        let a = starroom_imageio::encode_png_rgb8(&[20, 80, 140], 1, 1, None).unwrap();
+        let b = starroom_imageio::encode_png_rgb8(&[210, 90, 40], 1, 1, None).unwrap();
+        std::fs::write(&source, &a).unwrap();
+        std::fs::write(&protected, &b).unwrap();
+        let mut library = Library::open(root.join("library.sqlite")).unwrap();
+        library
+            .import_paths(
+                &[source.clone(), protected.clone()],
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let runtime = NativeLibraryRuntime {
+            library: Arc::new(Mutex::new(Some(library))),
+            ..Default::default()
+        };
+        let request = ProfessionalExportRequest {
+            asset_id: 1,
+            source_path: source.clone(),
+            destination_directory: root.clone(),
+            original_name: "source-a.png".into(),
+            capture_date: None,
+            rating: 0,
+            keywords: Vec::new(),
+            camera: None,
+            look: None,
+            sequence: 1,
+            source_fingerprint: "owned-test".into(),
+            edit_state_identity: "neutral".into(),
+            settings: ExportSettings {
+                format: starroom_export::ExportFormat::Png,
+                filename_template: "source-b".into(),
+                collision: starroom_export::CollisionPolicy::Overwrite,
+                ..Default::default()
+            },
+        };
+        let result = export_one_with_destination_guard(
+            &NativeSharedGraphRenderer,
+            &request,
+            &RenderSettings::default(),
+            &AtomicBool::new(false),
+            |path| guard_library_export_destination(&runtime, path),
+        );
+        assert!(matches!(
+            result,
+            Err(starroom_export::ExportError::SourceOverwriteForbidden(_))
+        ));
+        assert_eq!(std::fs::read(source).unwrap(), a);
+        assert_eq!(std::fs::read(protected).unwrap(), b);
+        drop(runtime);
+        let resolved = root.canonicalize().unwrap();
+        assert_eq!(
+            resolved.parent(),
+            Some(std::env::temp_dir().canonicalize().unwrap().as_path())
+        );
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
 
     #[test]
     fn library_export_reads_off_page_durable_edits_and_does_not_hide_corruption() {

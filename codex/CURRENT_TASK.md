@@ -2,6 +2,17 @@
 
 ## Current Milestone
 
+The user's 2026-10-06 Final Completion / Color Engine Perfection Pass supersedes the earlier
+RC-only stopping condition below. Execute Phases 0-30 from the supplied master prompt and keep
+the full objective. `docs/44_PRODUCTION_COMPLETION_MATRIX.md` is the active requirement/evidence
+ledger. Phase 0 source review and real counterexamples precede algorithm changes. Original-file
+and atomic-replacement safety is the first confirmed data-loss gate, followed by color correctness,
+profile/alpha/gamut/RAW/WB, then GPU/cache/tile/latency and full Windows release qualification.
+No Final tag/version claim until all new gates pass. Do not move historical tags, merge main,
+close Draft PR #2, publicly package private model weights or begin unrelated new features.
+
+## Historical RC field batch baseline
+
 M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.
 
 M27 acceptance is `225a7ae`; M28 acceptance is `94a9ccc` with push CI `32942892981`; M29

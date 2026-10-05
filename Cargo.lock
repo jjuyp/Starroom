@@ -3824,6 +3824,7 @@ dependencies = [
  "starroom-project",
  "starroom-render",
  "starroom-session",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

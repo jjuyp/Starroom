@@ -569,6 +569,52 @@ impl Library {
             .map_err(sql_error)
     }
 
+    /// Protect registered originals, including missing records and aliases, during export.
+    /// Resolve the nearest existing ancestor for a not-yet-created output without decoding pixels
+    /// or loading the whole catalog. Existing imports use this same canonical path identity.
+    pub fn is_registered_source_destination(&self, path: &Path) -> Result<bool, LibraryError> {
+        let mut candidate = std::path::absolute(path)
+            .map_err(|error| LibraryError::InvalidQuery(error.to_string()))?;
+        let mut suffix = Vec::new();
+        let resolved = loop {
+            match candidate.canonicalize() {
+                Ok(mut parent) => {
+                    for component in suffix.iter().rev() {
+                        parent.push(component);
+                    }
+                    break parent;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let component = candidate
+                        .file_name()
+                        .ok_or_else(|| {
+                            LibraryError::InvalidQuery("cannot resolve export destination".into())
+                        })?
+                        .to_owned();
+                    suffix.push(component);
+                    if !candidate.pop() {
+                        return Err(LibraryError::InvalidQuery(
+                            "cannot resolve export destination".into(),
+                        ));
+                    }
+                }
+                Err(error) => {
+                    return Err(LibraryError::InvalidQuery(format!(
+                        "destination identity: {error}"
+                    )));
+                }
+            }
+        };
+        let normalized = resolved.to_string_lossy().replace('\\', "/").to_lowercase();
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM assets WHERE source_path_normalized=?)",
+                [normalized],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)
+    }
+
     pub fn asset(&self, id: i64) -> Result<Option<AssetRecord>, LibraryError> {
         let query = LibraryQuery {
             limit: 1,
@@ -1530,6 +1576,63 @@ UPDATE library_settings SET value='2' WHERE key='schema_version';
 mod tests {
     use super::*;
     use std::{env, fs, time::Instant};
+
+    #[test]
+    fn export_destination_guard_protects_current_other_aliased_and_missing_originals() {
+        let root = temp("export-source-guard");
+        let nested = root.join("原始資料夾").join("子資料夾");
+        fs::create_dir_all(&nested).unwrap();
+        let first = nested.join("原始一.png");
+        let other = nested.join("原始二.png");
+        let a = starroom_imageio::encode_png_rgb8(&[10, 40, 80], 1, 1, None).unwrap();
+        let b = starroom_imageio::encode_png_rgb8(&[200, 60, 30], 1, 1, None).unwrap();
+        fs::write(&first, &a).unwrap();
+        fs::write(&other, &b).unwrap();
+        let mut library = Library::open(root.join("catalog.sqlite")).unwrap();
+        assert_eq!(
+            library
+                .import_paths(&[first.clone(), other.clone()], &AtomicBool::new(false))
+                .unwrap()
+                .imported
+                .len(),
+            2
+        );
+        assert!(library.is_registered_source_destination(&first).unwrap());
+        assert!(library.is_registered_source_destination(&other).unwrap());
+        assert!(
+            !library
+                .is_registered_source_destination(&nested.join("export-copy.png"))
+                .unwrap()
+        );
+        let sub = nested.join("alias");
+        fs::create_dir(&sub).unwrap();
+        assert!(
+            library
+                .is_registered_source_destination(&sub.join("..").join("原始一.png"))
+                .unwrap()
+        );
+        #[cfg(windows)]
+        assert!(
+            library
+                .is_registered_source_destination(&nested.join("原始二.PNG"))
+                .unwrap()
+        );
+        // Moving the complete folder does not turn its lost source identities into export paths.
+        fs::rename(root.join("原始資料夾"), root.join("已搬移")).unwrap();
+        assert!(library.is_registered_source_destination(&first).unwrap());
+        assert!(library.is_registered_source_destination(&other).unwrap());
+        assert_eq!(
+            fs::read(root.join("已搬移/子資料夾/原始一.png")).unwrap(),
+            a
+        );
+        drop(library);
+        let resolved = root.canonicalize().unwrap();
+        assert_eq!(
+            resolved.parent(),
+            Some(env::temp_dir().canonicalize().unwrap().as_path())
+        );
+        fs::remove_dir_all(resolved).unwrap();
+    }
     fn temp(name: &str) -> PathBuf {
         let path = env::temp_dir().join(format!("starroom-library-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);

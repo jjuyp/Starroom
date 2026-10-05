@@ -15,6 +15,7 @@ starroom-imageio = { path = "../starroom-imageio" }
 starroom-pipeline = { path = "../starroom-pipeline" }
 starroom-render = { path = "../starroom-render" }
 thiserror.workspace = true
+tempfile = "=3.27.0"
 
 [dev-dependencies]
 kamadak-exif = "=0.6.1"

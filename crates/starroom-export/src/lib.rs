@@ -14,7 +14,7 @@ use starroom_pipeline::{
 };
 use starroom_render::profiling::{self, ProfileStage, RenderProfile};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -43,6 +43,8 @@ pub enum ExportError {
     DestinationUnavailable(String),
     #[error("FileAlreadyExists: {0}")]
     FileAlreadyExists(PathBuf),
+    #[error("SourceOverwriteForbidden: {0}")]
+    SourceOverwriteForbidden(PathBuf),
     #[error("EncodeFailed: {0}")]
     EncodeFailed(String),
     #[error("ColorTransformFailed: {0}")]
@@ -535,7 +537,31 @@ pub fn export_one<R: FullResolutionRenderer>(
     render_settings: &RenderSettings,
     cancelled: &AtomicBool,
 ) -> Result<ExportItemResult, ExportError> {
+    export_one_with_destination_guard(renderer, request, render_settings, cancelled, |_| Ok(()))
+}
+
+/// The core always protects the current source. Desktop callers additionally protect every
+/// registered Library source without materializing the entire catalog in the UI or render worker.
+pub fn export_one_with_destination_guard<R: FullResolutionRenderer>(
+    renderer: &R,
+    request: &ExportRequest,
+    render_settings: &RenderSettings,
+    cancelled: &AtomicBool,
+    destination_guard: impl Fn(&Path) -> Result<(), ExportError>,
+) -> Result<ExportItemResult, ExportError> {
     validate_settings(&request.settings)?;
+    let base = render_filename(request)?;
+    let verify = |destination: &Path| {
+        reject_source_overwrite(&request.source_path, destination)?;
+        destination_guard(destination)
+    };
+    let planned = resolve_collision(
+        &request.destination_directory,
+        &base,
+        request.settings.format.extension(),
+        request.settings.collision,
+    )?;
+    verify(&planned)?;
     if cancelled.load(Ordering::Relaxed) {
         return Err(ExportError::Cancelled);
     }
@@ -647,14 +673,33 @@ pub fn export_one<R: FullResolutionRenderer>(
     })?;
     fs::create_dir_all(&request.destination_directory)
         .map_err(|error| ExportError::DestinationUnavailable(error.to_string()))?;
-    let base = render_filename(request)?;
-    let destination = resolve_collision(
-        &request.destination_directory,
-        &base,
-        request.settings.format.extension(),
-        request.settings.collision,
-    )?;
-    atomic_write(&destination, &bytes, cancelled)?;
+    let mut attempts = 0;
+    let destination = loop {
+        let destination = resolve_collision(
+            &request.destination_directory,
+            &base,
+            request.settings.format.extension(),
+            request.settings.collision,
+        )?;
+        match atomic_write_checked(
+            &destination,
+            &bytes,
+            cancelled,
+            request.settings.collision == CollisionPolicy::Overwrite,
+            verify,
+        ) {
+            Err(ExportError::FileAlreadyExists(_))
+                if request.settings.collision == CollisionPolicy::AutoRename
+                    && attempts < 100_000 =>
+            {
+                attempts += 1;
+            }
+            result => {
+                result?;
+                break destination;
+            }
+        }
+    };
     Ok(ExportItemResult {
         asset_id: request.asset_id,
         status: ExportItemStatus::Completed,
@@ -1010,32 +1055,83 @@ fn resolve_collision(
         }
     }
 }
-fn atomic_write(path: &Path, bytes: &[u8], cancelled: &AtomicBool) -> Result<(), ExportError> {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.starroom-tmp", std::process::id()));
-    let temporary = path.with_file_name(name);
-    let result = (|| {
-        let mut file = File::create(&temporary)
-            .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
-        file.write_all(bytes)
-            .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
-        file.sync_all()
-            .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
+pub fn reject_source_overwrite(source: &Path, destination: &Path) -> Result<(), ExportError> {
+    let same = source == destination
+        || match (source.canonicalize(), destination.canonicalize()) {
+            (Ok(source), Ok(destination)) => {
+                #[cfg(windows)]
+                {
+                    source.to_string_lossy().to_lowercase()
+                        == destination.to_string_lossy().to_lowercase()
+                }
+                #[cfg(not(windows))]
+                {
+                    source == destination
+                }
+            }
+            _ => false,
+        };
+    if same {
+        Err(ExportError::SourceOverwriteForbidden(
+            destination.to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn atomic_write_checked(
+    path: &Path,
+    bytes: &[u8],
+    cancelled: &AtomicBool,
+    overwrite: bool,
+    verify: impl Fn(&Path) -> Result<(), ExportError>,
+) -> Result<(), ExportError> {
+    // Mature tempfile uses exclusive randomized creation and platform-native atomic persistence.
+    // In particular, Windows MoveFileEx replaces the destination WITHOUT deleting it first.
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".starroom-export-")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
+    for chunk in bytes.chunks(128 * 1024) {
         if cancelled.load(Ordering::Relaxed) {
             return Err(ExportError::Cancelled);
         }
-        if path.exists() {
-            fs::remove_file(path)
-                .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
-        }
-        fs::rename(&temporary, path)
+        temporary
+            .write_all(chunk)
             .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
     }
-    result
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| ExportError::AtomicWriteFailed(error.to_string()))?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(ExportError::Cancelled);
+    }
+    verify(path)?;
+    let persisted = if overwrite {
+        temporary.persist(path)
+    } else {
+        temporary.persist_noclobber(path)
+    };
+    persisted.map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            ExportError::FileAlreadyExists(path.to_owned())
+        } else {
+            ExportError::AtomicWriteFailed(error.error.to_string())
+        }
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn atomic_write(path: &Path, bytes: &[u8], cancelled: &AtomicBool) -> Result<(), ExportError> {
+    atomic_write_checked(path, bytes, cancelled, true, |_| Ok(()))
 }
 fn append_log(path: Option<&Path>, entry: ExportLogEntry) -> Result<(), ExportError> {
     let Some(path) = path else {
@@ -1086,6 +1182,172 @@ mod tests {
     use super::*;
     use image::ImageDecoder;
     use std::env;
+
+    #[test]
+    fn real_native_export_never_overwrites_original_for_any_supported_format() {
+        let folder = tempfile::tempdir().unwrap();
+        for (index, format, depth) in [
+            (0, ExportFormat::Jpeg, 8),
+            (1, ExportFormat::Png, 8),
+            (2, ExportFormat::Png, 16),
+            (3, ExportFormat::Tiff, 8),
+            (4, ExportFormat::Tiff, 16),
+        ] {
+            let source = folder
+                .path()
+                .join(format!("原始照片-{index}.{}", format.extension()));
+            let rgb = [25, 70, 130, 180, 95, 40];
+            let bytes = match format {
+                ExportFormat::Jpeg => {
+                    starroom_imageio::encode_jpeg_rgb8(&rgb, 2, 1, 95, None).unwrap()
+                }
+                ExportFormat::Png => starroom_imageio::encode_png_rgb8(&rgb, 2, 1, None).unwrap(),
+                ExportFormat::Tiff => starroom_imageio::encode_tiff_rgb8(&rgb, 2, 1, None).unwrap(),
+            };
+            fs::write(&source, &bytes).unwrap();
+            let mut value = request(folder.path(), index, format);
+            value.source_path = source.clone();
+            value.original_name = source.file_name().unwrap().to_str().unwrap().into();
+            value.destination_directory = folder.path().into();
+            value.settings.filename_template = "{original_name}".into();
+            value.settings.collision = CollisionPolicy::Overwrite;
+            value.settings.bit_depth = depth;
+            assert!(matches!(
+                export_one(
+                    &NativeSharedGraphRenderer,
+                    &value,
+                    &RenderSettings::default(),
+                    &AtomicBool::new(false)
+                ),
+                Err(ExportError::SourceOverwriteForbidden(_))
+            ));
+            assert_eq!(fs::read(&source).unwrap(), bytes);
+            let alias = folder.path().join("sub");
+            fs::create_dir_all(&alias).unwrap();
+            value.destination_directory = alias.join("..");
+            assert!(matches!(
+                export_one(
+                    &NativeSharedGraphRenderer,
+                    &value,
+                    &RenderSettings::default(),
+                    &AtomicBool::new(false)
+                ),
+                Err(ExportError::SourceOverwriteForbidden(_))
+            ));
+            assert_eq!(fs::read(&source).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn destination_guard_rejects_other_catalog_original_before_render() {
+        struct NeverRender;
+        impl FullResolutionRenderer for NeverRender {
+            fn render(
+                &self,
+                _: &Path,
+                _: OutputColorSpace,
+                _: &RenderSettings,
+            ) -> Result<RenderedBuffer, ExportError> {
+                panic!("protected destinations must be rejected before any pixel work");
+            }
+        }
+        let folder = tempfile::tempdir().unwrap();
+        let protected = folder.path().join("portrait.jpg");
+        fs::write(&protected, b"another registered original").unwrap();
+        let mut value = request(folder.path(), 1, ExportFormat::Jpeg);
+        value.destination_directory = folder.path().into();
+        value.settings.filename_template = "portrait".into();
+        value.settings.collision = CollisionPolicy::Overwrite;
+        let result = export_one_with_destination_guard(
+            &NeverRender,
+            &value,
+            &RenderSettings::default(),
+            &AtomicBool::new(false),
+            |path| {
+                if path == protected {
+                    Err(ExportError::SourceOverwriteForbidden(path.to_owned()))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(ExportError::SourceOverwriteForbidden(_))
+        ));
+        assert_eq!(fs::read(protected).unwrap(), b"another registered original");
+    }
+
+    #[test]
+    fn atomic_noclobber_preserves_a_raced_destination_and_cleans_only_its_own_temp() {
+        let folder = tempfile::tempdir().unwrap();
+        let target = folder.path().join("out.png");
+        let stale = folder
+            .path()
+            .join(format!("out.png.{}.starroom-tmp", std::process::id()));
+        fs::write(&stale, b"unrelated previous temporary").unwrap();
+        let result = atomic_write_checked(
+            &target,
+            b"new output",
+            &AtomicBool::new(false),
+            false,
+            |path| {
+                fs::write(path, b"concurrent output").unwrap();
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(ExportError::FileAlreadyExists(_))));
+        assert_eq!(fs::read(target).unwrap(), b"concurrent output");
+        assert_eq!(fs::read(stale).unwrap(), b"unrelated previous temporary");
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn atomic_guard_and_cancel_failures_keep_existing_output_intact() {
+        let folder = tempfile::tempdir().unwrap();
+        let target = folder.path().join("out.png");
+        fs::write(&target, b"previous complete output").unwrap();
+        let result = atomic_write_checked(
+            &target,
+            b"new output",
+            &AtomicBool::new(false),
+            true,
+            |path| Err(ExportError::SourceOverwriteForbidden(path.to_owned())),
+        );
+        assert!(matches!(
+            result,
+            Err(ExportError::SourceOverwriteForbidden(_))
+        ));
+        assert!(matches!(
+            atomic_write(&target, b"new output", &AtomicBool::new(true)),
+            Err(ExportError::Cancelled)
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"previous complete output");
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+        atomic_write(&target, b"new complete output", &AtomicBool::new(false)).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new complete output");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_locked_destination_failed_replace_preserves_previous_bytes() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let folder = tempfile::tempdir().unwrap();
+        let target = folder.path().join("out.png");
+        fs::write(&target, b"previous complete output").unwrap();
+        let locked = OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&target)
+            .unwrap();
+        assert!(matches!(
+            atomic_write(&target, b"new output", &AtomicBool::new(false)),
+            Err(ExportError::AtomicWriteFailed(_))
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"previous complete output");
+        assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+        drop(locked);
+    }
     struct MockRenderer;
     impl FullResolutionRenderer for MockRenderer {
         fn render(

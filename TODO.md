@@ -1,5 +1,23 @@
 # Complete Internal Build Plan
 
+## Production completion / color perfection pass (2026-10-06, active)
+
+The new Phase 0-30 master prompt supersedes the older RC-only stopping condition. Full scope and
+evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from historical CI.
+
+- [x] Establish the initial full-phase matrix and execute real Native counterexamples on owned
+  temporary images: original overwrite, vignette/local-tone GPU divergence, P3 transfer and alpha.
+- [x] Repair professional current-source/catalog-source protection and atomic replacement with
+  the existing mature tempfile provider; targeted source/alias/missing/race/cancel/locked-file and
+  desktop-adapter tests pass. Same-SHA final release acceptance is still required.
+- [ ] Complete remaining Phase 0 source/sweep review; close all actual requirement gaps.
+- [ ] Repair vignette ordering, WB/CAT/skin/desaturation, ICC TRCs, alpha/gamut, RAW headroom and
+  durable camera/profile/domain identity before performance shortcuts.
+- [ ] Complete GPU/presentation/cache/tiles/spatial work and real end-to-end <100ms controls.
+- [ ] Complete frozen AI/history gestures/bulk workflows, memory/100MP/streaming, error/legacy and
+  pristine offline Windows gates; expand real perceptual Golden and benchmark acceptance.
+- [ ] Verify every Phase 30 requirement and only then produce v1.0 Production release evidence.
+
 ## M1–M30 field completeness audit (2026-10-04, active)
 
 The current request covers the original sequential M1–M30 roadmap, not only the last installer.

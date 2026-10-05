@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { presentError } from './errorPresentation'
 
 describe('typed production error presentation', () => {
+  it('clearly explains immutable-source export protection without hiding diagnostics', () => {
+    const diagnostic = 'SourceOverwriteForbidden: C:/照片/原始.png'
+    expect(presentError(diagnostic, 'Export failed')).toEqual({ category: 'Export',
+      message: '匯出不能覆寫原始照片。請更換檔名或匯出資料夾。', diagnostic })
+  })
   it.each([
     ['OutOfMemory: estimated 3200000000 bytes', 'Memory'],
     ['DatabaseOpenFailed: corrupt database', 'Library'],

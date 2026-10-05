@@ -1,5 +1,46 @@
 # Implementation Notes
 
+## 2026-10-06 Production audit / P0 source and atomic-output safety
+
+The new user master prompt requires a complete Phase 0-30 production/quality/performance pass,
+not another RC-ready claim. `docs/44_PRODUCTION_COMPLETION_MATRIX.md` retains the full scope and
+distinguishes inspected implementation, incomplete paths and actual new-target acceptance.
+No algorithm was blindly rewritten during initial audit. The real Native diagnostic example
+`production_audit_probe` uses exclusively created/generated temporary sources, not user photos.
+
+Baseline `b36692f`: a valid literal name plus professional Overwrite accepted the same source
+path and changed its bytes. The older single-JPEG IPC guard did not protect this actual batch
+path. The writer deleted the existing destination before rename and reused a predictable PID
+temporary via truncating creation. Core export now rejects source equality/canonical aliases
+before decoding and immediately before persistence. Desktop batch adds indexed Library identity
+checks protecting every registered source, including another selected/unselected source and lost
+folders/files, without copying all catalog records into the render worker.
+
+Reuse the already integrated `tempfile 3.27.0` safe public API: exclusive randomized same-directory
+creation, chunked cancel-aware output write, fsync, guarded persist/persist_noclobber. Windows uses
+the mature provider's MoveFileEx replacement without delete-first; replacement failure keeps the
+previous complete file. Fail/AutoRename no-clobber races cannot overwrite another process's output;
+AutoRename retries using the same encoded bytes. Cleanup touches only the owned temporary file.
+SourceOverwriteForbidden has an actionable Traditional Chinese error while retaining diagnostics.
+The dependency package set remains 561 crates / six production npm / 269 notice texts; adding
+the existing tempfile as a direct export dependency changes only the lock/report identity and
+its documented runtime usage, not model/license policy.
+
+Targeted checks: 19 export unit tests (five new), seven export workflow/recovery integration tests,
+new Library destination-identity test, new desktop protected-other-original adapter test, and
+185 frontend tests across 27 files passed. Source cases cover real JPEG8/PNG8/PNG16/TIFF8/TIFF16,
+Unicode/parent aliases, other/missing Library sources, raced destinations, cancellation, legitimate
+replacement and Windows lock-denied replacement preserving prior bytes. Strict affected-crate
+Clippy, format, frontend lint/types/build, JSON/schema and refreshed license validation pass.
+The same real probe now returns SourceOverwriteForbidden and unchanged source bytes.
+
+Other probe evidence remains unresolved: on NVIDIA RTX 3050 Laptop / DX12, vignette plus local
+contrast/shadows differs by up to 21 RGB8 code values between GPU preview and CPU export. Generated
+Display P3 decodes encoded gray .02 to ~.00018293 instead of the sRGB-TRC value ~.00154799; [the
+named Display P3 definition](https://www.w3.org/TR/css-color-4/#predefined-display-p3) uses sRGB's
+transfer curve. A transparent red source pixel exports opaque RGB [255,0,0]. These are concrete
+counterexamples, not a claim that the diagnostic, matrix or existing green RC has qualified Final.
+
 ## 2026-10-05 continuous-drag / catalog-count performance repair
 
 The user's installed `64f005f` screenshot explicitly reports Native GPU, not CPU fallback.
