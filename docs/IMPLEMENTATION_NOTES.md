@@ -1,5 +1,40 @@
 # Implementation Notes
 
+## 2026-10-05 continuous-drag / catalog-count performance repair
+
+The user's installed `64f005f` screenshot explicitly reports Native GPU, not CPU fallback.
+It shows source dimensions 6032x4032; that label alone does not establish the actual preview
+payload resolution or identify a full-resolution render on every slider input. Same-test CI
+medians for `64f005f` and `b17e4b8` are exposure 276.621/276.038 ms and shadows 244.586/238.995 ms.
+These isolated Native samples do not establish desktop end-to-end latency or Lightroom parity.
+
+Two real scheduling costs were found in the production click path. LatestPreviewQueue cancelled
+every active frame as soon as a newer slider value arrived. Sustained input faster than rendering
+could therefore prevent any intermediate publication. The checked-in baseline was executed directly
+and its first same-source intermediate frame returned PreviewSuperseded. Interactive requests now
+finish/publish one active frame while replacing the single pending state; final quality and source
+switches retain strict latest-only cancellation. Unmounted photo/comparison surfaces cancel their
+active and pending work instead of consuming Native worker capacity in the background. A second generation guard covers asynchronous JPEG
+decode and deferred canvas/histogram callbacks, preventing a late intermediate frame from replacing
+a newer or final frame. Native processing, output precision and final graph semantics are unchanged.
+
+`64f005f` also refreshed whole-catalog counts on every History result. Rust now reports photographic
+edit membership using the exact existing persisted-album classifier, including neutral curves and
+execution-provider equivalence. React only invalidates counts on membership edges (including
+Undo/Redo/snapshot restore and outgoing assets), Library changes or explicit context refresh. It
+defers scans during dragging and does not rescan just because dragging ended with unchanged
+membership. Unknown classification still requests an explicit count/error, never a fabricated zero.
+No second durable edit-state database or stale pixel cache is introduced.
+
+Interaction evidence: a deterministic one-second/10-ms-input/100-ms-render schedule publishes
+frames during the drag and retains the latest final state; this is a scheduling test, not a claimed
+100-ms measurement on the user's machine. 1000 pending updates stay bounded; JPEG reorder/final
+guards, source changes and existing strict cancellation cases pass. Membership tests cover 10000
+unchanged edited commits without count invalidation, Undo/Redo/off-page edges and unknown states.
+184 frontend tests/27 files, lint, TypeScript and production build pass. Native warning-denied
+Clippy and persisted-album equivalence tests passed; the previous `b17e4b8` full/release
+success does not qualify these new edits. No dependency, license or image-algorithm change.
+
 ## 2026-10-05 M24/M25/M26 cross-page export closure
 
 The previous React batch adapter intersected Select All IDs with the currently loaded photo page.

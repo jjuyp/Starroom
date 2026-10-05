@@ -68,6 +68,13 @@ recorded in the dated delivery report under `output/`; they do not qualify subse
 - **Performance:** the expanded private AI test passed in 82.12 seconds including first cold
   scene-session startup. Profile cold vs warm inference separately; do not advertise this as
   instant AI or compare that whole-test duration with slider latency.
+- **Performance repair, not yet installer-qualified:** sustained slider input previously cancelled
+  every active preview; intermediate same-source frames now finish while only the latest pending
+  state is retained. Final/source switches and asynchronous JPEG publication are strictly guarded.
+  Whole-catalog History scans no longer follow every persisted slider commit or unchanged drag.
+  Native edit membership, not UI image math, controls count invalidation. The user's screenshot
+  confirms GPU but cannot prove the sole cause of their end-to-end delay; same-hardware field
+  measurement and the new immutable-SHA installed package remain required.
 - **External field validation:** same-photo/same-hardware Lightroom comparison and physical
   second-machine/mixed-DPI monitor validation are not established by CI or mathematical tests.
 - **Distribution:** only BiRefNet is redistributable in the current installer. This user's verified

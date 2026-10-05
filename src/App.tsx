@@ -3,6 +3,7 @@ import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } fro
 import { selectLibraryRange, smartCollectionRule, workflowAssetIds } from './librarySelection'
 import { advisorAdjustments } from './advisorInteraction'
 import { loadSessionLibrary, type LibraryFilter } from './librarySession'
+import { CatalogEditMembership } from './catalogEditMembership'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
 import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
@@ -24,7 +25,7 @@ import {
 } from './previewPresentation'
 import {
   adviseNativeImage, chooseNativePhotoPaths, nativeRuntimeAvailable,
-  renderNativePreview, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
+  renderNativePreview, cancelNativePreviewSurface, sampleNativeColor, type NativeEditSettings, type NativePreviewResult, type NativeReferenceMatchResponse, type NativeToneCurves, type NativeWhiteBalanceMode, type NativeWhiteBalanceSample, type RenderBackend,
   queryNativeWhiteBalanceInfo, type NativeWhiteBalanceInfo,
   defaultNativeOpticsState, resolveNativeOpticsStatus, type NativeLensIdentity, type NativeLensProfileResolution, type NativeOpticsState,
   cancelNativeAiMask, detectNativePortrait, generateNativeAiMask, defaultNativeSkinRetouch, type NativeAdjustmentLayer, type NativeAdvisorResult, type NativeAdvisorSuggestion, type NativeAiMaskResult, type NativeAiMaskSemantic, type NativeHealingOperation, type NativeMaskDefinition, type NativeMaskTree, type NativePortraitDetection, type NativePortraitRegion, type NativeSkinRetouchSettings,
@@ -45,7 +46,7 @@ import { resolveCommandShortcut, searchCommands, type CommandId } from './comman
 import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
 import { importNativeLibraryPaths } from './nativeRender'
-import { PreviewSuperseded } from './latestPreviewQueue'
+import { PreviewSuperseded, previewFrameMayPublish } from './latestPreviewQueue'
 import {
   appendInteractiveHistory,
   prependInteractiveHistory,
@@ -599,6 +600,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   const previewSurface = useRef({})
   const displayedSource = useRef('')
   const activePhotoId = useRef(photo.id)
+  const previewGeneration = useRef(0)
+  const publishedGeneration = useRef(0)
+  const latestPaintIntent = useRef({ before, interactive: interactionPhase === 'interactive' })
   const nativeDimensions = useRef({ id: '', width: 0, height: 0 })
   const [sourceDisplaySize, setSourceDisplaySize] = useState({ width: 0, height: 0 })
   const [aspect, setAspect] = useState(1.5)
@@ -612,8 +616,13 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   }
 
   useEffect(() => { activePhotoId.current = photo.id }, [photo.id])
+  useEffect(() => {
+    const surface = previewSurface.current
+    return () => cancelNativePreviewSurface(surface)
+  }, [])
 
   useEffect(() => {
+    latestPaintIntent.current = { before, interactive: interactionPhase === 'interactive' }
     let finalPublished = false
     if (photo.renderBackend === 'native' && photo.src && displayedSource.current !== photo.id) {
       const cachedThumbnail = new Image()
@@ -635,6 +644,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
     // Coalesce high-frequency pointer/slider state to at most one native submission per display
     // frame. LatestPreviewQueue owns cancellation; this is not a latency-hiding debounce.
     const frameRequest = window.requestAnimationFrame(async () => {
+      const generation = ++previewGeneration.current
       onStatus('正在算圖…')
       try {
         const adjustments = before ? defaultAdjustments : photo.adjustments
@@ -706,7 +716,10 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           renderedHeight = original.naturalHeight
           onStatus('僅顯示原圖 · 編輯需要原生桌面版')
         }
-        if (activePhotoId.current !== photo.id || !canvasRef.current) {
+        if (activePhotoId.current !== photo.id || !canvasRef.current
+          || latestPaintIntent.current.before !== before
+          || !previewFrameMayPublish(generation, publishedGeneration.current, previewGeneration.current,
+            interactionPhase === 'interactive', latestPaintIntent.current.interactive)) {
           release?.()
           return
         }
@@ -717,6 +730,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           release?.()
           throw new Error('Canvas 2D is unavailable.')
         }
+        publishedGeneration.current = generation
         if (nativeResult?.isTile) {
           const tileCanvas = tileCanvasRef.current
           const tileContext = tileCanvas?.getContext('2d')
@@ -744,7 +758,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         }
         release?.()
         window.requestAnimationFrame(() => {
-          if (!canvasRef.current) return
+          if (!canvasRef.current || publishedGeneration.current !== generation) return
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
             width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight })
           const sourceWidth = nativeResult?.sourceWidth ?? photo.libraryAsset?.metadata.width ?? renderedWidth
@@ -752,7 +766,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         })
         if (metric) {
           if (!nativeResult?.isTile) window.requestAnimationFrame(() => {
-            if (activePhotoId.current === photo.id && canvasRef.current === canvas) {
+            if (activePhotoId.current === photo.id && canvasRef.current === canvas && publishedGeneration.current === generation) {
               onHistogram(calculateDisplayHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
             }
           })
@@ -762,7 +776,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             : '唯讀示範圖 · 不套用影像調整')
         }
       } catch (error) {
-        if (activePhotoId.current === photo.id && !(error instanceof PreviewSuperseded)) onStatus(formatUserError(error, '預覽失敗'))
+        if (activePhotoId.current === photo.id && latestPaintIntent.current.before === before
+          && generation >= publishedGeneration.current && !(error instanceof PreviewSuperseded)
+          && (generation === previewGeneration.current || interactionPhase === 'interactive' && latestPaintIntent.current.interactive)) onStatus(formatUserError(error, '預覽失敗'))
       }
     })
 
@@ -1109,6 +1125,10 @@ export function App() {
   const [libraryReady, setLibraryReady] = useState(false)
   const [catalogCounts, setCatalogCounts] = useState<Awaited<ReturnType<typeof queryNativeLibraryCounts>> | null>(null)
   const [catalogRevision, setCatalogRevision] = useState(0)
+  const catalogMembership = useRef(new CatalogEditMembership())
+  const recordCatalogMembership = useCallback((assetId: number, result: NativeHistoryResult) => {
+    if (catalogMembership.current.observe(assetId, result.edited)) setCatalogRevision((revision) => revision + 1)
+  }, [])
   const currentSession = useRef<NativeSessionState | null>(null)
   const transientEditsPending = useRef(false)
   const [copiedWhiteBalance, setCopiedWhiteBalance] = useState<WhiteBalanceClipboard | null>(null)
@@ -1294,12 +1314,13 @@ export function App() {
         const before = acknowledgedHistory.current.get(scheduled.assetId)
         if (!before || !nativeHistoryStateChanged(before, scheduled.state, false)) return
         const result = await commitNativeHistory(scheduled.assetId, '調整照片', 'sharedGraph', before, scheduled.state)
+        recordCatalogMembership(scheduled.assetId, result)
         acknowledgedHistory.current.set(scheduled.assetId, result.state)
         if (selectedHistoryAsset.current === scheduled.assetId) setNativeHistory(result)
       }).catch((error) => setNotice(formatUserError(error, 'History commit failed')))
     }
     return historyCommands.current.idle()
-  }, [])
+  }, [recordCatalogMembership])
 
   const selectPhoto = useCallback((id: string) => {
     editorRequests.current.invalidate()
@@ -1494,6 +1515,7 @@ export function App() {
     historyOpeningAssets.current.add(assetId)
     void historyCommands.current.run(async () => {
       const result = await openNativeHistory(assetId, nativeHistoryState)
+      recordCatalogMembership(assetId, result)
       acknowledgedHistory.current.set(assetId, result.state)
       return result
     }).then((result) => {
@@ -1504,7 +1526,7 @@ export function App() {
       setPhotos((current) => current.map((photo) => photo.libraryAsset?.id === assetId ? applyNativeHistoryState(photo, result.state) : photo))
       window.setTimeout(() => { applyingNativeHistory.current = false }, 0)
     }).catch((error) => { historyOpeningAssets.current.delete(assetId); if (openedHistoryAsset.current === assetId) openedHistoryAsset.current = null; setNotice(formatUserError(error, 'History open failed')) })
-  }, [selected, nativeHistoryState])
+  }, [selected, nativeHistoryState, recordCatalogMembership])
 
   useEffect(() => {
     const assetId = selected.libraryAsset?.id
@@ -1532,16 +1554,23 @@ export function App() {
     ? photos.filter((photo) => Boolean(photo.libraryAsset))
     : photos, [photos])
 
+  const catalogCountIntent = useMemo(() => ({ libraryAssets, view, catalogRevision }), [libraryAssets, view, catalogRevision])
+  const lastCatalogCountIntent = useRef<object | null>(null)
+
   useEffect(() => {
-    if (!nativeRuntimeAvailable() || !libraryReady) return
+    if (!nativeRuntimeAvailable() || !libraryReady || previewInteraction === 'interactive') return
+    if (lastCatalogCountIntent.current === catalogCountIntent) return
     let active = true
-    // Refresh after persisted changes settle, never on every slider pointer event.
+    // Count changes on persisted membership edges, not every slider History commit. Never
+    // compete with a continuous drag by rescanning every saved photo's complete History.
     const timer = window.setTimeout(() => {
-      void queryNativeLibraryCounts().then((result) => { if (active) setCatalogCounts(result) })
+      void queryNativeLibraryCounts().then((result) => {
+        if (active) { lastCatalogCountIntent.current = catalogCountIntent; setCatalogCounts(result) }
+      })
         .catch((error) => { if (active) { setCatalogCounts(null); setNotice(formatUserError(error, '圖庫數量讀取失敗')) } })
     }, 750)
     return () => { active = false; window.clearTimeout(timer) }
-  }, [libraryReady, libraryAssets, nativeHistory, view, catalogRevision])
+  }, [libraryReady, catalogCountIntent, previewInteraction])
 
   const counts = useMemo(() => {
     if (nativeRuntimeAvailable()) return catalogCounts ?? { all: '—', recent: '—', five: '—', edited: '—' }
@@ -2311,7 +2340,7 @@ export function App() {
   function undo() {
     if (selected.libraryAsset) {
       const assetId = selected.libraryAsset.id
-      void flushNativeHistory().then(() => historyCommands.current.run(() => undoNativeHistory(assetId))).then((result) => { acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) }).catch((error) => setNotice(formatUserError(error, 'Undo failed')))
+      void flushNativeHistory().then(() => historyCommands.current.run(() => undoNativeHistory(assetId))).then((result) => { recordCatalogMembership(assetId, result); acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) }).catch((error) => setNotice(formatUserError(error, 'Undo failed')))
       return
     }
     updateSelected((photo) => {
@@ -2324,7 +2353,7 @@ export function App() {
   function redo() {
     if (selected.libraryAsset) {
       const assetId = selected.libraryAsset.id
-      void flushNativeHistory().then(() => historyCommands.current.run(() => redoNativeHistory(assetId))).then((result) => { acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) }).catch((error) => setNotice(formatUserError(error, 'Redo failed')))
+      void flushNativeHistory().then(() => historyCommands.current.run(() => redoNativeHistory(assetId))).then((result) => { recordCatalogMembership(assetId, result); acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) }).catch((error) => setNotice(formatUserError(error, 'Redo failed')))
       return
     }
     updateSelected((photo) => {
@@ -2344,7 +2373,7 @@ export function App() {
   function restoreSnapshot(snapshotId: string) {
     if (!selected.libraryAsset) return
     const assetId = selected.libraryAsset.id
-    void flushNativeHistory().then(() => historyCommands.current.run(() => restoreNativeSnapshot(assetId, snapshotId))).then((result) => { acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) })
+    void flushNativeHistory().then(() => historyCommands.current.run(() => restoreNativeSnapshot(assetId, snapshotId))).then((result) => { recordCatalogMembership(assetId, result); acknowledgedHistory.current.set(assetId, result.state); if (selectedHistoryAsset.current === assetId) applyHistoryResult(result) })
       .catch((error) => setNotice(formatUserError(error, 'Snapshot restore failed')))
   }
 

@@ -35,7 +35,7 @@ export interface NativeLibraryQuery {
 }
 export interface NativeHistoryEntry { sequence: number; timestamp: number; description: string; affectedStage: string; version: string }
 export interface NativeNamedSnapshot { id: string; name: string; createdAt: number; stateVersion: string; state: NativeEditSettings }
-export interface NativeHistoryResult { state: NativeEditSettings; canUndo: boolean; canRedo: boolean; entries: NativeHistoryEntry[]; snapshots: NativeNamedSnapshot[]; stateVersion: string }
+export interface NativeHistoryResult { state: NativeEditSettings; canUndo: boolean; canRedo: boolean; entries: NativeHistoryEntry[]; snapshots: NativeNamedSnapshot[]; stateVersion: string; edited?: boolean | null }
 export interface NativeProfessionalExportSettings {
   format: 'jpeg' | 'png' | 'tiff'; bitDepth: 8 | 16; quality: number
   colorSpace: 'srgb' | 'displayP3' | 'adobeRgb' | 'rec2020'; embedProfile: boolean
@@ -692,6 +692,10 @@ export async function installLocalPortraitModels(): Promise<NativeAiAvailability
 export const nativeThumbnailUrl = (path: string) => convertFileSrc(path)
 
 const previewQueues = new WeakMap<object, LatestPreviewQueue<ArrayBuffer | Uint8Array>>()
+
+export function cancelNativePreviewSurface(surface: object) {
+  previewQueues.get(surface)?.cancelAll()
+}
 const defaultPreviewSurface = {}
 
 export interface NativePreviewViewport {
@@ -753,7 +757,7 @@ export async function renderNativePreview(
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)
-    })
+    }, interactionPhase === 'interactive' ? JSON.stringify([sourcePath, resolutionMode]) : undefined)
   return parseNativePreviewFrame(frame)
 }
 

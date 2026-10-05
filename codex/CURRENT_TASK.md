@@ -42,6 +42,11 @@ asset ID set and each durable History state natively, one item at a time. Preser
 workspace override, isolate missing/corrupt items explicitly, and reuse the existing export
 graph, cancellation, metadata and atomic writer. Do not repeat M2/M3 or add new image math.
 
+Next field repair: M28/M29 continuous-slider publication starvation. Reproduce sustained input
+faster than Native rendering; allow completed same-source interactive frames while retaining one
+latest pending state and strict latest final/source-change publication. Do not lower image quality
+or change creative processing. Qualify scheduling and image-decode publication races before CI.
+
 - `.github/workflows`, `scripts/test-target.mjs`, packaging/release validation
 - `src-tauri`, Tauri configuration and Windows installer/runtime smoke
 - `crates/starroom-library`, `starroom-history`, `starroom-session`, `starroom-export`

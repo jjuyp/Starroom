@@ -632,6 +632,7 @@ struct NativeHistoryResult {
     entries: Vec<HistoryEntry>,
     snapshots: Vec<NamedSnapshot>,
     state_version: String,
+    edited: Option<bool>,
 }
 
 fn history_path(asset_id: i64) -> Result<PathBuf, String> {
@@ -650,12 +651,6 @@ fn persisted_edited_asset_ids(root: &Path) -> Result<Vec<i64>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("HistoryPersistenceFailed: {error}")),
     };
-    let neutral: NativeEditSettings = serde_json::from_str(include_str!(
-        "../../fixtures/contracts/native-default-settings.json"
-    ))
-    .map_err(|error| format!("HistoryCorrupt: neutral contract: {error}"))?;
-    let neutral =
-        serde_json::to_value(neutral).map_err(|error| format!("HistoryCorrupt: {error}"))?;
     let mut ids = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| format!("HistoryPersistenceFailed: {error}"))?;
@@ -670,39 +665,49 @@ fn persisted_edited_asset_ids(root: &Path) -> Result<Vec<i64>, String> {
         };
         let history = EditHistory::load(entry.path())
             .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
-        let mut state: NativeEditSettings = serde_json::from_value(history.state().clone())
-            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
-        state
-            .clone()
-            .validated()
-            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?;
-        // Execution backend is not a photographic edit.
-        state.ai_denoise_provider = default_denoise_execution_provider();
-        // The UI serializes its two identity endpoints; Native defaults use an empty curve.
-        for curve in [
-            &mut state.curve,
-            &mut state.curves.master,
-            &mut state.curves.red,
-            &mut state.curves.green,
-            &mut state.curves.blue,
-        ] {
-            if curve.len() == 2
-                && curve[0].x == 0.0
-                && curve[0].y == 0.0
-                && curve[1].x == 1.0
-                && curve[1].y == 1.0
-            {
-                curve.clear();
-            }
-        }
-        if serde_json::to_value(state).map_err(|error| format!("HistoryCorrupt: {error}"))?
-            != neutral
+        if native_state_is_edited(history.state())
+            .map_err(|error| format!("HistoryCorrupt: asset {id}: {error}"))?
         {
             ids.push(id);
         }
     }
     ids.sort_unstable();
     Ok(ids)
+}
+
+fn native_state_is_edited(value: &serde_json::Value) -> Result<bool, String> {
+    let neutral: NativeEditSettings = serde_json::from_str(include_str!(
+        "../../fixtures/contracts/native-default-settings.json"
+    ))
+    .map_err(|error| format!("HistoryCorrupt: neutral contract: {error}"))?;
+    let neutral =
+        serde_json::to_value(neutral).map_err(|error| format!("HistoryCorrupt: {error}"))?;
+    let mut state: NativeEditSettings = serde_json::from_value(value.clone())
+        .map_err(|error| format!("HistoryCorrupt: {error}"))?;
+    state
+        .clone()
+        .validated()
+        .map_err(|error| format!("HistoryCorrupt: {error}"))?;
+    // Execution backend is not a photographic edit.
+    state.ai_denoise_provider = default_denoise_execution_provider();
+    // The UI serializes its two identity endpoints; Native defaults use an empty curve.
+    for curve in [
+        &mut state.curve,
+        &mut state.curves.master,
+        &mut state.curves.red,
+        &mut state.curves.green,
+        &mut state.curves.blue,
+    ] {
+        if curve.len() == 2
+            && curve[0].x == 0.0
+            && curve[0].y == 0.0
+            && curve[1].x == 1.0
+            && curve[1].y == 1.0
+        {
+            curve.clear();
+        }
+    }
+    Ok(serde_json::to_value(state).map_err(|error| format!("HistoryCorrupt: {error}"))? != neutral)
 }
 
 fn session_path() -> Result<PathBuf, String> {
@@ -740,6 +745,7 @@ fn history_result(history: &EditHistory) -> NativeHistoryResult {
         entries: history.entries().to_vec(),
         snapshots: history.snapshots().to_vec(),
         state_version: history.state_version().0,
+        edited: native_state_is_edited(history.state()).ok(),
     }
 }
 
@@ -4973,6 +4979,7 @@ mod tests {
         ))
         .unwrap();
         let mut history = EditHistory::new(neutral.clone()).unwrap();
+        assert_eq!(history_result(&history).edited, Some(false));
         let mut changed = neutral.clone();
         changed["exposure"] = serde_json::json!(1.0);
         history
@@ -4987,12 +4994,15 @@ mod tests {
             .unwrap();
         let path = root.join("asset-7.history.json");
         history.persist(&path).unwrap();
+        assert_eq!(history_result(&history).edited, Some(true));
         assert_eq!(persisted_edited_asset_ids(&root).unwrap(), vec![7]);
         let mut reopened = EditHistory::load(&path).unwrap();
         reopened.undo().unwrap();
+        assert_eq!(history_result(&reopened).edited, Some(false));
         reopened.persist(&path).unwrap();
         assert!(persisted_edited_asset_ids(&root).unwrap().is_empty());
         reopened.redo().unwrap();
+        assert_eq!(history_result(&reopened).edited, Some(true));
         reopened.persist(&path).unwrap();
         let mut ui_neutral = neutral;
         ui_neutral["curve"] = serde_json::json!([{"x":0,"y":0},{"x":1,"y":1}]);
