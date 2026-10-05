@@ -475,14 +475,23 @@ impl LittleCmsProvider {
                 },
             },
         };
-        let gamma = match profile {
-            BuiltinOutputProfile::AdobeRgb => 2.199_218_8,
-            _ => 2.2,
+        // Display P3 is not cinema DCI-P3 or a generic gamma-2.2 RGB space: its named
+        // transfer is IEC sRGB. Use mature LCMS type-4 analytic curves, not a sampled JS/CPU
+        // approximation. Adobe RGB retains its exact 563/256 photographic TRC. Rec.2020
+        // here remains the existing explicitly SDR gamma-2.2 photographic ICC policy.
+        let curve = match profile {
+            BuiltinOutputProfile::DisplayP3 => ToneCurve::new_parametric(
+                4,
+                &[2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045],
+            )
+            .map_err(|source| ColorManagementError::InvalidProfile {
+                role: ProfileRole::Output,
+                source,
+            })?,
+            BuiltinOutputProfile::AdobeRgb => ToneCurve::new(563.0 / 256.0),
+            _ => ToneCurve::new(2.2),
         };
-        let red = ToneCurve::new(gamma);
-        let green = ToneCurve::new(gamma);
-        let blue = ToneCurve::new(gamma);
-        let bytes = Profile::new_rgb(&white, &primaries, &[&red, &green, &blue])
+        let bytes = Profile::new_rgb(&white, &primaries, &[&curve, &curve, &curve])
             .and_then(|profile| profile.icc())
             .map_err(|source| ColorManagementError::InvalidProfile {
                 role: ProfileRole::Output,
@@ -671,6 +680,90 @@ pub enum WorkingSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_p3_trc_matches_independent_standard_at_dark_to_white_samples() {
+        let provider = LittleCmsProvider;
+        let profile = provider
+            .builtin_output_profile_bytes(BuiltinOutputProfile::DisplayP3)
+            .unwrap();
+        let parsed = Profile::new_icc(&profile).unwrap();
+        let mut white = [[1.0; 3]];
+        provider
+            .input_to_working(
+                &mut white,
+                Some(&profile),
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .unwrap();
+        for encoded in [
+            0.0_f32, 0.0001, 0.01, 0.02, 0.04045, 0.05, 0.25, 0.5, 0.8, 1.0,
+        ] {
+            let expected = if encoded <= 0.04045 {
+                encoded / 12.92
+            } else {
+                ((encoded + 0.055) / 1.055).powf(2.4)
+            };
+            // Isolate the TRC from ICC colorant/chad 16.16 quantization. Check each stored
+            // channel against the independent IEC formula at the original strict bound.
+            for tag in [
+                lcms2::TagSignature::RedTRCTag,
+                lcms2::TagSignature::GreenTRCTag,
+                lcms2::TagSignature::BlueTRCTag,
+            ] {
+                let lcms2::Tag::ToneCurve(curve) = parsed.read_tag(tag) else {
+                    panic!("P3 TRC missing")
+                };
+                assert!((curve.eval(encoded) - expected).abs() < 2.0e-5);
+            }
+            let mut working = [[encoded; 3]];
+            provider
+                .input_to_working(
+                    &mut working,
+                    Some(&profile),
+                    RenderingIntent::RelativeColorimetric,
+                    true,
+                )
+                .unwrap();
+            for (index, channel) in working[0].iter().enumerate() {
+                assert!(
+                    (channel / white[0][index] - expected).abs() < 2.0e-5,
+                    "P3 encoded {encoded}: actual {channel}, standard {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn display_p3_output_uses_correct_linear_to_encoded_toe_and_shoulder() {
+        let provider = LittleCmsProvider;
+        let profile = provider
+            .builtin_output_profile_bytes(BuiltinOutputProfile::DisplayP3)
+            .unwrap();
+        for linear in [0.0_f32, 0.0001, 0.001, 0.0031308, 0.01, 0.18, 0.5, 1.0] {
+            let expected = if linear <= 0.0031308 {
+                linear * 12.92
+            } else {
+                1.055 * linear.powf(1.0 / 2.4) - 0.055
+            };
+            let mut output = [[linear; 3]];
+            provider
+                .working_to_output(
+                    &mut output,
+                    Some(&profile),
+                    RenderingIntent::RelativeColorimetric,
+                    true,
+                )
+                .unwrap();
+            for channel in output[0] {
+                assert!(
+                    (channel - expected).abs() < 2.0e-5,
+                    "P3 linear {linear}: actual {channel}, standard {expected}"
+                );
+            }
+        }
+    }
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 2.0e-4

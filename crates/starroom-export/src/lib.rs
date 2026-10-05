@@ -23,7 +23,7 @@ use std::{
 use thiserror::Error;
 
 pub const EXPORT_PRESET_SCHEMA_VERSION: u32 = 1;
-pub const EXPORT_ENGINE_VERSION: &str = "starroom-export-v1";
+pub const EXPORT_ENGINE_VERSION: &str = "starroom-export-v2-profile-trc";
 const MAX_WORKING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const F32_BYTES: u64 = 4;
 
@@ -528,6 +528,13 @@ pub fn export_recipe_identity(request: &ExportRequest) -> Result<String, ExportE
             .map_err(|error| ExportError::ProjectInvalid(error.to_string()))?,
     );
     hash.update(EXPORT_ENGINE_VERSION.as_bytes());
+    // Bind the actual output transform resource even when the caller disables embedding.
+    // Otherwise a corrected TRC could produce different pixels under the same recipe identity.
+    hash.update(
+        LittleCmsProvider
+            .builtin_output_profile_bytes(request.settings.color_space.into())
+            .map_err(|error| ExportError::UnsupportedColorProfile(error.to_string()))?,
+    );
     Ok(hex(hash.finalize()))
 }
 
@@ -1326,6 +1333,30 @@ mod tests {
         assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
         atomic_write(&target, b"new complete output", &AtomicBool::new(false)).unwrap();
         assert_eq!(fs::read(&target).unwrap(), b"new complete output");
+    }
+
+    #[test]
+    fn export_recipe_binds_actual_profile_even_without_embedding() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut value = request(folder.path(), 1, ExportFormat::Png);
+        value.settings.color_space = OutputColorSpace::DisplayP3;
+        value.settings.embed_profile = false;
+        let profile = LittleCmsProvider
+            .builtin_output_profile_bytes(BuiltinOutputProfile::DisplayP3)
+            .unwrap();
+        let mut expected = Sha256::new();
+        expected.update(b"starroom-export-recipe-v1\0");
+        expected.update(value.source_fingerprint.as_bytes());
+        expected.update(value.edit_state_identity.as_bytes());
+        expected.update(serde_json::to_vec(&value.settings).unwrap());
+        expected.update(EXPORT_ENGINE_VERSION.as_bytes());
+        let without_resource = hex(expected.clone().finalize());
+        expected.update(profile);
+        assert_eq!(
+            export_recipe_identity(&value).unwrap(),
+            hex(expected.finalize())
+        );
+        assert_ne!(export_recipe_identity(&value).unwrap(), without_resource);
     }
 
     #[cfg(windows)]

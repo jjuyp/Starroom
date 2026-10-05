@@ -16,6 +16,9 @@ evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from 
 - [x] Repair non-commuting vignette fusion order: real Native GPU/CPU counterexample 21 -> 0
   RGB8 max codes; six coupled cases retain one-code tolerance and full pipeline/Golden/RAW pass.
   Complete GPU finishing/spatial work and final same-SHA acceptance are still pending.
+- [x] Correct generated Display P3 with mature LittleCMS analytic standard sRGB TRCs; test actual
+  curves/transform against independent formulas and bind export recipes to actual ICC resources.
+  Explicit Rec.2020 gamma-2.2 SDR labeling is not full monitor/HDR/perceptual acceptance.
 - [ ] Complete GPU/presentation/cache/tiles/spatial work and real end-to-end <100ms controls.
 - [ ] Complete frozen AI/history gestures/bulk workflows, memory/100MP/streaming, error/legacy and
   pristine offline Windows gates; expand real perceptual Golden and benchmark acceptance.

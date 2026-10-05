@@ -80,6 +80,11 @@ private model weights. All original requirements remain active.
 3. **ICC transfer identity:** `builtin_output_profile_bytes` uses gamma 2.2 for Display P3 and
    Rec.2020. Review exact named TRCs against authoritative definitions and bind output recipe
    versions/hashes to any correction; self round-trip of the same generated profile is insufficient.
+   **Targeted repair evidence:** Display P3 now uses mature LCMS analytic sRGB TRCs; stored-curve
+   and transform tests against independent formulas pass. The .02 gray probe changes from
+   ~.00018293 to ~.00154786 (standard ~.00154799). Output recipes bind actual ICC bytes and engine
+   version. Rec.2020 gamma-2.2 photographic SDR is explicitly labeled, not asserted as PQ/HLG or
+   a different scene/display video transfer. Monitor ownership and full perceptual gates remain open.
 4. **Output gamut/alpha:** compression bounds Rec.2020 channels before destination conversion,
    not the selected destination gamut. `to_working_image` drops decoded alpha and exported buffers
    are RGB-only. Declare/implement correct transparency and SDR/HDR behavior instead of silently

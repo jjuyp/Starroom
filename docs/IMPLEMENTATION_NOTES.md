@@ -1,5 +1,28 @@
 # Implementation Notes
 
+## 2026-10-06 Display P3 named-transfer correctness
+
+Keep LittleCMS as the input/working/output provider. Generated Display P3 formerly used a generic
+2.2 power curve, not its named IEC sRGB transfer. Use LCMS analytic type-4 TRC for all three channels;
+Adobe RGB retains exact 563/256 and existing Rec.2020 photographic output remains explicitly D65/
+gamma-2.2 SDR, now labeled accordingly rather than claiming CSS display BT.1886, video OETF, PQ or
+HLG. The [Display P3 definition](https://www.w3.org/TR/css-color-4/#predefined-display-p3) specifies
+sRGB transfer. No new dependency, weak custom ICC engine or browser image math was added.
+
+Independent stored-TRC and transform-toe/shoulder tests cover black, deep shadows, the piecewise
+boundary, midtones and white, not only self round-trip. ICC colorant/chad values are fixed-point;
+the transform TRC isolation normalizes measured profile white while directly checking each stored
+TRC against the standard formula at the original 2e-5 bound. No existing Golden/parity tolerance
+was relaxed. The real .02 encoded-gray probe improves from ~.00018293 to ~.00154786 linear, close
+to standard .00154799; camera/monitor matrices are separate requirements.
+
+Export engine/recipe now binds actual canonical generated output-profile bytes even if embedding
+is disabled. A corrected resource cannot silently retain an old output identity. Four-profile
+embedding, real RGB16 round trips, precision, metadata, atomic/cancel/batch and recovery regressions
+remain passing. Fourteen color-management unit tests, 20 export unit tests, seven workflow/recovery
+cases and warning-denied affected Clippy pass. Full final graph/Windows/performance acceptance
+still remains separate, and no v1.0 Final is declared.
+
 ## 2026-10-06 canonical finishing-vignette order
 
 The real RTX 3050/DX12 counterexample combined vignette with a local contrast/shadow layer and
@@ -17,6 +40,12 @@ bound. All 64 pipeline unit tests, historical migration fixture, photographic Go
 real RAW shared-graph tests, doc-test runner and warning-denied pipeline Clippy passed. No tolerance
 was increased, source photo altered, provider replaced or weaker algorithm introduced. Final
 same-SHA full acceptance and end-to-end performance remain separate requirements.
+
+The combined safety/finishing/P3 local Full Acceptance passed: 342 ordinary Rust tests, four
+explicit opt-in gates separately counted, all doc-test runners, warning-denied workspace Clippy,
+format, 185 frontend tests/27 files, lint, TypeScript, production build, JSON/schema, photographic
+Golden and real LibRaw decoder/shared-graph regressions. This qualifies the repair group locally,
+not every stronger production phase, GPU latency target, alpha/monitor/RAW-headroom or Final release.
 
 ## 2026-10-06 Production audit / P0 source and atomic-output safety
 
