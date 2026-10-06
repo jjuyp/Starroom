@@ -18,6 +18,7 @@ use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
 use thiserror::Error;
 
 pub const LIBRAW_PINNED_VERSION: &str = "0.22.2";
+pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v2-sensor-white-wb-headroom";
 pub const LIBRAW_TAG_OBJECT: &str = "24fa7e5463cbf8b8615dbd2b16c933a294d52400";
 pub const LIBRAW_COMMIT: &str = "b93f6e45c194f5df9b02a43b1af9a54b4f41f33f";
 
@@ -33,6 +34,8 @@ pub enum RawDecodeError {
     Decode { code: i32, detail: String },
     #[error("RAW decoder returned an invalid RGB buffer")]
     InvalidRgbBuffer,
+    #[error("RAW decoder returned invalid white balance headroom scaling")]
+    InvalidWhiteBalanceScaling,
     #[error("RAW decoder returned a non-finite sample")]
     NonFiniteSample,
     #[error("camera profile transform returned a non-finite sample")]
@@ -119,6 +122,9 @@ pub struct RawMetadata {
     pub as_shot_kelvin: Option<f32>,
     pub camera_neutral: [f32; 4],
     pub pre_multipliers: [f32; 4],
+    /// LibRaw maximum-WB normalization restored after its 16-bit demosaic boundary, in f32.
+    #[serde(default = "identity_headroom_scale")]
+    pub wb_headroom_scale: f32,
     pub dng_color: [DngMatrixSet; 2],
     pub camera_profile: CameraProfileDescriptor,
     pub output_space: String,
@@ -133,6 +139,10 @@ pub struct RawDecodeTimings {
     pub sensor_unpack_milliseconds: f64,
     pub demosaic_process_milliseconds: f64,
     pub total_decode_milliseconds: f64,
+}
+
+fn identity_headroom_scale() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -175,6 +185,7 @@ struct BridgeResult {
     sensor_layout: u8,
     used_half_size: u8,
     reserved: u16,
+    wb_headroom_scale: f32,
     unpack_milliseconds: f64,
     process_milliseconds: f64,
     focal_length_mm: f32,
@@ -317,6 +328,10 @@ fn decode_inner(
         return Err(RawDecodeError::InvalidRgbBuffer);
     }
     let source = unsafe { slice::from_raw_parts(owned.0, bridge.rgb16_length) };
+    if !bridge.wb_headroom_scale.is_finite() || bridge.wb_headroom_scale < 1.0 {
+        return Err(RawDecodeError::InvalidWhiteBalanceScaling);
+    }
+    let scene_scale = bridge.wb_headroom_scale / 65_535.0;
 
     let sensor_layout = match bridge.sensor_layout {
         1 => SensorLayout::Bayer,
@@ -358,9 +373,9 @@ fn decode_inner(
     let mut rgb = Vec::with_capacity(source.len());
     for camera in source.as_chunks::<3>().0 {
         let xyz = camera_profile.camera_rgb_to_xyz_d65([
-            f32::from(camera[0]) / 65_535.0,
-            f32::from(camera[1]) / 65_535.0,
-            f32::from(camera[2]) / 65_535.0,
+            f32::from(camera[0]) * scene_scale,
+            f32::from(camera[1]) * scene_scale,
+            f32::from(camera[2]) * scene_scale,
         ]);
         let working = xyz_d65_to_rec2020_linear(Xyz {
             x: xyz[0],
@@ -414,6 +429,7 @@ fn decode_inner(
             as_shot_kelvin,
             camera_neutral: neutral,
             pre_multipliers: bridge.pre_multipliers,
+            wb_headroom_scale: bridge.wb_headroom_scale,
             dng_color,
             camera_profile,
             output_space: "linear Rec.2020 D65".to_owned(),

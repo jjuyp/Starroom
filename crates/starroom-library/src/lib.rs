@@ -1027,6 +1027,8 @@ impl Library {
     pub fn thumbnail_identity(asset: &AssetRecord, size: ThumbnailSize) -> String {
         let mut hash = Sha256::new();
         hash.update(b"starroom-thumbnail-v2-camera-profile-v2\0");
+        hash.update(starroom_pipeline::RAW_DECODE_POLICY_VERSION.as_bytes());
+        hash.update(starroom_pipeline::COLOR_POLICY_VERSION.as_bytes());
         hash.update(asset.content_fingerprint.as_bytes());
         hash.update(asset.metadata.orientation.unwrap_or(1).to_le_bytes());
         hash.update(size.pixels().to_le_bytes());

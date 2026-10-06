@@ -4,6 +4,7 @@
 // See NOTICE.md and docs/17_THIRD_PARTY_PROVENANCE.md.
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -39,6 +40,7 @@ struct SrRawResult {
   uint8_t sensor_layout;
   uint8_t used_half_size;
   uint16_t reserved;
+  float wb_headroom_scale;
   double unpack_milliseconds;
   double process_milliseconds;
   float focal_length_mm;
@@ -179,6 +181,14 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
   processor.imgdata.params.gamm[0] = 1.0;
   processor.imgdata.params.gamm[1] = 1.0;
   processor.imgdata.params.no_auto_bright = 1;
+  // Keep the recorded sensor white level, not a content-dependent observed maximum. Native
+  // exposure/tone own brightness; the identical sensor value must not change when a brighter
+  // pixel elsewhere enters the frame (LibRaw::adjust_maximum, pinned upstream utils_libraw.cpp).
+  processor.imgdata.params.adjust_maximum_thr = 0.0f;
+  // LibRaw highlight=1 uses maximum-WB normalization before its ushort demosaic, avoiding
+  // clipping unsaturated sensor channels amplified by Camera WB. It does not synthesize/blend
+  // missing highlights (modes 2+). Restore the scene-linear scale in Rust, after this boundary.
+  processor.imgdata.params.highlight = 1;
   processor.imgdata.params.use_auto_wb = 0;
   processor.imgdata.params.use_camera_wb = 1;
   processor.imgdata.params.user_qual = 3; // AHD; X-Trans selects LibRaw's mature path.
@@ -194,6 +204,20 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
   status = processor.dcraw_process();
   if (status != LIBRAW_SUCCESS) {
     return sr_fail(status, "demosaic/process", error, error_capacity);
+  }
+  float minimum_multiplier = 1.0f;
+  float maximum_multiplier = 0.0f;
+  for (size_t channel = 0; channel < 4; ++channel) {
+    const float multiplier = processor.imgdata.color.pre_mul[channel];
+    if (!std::isfinite(multiplier) || multiplier <= 0.0f) {
+      return sr_fail(LIBRAW_DATA_ERROR, "invalid effective white balance", error, error_capacity);
+    }
+    if (multiplier < minimum_multiplier) minimum_multiplier = multiplier;
+    if (multiplier > maximum_multiplier) maximum_multiplier = multiplier;
+  }
+  result->wb_headroom_scale = maximum_multiplier / minimum_multiplier;
+  if (!std::isfinite(result->wb_headroom_scale) || result->wb_headroom_scale < 1.0f) {
+    return sr_fail(LIBRAW_DATA_ERROR, "invalid white balance headroom", error, error_capacity);
   }
   int memory_status = LIBRAW_SUCCESS;
   libraw_processed_image_t *image =

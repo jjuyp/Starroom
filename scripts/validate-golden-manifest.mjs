@@ -96,5 +96,22 @@ for (const fixture of rawManifest.fixtures ?? []) {
   requiredFormats.delete(fixture.format)
 }
 if (requiredFormats.size) throw new Error(`Missing RAW formats: ${[...requiredFormats].join(', ')}`)
+for (const fixture of rawManifest.generatedFixtures ?? []) {
+  if (fixture.kind !== 'authored-sensor-regression-not-photographic'
+    || fixture.license !== 'GPL-3.0-or-later' || fixture.format !== 'DNG'
+    || !fixture.author || !fixture.cameraModel || !fixture.sourceUrl || !fixture.limitation
+    || fixture.whiteLevel !== 16383 || fixture.blackLevel !== 0
+    || fixture.width !== 64 || fixture.height !== 64
+    || JSON.stringify(fixture.asShotMultipliers) !== '[2,1,4]'
+    || JSON.stringify(fixture.sensorLevels) !== '[1024,2048,4096,6144,8192,10240,12288,14336]') {
+    throw new Error(`Invalid authored RAW normalization fixture: ${fixture.id}`)
+  }
+  const generatorUrl = new URL(fixture.generatorPath, rawManifestUrl)
+  const generator = readFileSync(generatorUrl, 'utf8').replaceAll('\r\n', '\n')
+  if (createHash('sha256').update(generator).digest('hex') !== fixture.generatorSha256Lf) {
+    throw new Error(`RAW generator source hash mismatch: ${fixture.id}`)
+  }
+}
 console.log(`OK fixtures/raw/manifest.json (${rawManifest.fixtures.length} CC0 sensor fixtures)`)
+console.log(`OK RAW authored sensor normalization fixtures (${rawManifest.generatedFixtures?.length ?? 0}; not photographic coverage)`)
 }

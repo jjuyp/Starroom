@@ -34,7 +34,7 @@ fn real_portrait_desaturation_and_vibrance_are_deterministic_shared_and_source_i
                 .data
         );
         if saturation == -1.0 {
-            for pixel in exported.data.chunks_exact(3) {
+            for pixel in exported.data.as_chunks::<3>().0 {
                 assert!(pixel[0].abs_diff(pixel[1]) <= 1 && pixel[1].abs_diff(pixel[2]) <= 1);
             }
         }

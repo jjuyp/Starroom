@@ -1,5 +1,39 @@
 # Implementation Notes
 
+## 2026-10-06 LibRaw sensor-white / WB headroom repair
+
+The authored controlled DNG probe executes real sensor unpack/demosaic, not a simulated RAW
+renderer. On the baseline, known camera gains [2,1,4] force blue working output to plateau near
+1.0 for still-unsaturated sensor steps. LibRaw also replaces the declared white level with the
+observed maximum via its default `adjust_maximum_thr`, so metadata's declared 16383 and actual
+normalization differ. The bridge now integrates existing LibRaw `highlight=1` (maximum-WB
+normalization; no reconstructed/blended highlights) and disables content-dependent maximum
+replacement. Rust validates/restores effective max/min WB normalization in f32 before the
+unchanged Camera Profile -> XYZ -> Linear Rec.2020 stage. The 16-bit mature demosaic boundary
+is explicit; this is not 8-bit upconversion or a new floating-point demosaic implementation.
+
+Identical synthetic input now has monotonic blue values .2314, .4628, .9256, 1.3884, 1.8512,
+2.3140, 2.7769, 3.2397 instead of the former premature plateau. New full/half-size real LibRaw
+test independently uses declared white level and known gains, retains a 4e-4 normalization
+bound, source immutability and finite output. All six licensed NEF/ARW/CR2/CR3/DNG/RAF decodes,
+three RAW shared-graph cases and 20 export unit / seven workflow-recovery cases pass. Restricted
+models and source files are untouched. RAW decode policy enters thumbnail, preview-transform
+and export recipe identities without changing source/AI/history identities or deleting caches.
+The generated manifest registers the canonical generator hash/license, not a fictitious camera
+photo or expanded manufacturer/scene coverage. No dependency or vendored upstream code changes.
+
+The previous `790345a` Full CI run 37398183002 failed only on three new-test `chunks_exact` usages
+under CI Rust/Clippy 1.99 (local 1.97); use equivalent `as_chunks::<3>().0`, not a lint allowance
+or removed assertion. New full acceptance must verify the corrected successor SHA. Final RAW
+quality/precision/latency, monitor/gamut/alpha, editable WB and the stronger Phase 30 release
+qualification remain open; this group is not a Production-ready declaration.
+
+After the RAW repair, local Full Rust Acceptance passes again: 354 ordinary tests, four
+separately gated tests, all doc-test runners, format and warning-denied workspace/all-target
+Clippy (`test-timing-1791250391225.json`). The unchanged frontend has 189 passing tests,
+production types/build/lint and validated JSON/Golden/generator hashes. This remains ordinary
+Full Acceptance; heavy 100MP/installed Windows and all new Phase 30 gates are still required.
+
 ## 2026-10-06 measured-neutral LittleCMS adaptation
 
 Foundation decision: integrate the already pinned LittleCMS `cmsAdaptToIlluminant` through the

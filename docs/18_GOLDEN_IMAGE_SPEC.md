@@ -60,6 +60,15 @@ For M2 RAW, `scripts/validate-golden-manifest.mjs` additionally requires all six
 
 ## M21-M23 executable extensions
 
+The October production pass additionally registers `controlled-bayer-wb-headroom` in the RAW
+manifest: Starroom-authored 64x64 uncompressed 14-effective-bit Bayer DNG, encoded by the existing
+TIFF provider at runtime. Its LF-normalized generator SHA-256, license, synthetic camera identity,
+known black/white levels, As-Shot gains and sensor steps are validated separately from the six
+CC0 real-camera files. The real LibRaw full/half-size regression compares normalization against
+the declared sensor white level and camera/profile matrix, requires monotonic unclipped WB
+headroom, finite output and immutable bytes. It is not an added photographic/RAW IQ scene or
+manufacturer coverage claim; all requested lighting/skin/ISO/color quality scenes remain required.
+
 - M21 selects `ai,detail,high-iso,portrait,skin,night,hdr`. Active Rust fixtures additionally cover flat luminance/chroma noise, colored texture, portrait-like skin protection, scene-linear values above 1.0, portrait/landscape/small/large tile plans, overlap seams, cancellation and missing/hash/runtime/tensor/OOM typed failures. The private NAFNet file is never required by CI; a deterministic inferencer double validates domain/tiling/residual semantics, while an explicitly provisioned local model may run the same provider contract.
 - M22 selects `color,tone,curve,portrait,skin,night,hdr`. Every analysis asserts deterministic quantiles, finite OKLab covariance/eight-band statistics, monotonic fitted curve, bounded existing adjustment parameters, identity neutrality, underexposure direction, mixed-color direction and reduced skin impact when protection is enabled.
 - M23 selects `color,curve,detail,portrait,night,hdr`. Schema round-trip rejects unknown versions and forbidden/non-portable state by construction. Amount endpoints, A/B blend, circular hue, sampled curves, deterministic grain and vignette HDR finiteness are numerical regressions. The pipeline test requires identical Native Preview and Export bytes for the same source identity/settings, including normalized A70/B30 Look output composed through an adjustment Layer and radial Mask.

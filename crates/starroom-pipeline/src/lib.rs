@@ -37,6 +37,7 @@ use starroom_project::{
     GeneratedMaskSemantic, MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion,
     PortraitSourceCrop,
 };
+pub use starroom_raw::RAW_DECODE_POLICY_VERSION;
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::profiling::{self, ProfileStage};
 use starroom_render::{
@@ -3722,7 +3723,7 @@ mod tests {
             settings.relative_color.saturation = -1.0;
             settings.relative_color.vibrance = vibrance;
             let cpu = render_source_export_to_srgb8(&decoded, &settings).unwrap();
-            for pixel in cpu.data.chunks_exact(3) {
+            for pixel in cpu.data.as_chunks::<3>().0 {
                 assert!(
                     pixel[0].abs_diff(pixel[1]) <= 1 && pixel[1].abs_diff(pixel[2]) <= 1,
                     "not gray: {pixel:?}"
@@ -3731,7 +3732,7 @@ mod tests {
             if let Some(gpu) = &gpu {
                 let accelerated =
                     render_source_preview_with_gpu_to_srgb8(&decoded, &settings, gpu).unwrap();
-                for pixel in accelerated.data.chunks_exact(3) {
+                for pixel in accelerated.data.as_chunks::<3>().0 {
                     assert!(pixel[0].abs_diff(pixel[1]) <= 1 && pixel[1].abs_diff(pixel[2]) <= 1);
                 }
                 assert!(

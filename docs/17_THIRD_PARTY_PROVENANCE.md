@@ -43,6 +43,15 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+The RAW bridge headroom repair uses the same LibRaw revision/public options (`highlight=1`,
+`adjust_maximum_thr=0`) and restores its effective maximum/minimum WB normalization in f32 after
+the mature 16-bit demosaic boundary. Behavioral sources: `src/postprocessing/postprocessing_utils_dcrdefs.cpp::scale_colors`,
+`src/postprocessing/dcraw_process.cpp` and `src/utils/utils_libraw.cpp::adjust_maximum`. No vendored
+LibRaw code or custom demosaic is introduced. CDDL choice/notices are unchanged. The authored
+synthetic DNG generator in `starroom-imageio/tests/support/controlled_dng.rs` uses existing
+`tiff 0.11.3`, has GPL project licensing and no external camera/photo pixels; source hash and
+limitations are recorded in the RAW manifest. The prominent Adobe DNG notice remains in NOTICE.
+
 The saturation endpoint and perceptual Vibrance skin-like heuristic in `starroom-color` and the
 matching fused WGSL are Starroom-authored OKLCh workflow code, implementing `docs/12_TONE_COLOR_ENGINE.md`.
 No darktable implementation/model is copied for this heuristic, no third-party revision changes,

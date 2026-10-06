@@ -3569,7 +3569,11 @@ fn preview_stage_identity(
     let mut parameters = BTreeMap::new();
     parameters.insert(
         StageId::InputTransform,
-        encoded(&settings.color_management)?,
+        encoded(&(
+            settings.color_management,
+            starroom_pipeline::RAW_DECODE_POLICY_VERSION,
+            starroom_pipeline::COLOR_POLICY_VERSION,
+        ))?,
     );
     parameters.insert(
         StageId::WhiteBalance,
