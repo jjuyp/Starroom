@@ -13,6 +13,7 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
   if (['masksourcemismatch', 'portraitsourcemismatch', 'portraitrestoremetadatamissing'].some((code) => value.includes(code))) return 'AI'
   if (value.includes('outofmemory') || value.includes('out of memory')) return 'Memory'
   if (value.includes('permission') || value.includes('access denied')) return 'Permission'
+  if (value.includes('curvepreview') || value.includes('native_curve_preview') || value.includes('littlecms')) return 'Color'
   if (['whitebalance', 'white-balance', 'neutral-picker', 'chromatic adaptation', 'invalidwhitepoint'].some((term) => value.includes(term))) return 'Color'
   if (value.includes('raw') || value.includes('libraw') || value.includes('demosaic')) return 'RAW'
   if (value.includes('icc') || value.includes('profile') || value.includes('color')) return 'Color'
@@ -31,6 +32,7 @@ export function presentError(error: unknown, fallback: string): PresentedError {
   const category = categoryFor(diagnostic)
   const invalidNeutral = /invalidwhitebalancesample|invalidwhitepoint|neutral-picker sample is missing or invalid|chromatic adaptation requires/i.test(diagnostic)
   const message = diagnostic.includes('SourceOverwriteForbidden') ? '匯出不能覆寫原始照片。請更換檔名或匯出資料夾。'
+    : /curvepreview|native_curve_preview/i.test(diagnostic) ? '無法顯示原生曲線，請重新開啟曲線面板，必要時復原最近的曲線調整。'
     : invalidNeutral ? '無法從這個區域取得有效白平衡。請選擇有亮度的中性灰或白色區域。'
     : diagnostic.includes('MaskSourceMismatch') ? '這個 AI 遮罩屬於另一張照片，請在目前照片重新產生遮罩。'
     : diagnostic.includes('PortraitSourceMismatch') ? '這個人像或肌膚選取屬於另一張照片，請重新偵測並選取人臉。'

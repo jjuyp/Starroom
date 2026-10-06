@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Remove the production UI spline copy; curve-panel geometry now comes from the actual
+  shared Native spline via bounded float metadata and strict latest-only IPC. Actual React /
+  Rust-command operation checks pass. Legacy JS migration engine and complete Phase 23 remain open.
+
 - [x] Reuse actual mature LCMS transform objects across preview/export under exact ICC/intent/
   BPC/direction identity and bounded LRU; verify typed invalid/oversized errors, concurrency,
   photographic/RAW parity and measured before/after. Prepared pixel-stage caches remain open.

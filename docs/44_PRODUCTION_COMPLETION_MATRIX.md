@@ -10,6 +10,11 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+Curve presentation (2026-10-07): production JS spline removed; real React curve geometry is
+returned by the same Native PreparedCurve used for pixels, with bounded requests and stale-reply
+rejection. Four-channel/preset/add/drag/delete/numeric UI checks use actual Rust command samples.
+Synthetic photo transport is not installed photo acceptance; the legacy test engine remains open.
+
 LittleCMS lifecycle reuse (2026-10-06): real input/output transform objects are cached under
 exact profile/intent/BPC/direction keys, with eight-entry and 2 MiB key retention limits. Strict
 concurrent equality, typed ICC errors and photographic/shared regressions pass. The dedicated

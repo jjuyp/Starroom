@@ -10,7 +10,7 @@ use starroom_ai_denoise::{
     directml_failure_allows_cpu_fallback, infer_tiled, inference_cache_key,
     verify_model as verify_ai_denoise_model,
 };
-use starroom_color::{ColorMixer, CurvePoint, ToneParameters};
+use starroom_color::{ColorMixer, CurvePoint, PreparedCurve, ToneParameters};
 use starroom_detail::{DenoiseParameters, LocalDetailParameters, SharpenParameters};
 use starroom_export::{
     BatchExportResult, BatchProgress, ExportItemResult, ExportItemStatus,
@@ -1952,6 +1952,44 @@ fn native_sample_color(
 struct NativeWhiteBalanceInfo {
     source: &'static str,
     as_shot_kelvin: Option<f32>,
+}
+
+/// Small presentation geometry from the same spline used by the shared pixel graph. No photos
+/// or profile conversions are involved; bounded work is safe on the command thread.
+#[tauri::command]
+fn native_curve_preview(
+    points: Vec<CurvePoint>,
+    sample_count: u16,
+) -> Result<Vec<CurvePoint>, String> {
+    sample_native_curve_preview(points, sample_count)
+}
+
+/// Native command implementation, also available to the small presentation-contract probe.
+pub fn sample_native_curve_preview(
+    points: Vec<CurvePoint>,
+    sample_count: u16,
+) -> Result<Vec<CurvePoint>, String> {
+    if points.len() > 4096
+        || !(2..=257).contains(&sample_count)
+        || points
+            .iter()
+            .any(|point| !point.x.is_finite() || !point.y.is_finite())
+    {
+        return Err("InvalidCurvePreview: invalid point data or sampling limits".into());
+    }
+    let curve = PreparedCurve::new(&points);
+    (0..sample_count)
+        .map(|index| {
+            let x = f32::from(index) / f32::from(sample_count - 1);
+            let y = curve.map(x);
+            if !y.is_finite() {
+                return Err(
+                    "InvalidCurvePreview: native spline produced a non-finite sample".into(),
+                );
+            }
+            Ok(CurvePoint { x, y })
+        })
+        .collect()
 }
 
 /// Exposes only truthful source WB metadata. Rendered RGB files remain explicitly relative.
@@ -4855,6 +4893,7 @@ pub fn run() {
             ai_denoise_cancel,
             native_sample_color,
             native_white_balance_info,
+            native_curve_preview,
             native_optics_status,
             native_reference_match,
             native_look_save,
@@ -4899,6 +4938,63 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_curve_preview_samples_the_actual_shared_spline_without_quantization() {
+        for points in [
+            vec![],
+            vec![CurvePoint { x: 0.1, y: 0.0 }, CurvePoint { x: 0.9, y: 1.0 }],
+            vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
+            vec![
+                CurvePoint { x: 0.0, y: 0.1 },
+                CurvePoint { x: 0.25, y: 0.18 },
+                CurvePoint { x: 0.5, y: 0.5 },
+                CurvePoint { x: 0.75, y: 0.84 },
+                CurvePoint { x: 1.0, y: 1.6 },
+            ],
+            vec![
+                CurvePoint { x: 1.0, y: 0.9 },
+                CurvePoint { x: 0.0, y: -0.1 },
+                CurvePoint { x: 0.01, y: 0.02 },
+                CurvePoint { x: 0.9, y: 0.8 },
+            ],
+        ] {
+            let prepared = PreparedCurve::new(&points);
+            let sampled = native_curve_preview(points, 129).unwrap();
+            assert_eq!(sampled.len(), 129);
+            assert_eq!(sampled[0].x, 0.0);
+            assert_eq!(sampled[128].x, 1.0);
+            for sample in sampled {
+                assert_eq!(sample.y, prepared.map(sample.x));
+            }
+        }
+    }
+
+    #[test]
+    fn native_curve_preview_is_bounded_typed_and_preserves_nonuniform_monotone_points() {
+        let points = vec![
+            CurvePoint { x: 0.0, y: 0.0 },
+            CurvePoint { x: 0.005, y: 0.03 },
+            CurvePoint { x: 0.01, y: 0.12 },
+            CurvePoint { x: 0.9, y: 0.95 },
+            CurvePoint { x: 1.0, y: 1.0 },
+        ];
+        let samples = native_curve_preview(points, 257).unwrap();
+        assert!(samples.windows(2).all(|pair| pair[0].y <= pair[1].y));
+        assert!(samples.iter().all(|sample| (0.0..=1.0).contains(&sample.y)));
+        for count in [0, 1, 258, u16::MAX] {
+            assert!(
+                native_curve_preview(vec![], count)
+                    .unwrap_err()
+                    .starts_with("InvalidCurvePreview:")
+            );
+        }
+        for value in [f32::NAN, f32::INFINITY] {
+            assert!(native_curve_preview(vec![CurvePoint { x: value, y: 0.0 }], 129).is_err());
+            assert!(native_curve_preview(vec![CurvePoint { x: 0.0, y: value }], 129).is_err());
+        }
+        assert!(native_curve_preview(vec![CurvePoint { x: 0.0, y: 0.0 }; 4097], 129).is_err());
+    }
 
     #[test]
     fn professional_desktop_export_protects_another_library_original() {

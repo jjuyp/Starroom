@@ -20,7 +20,7 @@ import {
   defaultAdjustments,
 } from './editorState'
 import {
-  calculateDisplayHistogram, hasAdjustments, mapToneCurve, type DisplayHistogram,
+  calculateDisplayHistogram, hasAdjustments, type DisplayHistogram,
   type RadialMask, type ToneCurvePoint,
 } from './previewPresentation'
 import {
@@ -36,6 +36,7 @@ import {
   refreshNativeLibraryMetadata,
   nativePreviewViewportContract,
   nativePortraitSourceCrop,
+  sampleNativeCurve, type NativeCurveSample,
   type NativeLibraryAsset, type NativeLibraryCollection, type NativeLibraryQuery, type NativeAssetFlag, type NativeColorLabel, type NativeSmartPredicate,
   commitNativeHistory, createNativeSnapshot, deleteNativeSnapshot, openNativeHistory, redoNativeHistory, renameNativeSnapshot, restoreNativeSnapshot, undoNativeHistory,
   type NativeHistoryResult,
@@ -46,7 +47,7 @@ import { resolveCommandShortcut, searchCommands, type CommandId } from './comman
 import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
 import { importNativeLibraryPaths } from './nativeRender'
-import { PreviewSuperseded, previewFrameMayPublish } from './latestPreviewQueue'
+import { LatestPreviewQueue, PreviewSuperseded, previewFrameMayPublish } from './latestPreviewQueue'
 import {
   appendInteractiveHistory,
   prependInteractiveHistory,
@@ -445,13 +446,26 @@ function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit,
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  const samplesQueue = useRef(new LatestPreviewQueue<NativeCurveSample[]>())
+  const [nativeSamples, setNativeSamples] = useState<{ key: string; samples: NativeCurveSample[]; error?: string } | null>(null)
+  const curveKey = JSON.stringify(points.map(({ x, y }) => ({ x, y })))
+  useEffect(() => {
+    if (!nativeRuntimeAvailable()) return
+    let active = true
+    const queue = samplesQueue.current
+    void queue.submit(() => sampleNativeCurve(JSON.parse(curveKey)), () => undefined)
+      .then((samples) => { if (active) setNativeSamples({ key: curveKey, samples }) })
+      .catch((error: unknown) => {
+        if (active && !(error instanceof PreviewSuperseded)) {
+          setNativeSamples({ key: curveKey, samples: [], error: formatUserError(error, '曲線顯示失敗') })
+        }
+      })
+    return () => { active = false; queue.cancelAll() }
+  }, [curveKey])
   const sorted = [...points].sort((a, b) => a.x - b.x)
   const selected = sorted.find((point) => point.id === selectedId) ?? sorted[2] ?? sorted[0]
-  const path = Array.from({ length: 61 }, (_, index) => {
-    const x = index / 60
-    const y = mapToneCurve(x, sorted)
-    return `${index ? 'L' : 'M'} ${x * 300} ${(1 - y) * 120}`
-  }).join(' ')
+  const currentSamples = nativeSamples?.key === curveKey ? nativeSamples : null
+  const path = currentSamples?.samples.map(({ x, y }, index) => `${index ? 'L' : 'M'} ${x * 300} ${(1 - y) * 120}`).join(' ') ?? ''
   const eventPoint = (event: React.PointerEvent<SVGSVGElement>) => {
     return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect(), true)
   }
@@ -503,6 +517,9 @@ function ToneCurveEditor({ points, selectedId, histogram, onSelect, onBeginEdit,
       </circle>)}
     </svg>
     <div className="curve-help">單調曲線 · 左鍵點線新增控制點 · 拖曳調整 · 右鍵刪除</div>
+    {!nativeRuntimeAvailable() && <div role="status">原生引擎未啟用，曲線顯示停用。</div>}
+    {nativeRuntimeAvailable() && !currentSamples && <div role="status">更新原生曲線…</div>}
+    {currentSamples?.error && <div role="alert">{currentSamples.error}</div>}
     {selected && <div className="curve-values">
       <label>輸入 <input aria-label="所選曲線控制點輸入值" type="number" min="0" max="100" step="1" value={Math.round(selected.x * 100)}
         disabled={selected.id === 'black' || selected.id === 'white'} onFocus={onBeginEdit}

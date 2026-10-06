@@ -2,6 +2,12 @@
 
 ## Current Milestone
 
+LittleCMS reuse `1ad6921` Full CI 37489700399 passed. Current curve-presentation group removes
+the production JS spline copy and wires actual shared Native curve samples into the real panel.
+Native sampler/contract/latest tests and actual React/Rust-command operation checks pass.
+No image algorithm changed; synthetic photo transport does not qualify installed image rendering.
+Legacy migration JS engine and every remaining full production phase are still active.
+
 History boundaries `9e23d85` targeted CI 37485049480 passed. Current group reuses actual mature
 LCMS input/output transforms under bounded exact keys and keeps cold construction/pixel work
 outside the shared lock. Four new cache regressions, final Full Rust 374 ordinary tests and

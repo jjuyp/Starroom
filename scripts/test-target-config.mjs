@@ -41,12 +41,13 @@ export const targets = {
   },
   curve: {
     rust: [
+      ['test', '--locked', '-p', 'starroom-desktop', 'native_curve_preview'],
       ['test', '--locked', '-p', 'starroom-color', 'curve'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'curve'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'portrait_and_gradient'],
       ['test', '--locked', '-p', 'starroom-project', 'adjustment_state'],
     ],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/editorState.test.ts'],
+    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/editorState.test.ts', 'src/nativeCurvePreview.test.ts'],
     golden: ['curve', 'portrait'],
   },
   raw: {

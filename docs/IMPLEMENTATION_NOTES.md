@@ -1,5 +1,44 @@
 # Implementation Notes
 
+## 2026-10-07 — Native spline owns curve-panel geometry
+
+`ToneCurveEditor` previously evaluated a second JS cubic spline from `previewPresentation.ts`.
+It is removed from the production presentation module. The registered `native_curve_preview`
+command and test probe delegate to `sample_native_curve_preview`, which prepares the very same
+`starroom-color::PreparedCurve` used by the Native pixel graph. React only maps the returned
+coordinates to SVG. The bounded request contains x/y points and a count, not photo pixels;
+the panel requests 129 float samples. Native accepts 2-257 samples and at most 4096 points,
+rejects non-finite input/output and retains unbounded finite y/HDR/endpoint extrapolation.
+Existing renderer/edit-state limits and all image-stage algorithms are unchanged.
+
+One-running/one-pending strict latest-only queue plus effect cleanup prevents old drag/channel
+responses from replacing current geometry. Pending/error/unavailable states are explicit; no
+Browser spline fallback runs when Native is unavailable. Curve errors are actionable Traditional
+Chinese and retain diagnostics; the existing LittleCMS cache error is classified as Color too.
+
+Two actual desktop-command regressions prove equality to the shared spline for identity, S/fade,
+negative/HDR and nonuniform/endpoint points plus bounded typed invalid data. Four frontend
+contract/queue regressions preserve float samples, small request shape and latest-only behavior.
+All frontend 203/203 (28 files), lint/TypeScript/build and infrastructure validation pass.
+Desktop 36 ordinary tests pass (2 opt-in not accepted here). Curve milestone/shared pipeline
+69 + 8 photographic/RAW integration, render 31, Golden manifests, format and workspace
+warning-denied Clippy pass; local report `.starroom-reports/test-timing-1791302277100.json`.
+The subsequent complete frontend/desktop runs cover the final error UX and public probe helper.
+
+Playwright CLI drove actual React Master/Red/Green/Blue tabs, S curve/black fade, add/drag/delete
+and numeric editing. The curve-specific test bridge invoked the compiled production Rust
+implementation for every request and compared the exact SVG path to all 129 returned coordinates:
+18 requests passed, max debug Native command time 0.2317ms. The timing excludes process start,
+IPC, UI presentation and photo rendering. The photo/history fixture remains explicitly synthetic;
+this is not installed photo pipeline or end-to-end latency acceptance. Temporary loopback audit
+tooling is isolated under `output/playwright`, not imported/bundled by production and is closed
+after the audit. Screenshot/scripts: `native-curve-ui-final.png`, `native-curve-ui-audit.js` and
+`native-curve-bridge.mjs`; reusable Native probe is `src-tauri/examples/native_curve_preview_probe.rs`.
+
+The deprecated JS image engine still used by historical migration tests is not yet removed.
+Whole Phase 23, Native residency/stage caches, RAW/alpha/gamut/monitor and final Windows gates
+remain open. No new dependency or upstream curve source was copied.
+
 ## 2026-10-06 — Reuse mature LittleCMS transforms at real graph boundaries
 
 Both encoded input and output recreated profiles and LCMS transforms on every frame. They now

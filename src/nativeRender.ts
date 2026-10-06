@@ -6,6 +6,28 @@ import type { RadialMask, ToneCurvePoint } from './previewPresentation'
 import canonicalNativeDefaults from '../fixtures/contracts/native-default-settings.json'
 
 export type RenderBackend = 'native' | 'browserFallback'
+
+export interface NativeCurveSample { x: number; y: number }
+export const nativeCurveSampleCount = 129
+export function nativeCurvePreviewContract(points: readonly NativeCurveSample[]) {
+  if (points.length > 4096 || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+    throw new Error('InvalidCurvePreview: invalid control points')
+  }
+  return { points: points.map(({ x, y }) => ({ x, y })), sampleCount: nativeCurveSampleCount }
+}
+export function parseNativeCurvePreview(samples: unknown): NativeCurveSample[] {
+  if (!Array.isArray(samples) || samples.length !== nativeCurveSampleCount
+    || samples.some((point, index) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+      || point.x < 0 || point.x > 1 || index > 0 && point.x <= samples[index - 1].x)
+    || samples[0].x !== 0 || samples.at(-1).x !== 1) {
+    throw new Error('InvalidCurvePreview: malformed Native sample result')
+  }
+  return samples.map(({ x, y }) => ({ x, y }))
+}
+export async function sampleNativeCurve(points: readonly NativeCurveSample[]) {
+  if (!nativeRuntimeAvailable()) throw new Error('CurvePreviewUnavailable: Native runtime is required')
+  return parseNativeCurvePreview(await invoke('native_curve_preview', nativeCurvePreviewContract(points)))
+}
 export type NativePreviewInteractionPhase = 'interactive' | 'final'
 export type NativeAssetFlag = 'unflagged' | 'pick' | 'reject'
 export type NativeColorLabel = 'none' | 'red' | 'yellow' | 'green' | 'blue' | 'purple'

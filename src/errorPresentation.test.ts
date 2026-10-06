@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { presentError } from './errorPresentation'
 
 describe('typed production error presentation', () => {
+  it.each(['InvalidCurvePreview: malformed Native sample result', 'CurvePreviewUnavailable: Native runtime is required',
+    'Command native_curve_preview not found'])('gives explicit curve guidance for %s', (diagnostic) => {
+    expect(presentError(diagnostic, '曲線顯示失敗')).toEqual({ category: 'Color', diagnostic,
+      message: '無法顯示原生曲線，請重新開啟曲線面板，必要時復原最近的曲線調整。' })
+  })
+  it('classifies the actual LittleCMS cache failure without hiding diagnostic detail', () => {
+    expect(presentError('LittleCMS transform cache is unavailable', '預覽失敗')).toMatchObject({ category: 'Color',
+      diagnostic: 'LittleCMS transform cache is unavailable' })
+  })
   it.each([
     'InvalidWhiteBalanceSample',
     'Preview failed: neutral-picker sample is missing or invalid',
