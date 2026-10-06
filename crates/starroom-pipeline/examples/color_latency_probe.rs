@@ -81,6 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "scope": "512px real portrait, Native engine only; no UI/encode presentation timing",
             "colorPolicy": starroom_pipeline::COLOR_POLICY_VERSION,
             "adapter": gpu.status(), "measurements": report,
+            "gpuResources": gpu.resource_stats(),
         })
     );
     Ok(())

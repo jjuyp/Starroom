@@ -38,6 +38,10 @@ pub struct StageMeasurement {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderProfile {
+    /// Maximum sum of live compute buffer sizes observed by this render. This is not the
+    /// driver's physical VRAM usage, and deliberately excludes textures and other devices.
+    #[serde(default)]
+    pub gpu_buffer_bytes: u64,
     pub stages: BTreeMap<ProfileStage, StageMeasurement>,
     pub total_cpu_nanoseconds: u64,
     pub peak_working_bytes: u64,
@@ -189,6 +193,14 @@ pub fn record_gpu(stage: ProfileStage, elapsed_nanoseconds: u64) {
                     .gpu_creative_nanoseconds
                     .saturating_add(elapsed_nanoseconds);
             }
+        }
+    });
+}
+
+pub fn record_gpu_buffer_bytes(bytes: u64) {
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            active.report.gpu_buffer_bytes = active.report.gpu_buffer_bytes.max(bytes);
         }
     });
 }

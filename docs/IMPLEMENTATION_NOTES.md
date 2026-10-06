@@ -1,5 +1,37 @@
 # Implementation Notes
 
+## 2026-10-06 — Remove unused persistent GPU allocations
+
+Production `GpuBufferResources` reserved a full RGBA f32 working buffer and a full single-channel
+mask buffer in both exposure and creative allocation paths, but neither was ever bound, read or
+written. Remove those reservations, retain source/output/readback/uniform/LUT precision and the
+same shader and cache fingerprints. This is memory ownership cleanup, not a new image algorithm
+or dependency. Masks continue through their existing shared graph; no mask capability is removed.
+
+`GpuResourceStats::allocated_buffer_bytes` sums actual live wgpu `Buffer::size()` values. The
+production render profiler also records `gpu_buffer_bytes` (maximum observed during that render,
+backward-compatible default on deserialization). Neither counter claims physical VRAM, texture
+memory or process peak. Actual adapter tests cover empty allocation, creative reuse, resize,
+reuse of a larger capacity by a smaller frame, statistics reset and captured production memory.
+The exposure identity output is exact, including alpha.
+
+For the existing 512px square NASA portrait on RTX 3050 Laptop/DX12, old declared buffer sizes
+sum to 17,859,072 bytes; current actual buffer sizes sum to 12,616,192 bytes (5,242,880 bytes
+removed, 29.36%). One isolated current release-engine run measures median/p95 milliseconds:
+Exposure 45.474/68.266, Temperature 45.824/56.015, Tint 42.098/44.375, Saturation 43.113/48.327,
+Vibrance 42.914/45.930, Auto WB 44.773/48.037, Picker 43.910/49.319. Five timed samples follow
+warm-up; Auto intent is unchanged across samples. CPU/GPU max RGB8 difference remains one code
+(Auto/Picker zero). Prior concurrent-build samples varied substantially; they do not demonstrate
+a causal latency gain. This optimization proves reduced owned buffer storage, NOT full UI
+latency, 24/100MP acceptance, physical memory improvement or completed GPU-resident presentation.
+
+Targeted GPU tests 10/10, GPU milestone/shared graph tests (69 pipeline + 8 integration + 31
+render), frontend Native contract 45/45, Golden/RAW manifest validation, workspace warning-denied
+Clippy, format, frontend lint/TypeScript/build pass. Local milestone timing report:
+`.starroom-reports/test-timing-1791298106940.json`; the final telemetry assertion also passed in
+a subsequent targeted GPU rerun. No lockfile/provenance dependency change. All full production
+phases remain active; installer and final same-SHA release gates are not satisfied by this group.
+
 ## 2026-10-06 DNG ColorMatrix neutral and inversion boundary
 
 Native authored D65 ColorMatrix counterexample produced working RGB [.915141,1.012765,1.330013]

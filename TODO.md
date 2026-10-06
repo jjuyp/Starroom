@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Remove never-bound full-frame GPU working/mask reservations; expose actual owned buffer
+  sizes to stats and production profiler, verify reuse/resize/identity and photographic parity.
+  Physical VRAM/process peak, direct presentation and full UI latency remain separate open gates.
+
 The new Phase 0-30 master prompt supersedes the older RC-only stopping condition. Full scope and
 evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from historical CI.
 

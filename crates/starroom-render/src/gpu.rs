@@ -158,6 +158,8 @@ pub struct GpuStatus {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuResourceStats {
+    /// Sum of live wgpu buffer sizes, not physical VRAM allocation or process peak memory.
+    pub allocated_buffer_bytes: u64,
     pub source_upload_count: u64,
     pub final_readback_count: u64,
     pub resource_reuse_count: u64,
@@ -257,14 +259,27 @@ struct GpuBufferResources {
     source_fingerprint: u64,
     creative_fingerprint: u64,
     source: wgpu::Buffer,
-    _working: wgpu::Buffer,
     output: wgpu::Buffer,
     staging: wgpu::Buffer,
     parameters: wgpu::Buffer,
-    /// Reserved by the fused creative path. Keeping these allocations with the frame resources
-    /// prevents curve or mask edits from rebuilding large GPU storage.
+    /// LUT storage consumed by the fused creative shader. Masks run elsewhere in the graph;
+    /// do not reserve full-frame buffers for stages that never bind them.
     curve_lut: wgpu::Buffer,
-    _mask: wgpu::Buffer,
+}
+
+impl GpuBufferResources {
+    fn allocated_buffer_bytes(&self) -> u64 {
+        [
+            &self.source,
+            &self.output,
+            &self.staging,
+            &self.parameters,
+            &self.curve_lut,
+        ]
+        .into_iter()
+        .map(wgpu::Buffer::size)
+        .sum()
+    }
 }
 
 impl GpuRenderer {
@@ -479,7 +494,14 @@ impl GpuRenderer {
     }
 
     pub fn resource_stats(&self) -> GpuResourceStats {
-        *self.stats.lock().expect("GPU resource statistics")
+        let mut stats = *self.stats.lock().expect("GPU resource statistics");
+        stats.allocated_buffer_bytes = self
+            .resources
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map_or(0, GpuBufferResources::allocated_buffer_bytes);
+        stats
     }
 
     pub fn reset_resource_stats(&self) {
@@ -659,12 +681,6 @@ impl GpuRenderer {
                     "starroom-source-linear-rec2020",
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ),
-                _working: storage(
-                    "starroom-working-ping",
-                    wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                ),
                 output: storage(
                     "starroom-working-pong",
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -685,12 +701,6 @@ impl GpuRenderer {
                     usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }),
-                _mask: self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("starroom-mask-r16float-storage"),
-                    size: (byte_len / 4).max(4),
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
             });
         } else {
             self.stats
@@ -699,6 +709,7 @@ impl GpuRenderer {
                 .resource_reuse_count += 1;
         }
         let resources = resources.as_mut().expect("allocated GPU resources");
+        crate::profiling::record_gpu_buffer_bytes(resources.allocated_buffer_bytes());
         let fingerprint = pixel_fingerprint(pixels);
         if must_allocate || resources.source_fingerprint != fingerprint {
             self.queue
@@ -818,13 +829,6 @@ impl GpuRenderer {
                     byte_len,
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ),
-                _working: storage(
-                    "starroom-working-ping",
-                    byte_len,
-                    wgpu::BufferUsages::STORAGE
-                        | wgpu::BufferUsages::COPY_SRC
-                        | wgpu::BufferUsages::COPY_DST,
-                ),
                 output: storage(
                     "starroom-working-pong",
                     byte_len,
@@ -845,11 +849,6 @@ impl GpuRenderer {
                     8 * 1024 * 4,
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 ),
-                _mask: storage(
-                    "starroom-mask-r16float-storage",
-                    (byte_len / 4).max(4),
-                    wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                ),
             });
         } else {
             self.stats
@@ -858,6 +857,7 @@ impl GpuRenderer {
                 .resource_reuse_count += 1;
         }
         let resources = resources.as_mut().expect("allocated GPU resources");
+        crate::profiling::record_gpu_buffer_bytes(resources.allocated_buffer_bytes());
         let fingerprint = pixel_fingerprint(pixels);
         if must_allocate || resources.source_fingerprint != fingerprint {
             let upload_started = Instant::now();
@@ -1201,6 +1201,7 @@ mod tests {
         assert_eq!(stats.source_upload_count, 1);
         assert_eq!(stats.final_readback_count, 3);
         assert_eq!(stats.pipeline_create_count, 2);
+        assert_eq!(stats.allocated_buffer_bytes, 3 * 128 * 16 + 512 + 32768);
         assert!(stats.resource_reuse_count >= 1);
         assert!(stats.source_texture_hit >= 2);
         assert_eq!(stats.working_texture_hit, 1);
@@ -1212,10 +1213,33 @@ mod tests {
         let Ok(renderer) = GpuRenderer::try_new() else {
             return;
         };
+        assert_eq!(renderer.resource_stats().allocated_buffer_bytes, 0);
         let small = vec![[0.1, 0.2, 0.3, 1.0]; 64];
         let large = vec![[0.1, 0.2, 0.3, 1.0]; 256];
-        renderer.apply_exposure(&small, 0.0).expect("small frame");
+        let (result, profile) = crate::profiling::capture(|| renderer.apply_exposure(&small, 0.0));
+        assert_eq!(result.expect("small frame"), small);
+        assert_eq!(profile.gpu_buffer_bytes, 3 * 64 * 16 + 33280);
+        assert_eq!(
+            renderer.resource_stats().allocated_buffer_bytes,
+            3 * 64 * 16 + 33280
+        );
         renderer.apply_exposure(&large, 0.0).expect("resized frame");
         assert_eq!(renderer.resource_stats().source_upload_count, 2);
+        assert_eq!(
+            renderer.resource_stats().allocated_buffer_bytes,
+            3 * 256 * 16 + 33280
+        );
+        renderer
+            .apply_exposure(&small, 0.0)
+            .expect("reuse larger capacity");
+        assert_eq!(
+            renderer.resource_stats().allocated_buffer_bytes,
+            3 * 256 * 16 + 33280
+        );
+        renderer.reset_resource_stats();
+        assert_eq!(
+            renderer.resource_stats().allocated_buffer_bytes,
+            3 * 256 * 16 + 33280
+        );
     }
 }

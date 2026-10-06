@@ -10,6 +10,11 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+GPU allocation repair (2026-10-06): unused working/mask buffer reservations removed without
+pixel/shader changes. Real 512px/DX12 buffer sizes 12,616,192 bytes versus prior declarations
+17,859,072 bytes; ownership/reuse/resize/profile tests pass. Native-only timing and actual
+buffer bytes do not verify end-to-end latency, physical VRAM, 100MP or GPU direct presentation.
+
 - `IMPLEMENTED / PARTIAL` means inspected production code exists; it does not mean accepted.
 - `OPEN` means a demonstrated defect or missing production requirement.
 - `REVIEW` means evidence is incomplete, including real UI, photographic or hardware verification.
