@@ -10,6 +10,12 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+LittleCMS lifecycle reuse (2026-10-06): real input/output transform objects are cached under
+exact profile/intent/BPC/direction keys, with eight-entry and 2 MiB key retention limits. Strict
+concurrent equality, typed ICC errors and photographic/shared regressions pass. The dedicated
+Native probe records two builds / 166 reuses; measured batch is in doc 45. This is NOT prepared
+pixel-stage caching, physical memory/100MP qualification or full desktop latency acceptance.
+
 GPU allocation repair (2026-10-06): unused working/mask buffer reservations removed without
 pixel/shader changes. Real 512px/DX12 buffer sizes 12,616,192 bytes versus prior declarations
 17,859,072 bytes; ownership/reuse/resize/profile tests pass. Native-only timing and actual

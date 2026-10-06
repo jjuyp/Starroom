@@ -1,5 +1,31 @@
 # Implementation Notes
 
+## 2026-10-06 — Reuse mature LittleCMS transforms at real graph boundaries
+
+Both encoded input and output recreated profiles and LCMS transforms on every frame. They now
+reuse actual pinned `ParallelLcmsTransform` objects in a bounded process-local LRU: direction,
+exact optional ICC bytes, intent and BPC are part of the key; maximum eight retained transforms
+and 2 MiB retained key bytes. Invalid profiles remain role-specific errors; oversized valid ICCs
+still execute with the same engine/flags but are not retained. Poisoned cache access is typed,
+not a release-path panic or invented sRGB fallback. Execution occurs outside the lock using
+the existing safe wrapper's NO_CACHE/DisallowCache thread-sharing contract; no Starroom unsafe
+Send/Sync, mutable one-pixel LCMS cache or math replacement is added.
+
+23 CMM tests (four new) pass for exact cached/uncached concurrent float output, full-key
+separation, cold-build race deduplication and real LCMS invalid/oversized/LRU budget checks.
+Profile creation and pixel execution are outside the shared lock, so a cold export ICC does not
+hold the object cache lock needed by a warm preview. Color milestone, real photographic
+Golden, RAW/shared graph, workspace warning-denied Clippy, format, frontend lint/types/build pass:
+`.starroom-reports/test-timing-1791300268882.json`. The benchmark's dedicated process records
+two real transform builds and 166 reuses; see `45_ICC_TRANSFORM_CACHE_BENCHMARK.md` for measured
+before/after values and limitations. No pixel policy/profile recipe version is changed because
+the original transform algorithm and parameters are retained. Final code also passes local
+Full Rust format, warning-denied workspace Clippy, all 374 ordinary tests and doc-test runners
+(`.starroom-reports/test-timing-1791301139879.json`). The registered test list is 378; four
+explicit model/heavy-image/scale gates remain opt-in, not newly accepted by this run. Desktop
+34 ordinary / 2 opt-in, export 20 + 7 workflow/recovery ordinary tests pass. Full input/output pixel-stage
+result caching, Native direct display and the final production acceptance are not complete.
+
 ## 2026-10-06 — Physical History gesture boundaries
 
 The actual App History effect previously persisted after 220ms of inactivity, including while

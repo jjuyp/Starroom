@@ -43,6 +43,13 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+ICC transform lifetime reuse uses the same pinned `lcms2` 6.1.1 / LittleCMS engine and public
+`Transform<..., GlobalContext, DisallowCache>` API. The safe wrapper's `src/transform.rs` exposes
+Send/Sync for the NO_CACHE transform mode already used by the Rayon adapter. Starroom adds
+bounded object ownership and exact-key LRU, not copied source or a new ICC algorithm. Pixel
+flags, float format, profiles and rendering intent remain unchanged. No new dependency/license
+or unsafe implementation is introduced; retain the existing wrapper/engine MIT notices.
+
 The DNG ColorMatrix boundary repair independently implements public DNG 1.7.1 chapter-6
 domain/neutral equations, retaining the existing validated Bradford/matrix provider. Reference:
 [Adobe specification](https://helpx.adobe.com/content/dam/help/en/photoshop/pdf/DNG_Spec_1_7_1_0.pdf),

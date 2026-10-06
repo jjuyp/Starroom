@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Reuse actual mature LCMS transform objects across preview/export under exact ICC/intent/
+  BPC/direction identity and bounded LRU; verify typed invalid/oversized errors, concurrency,
+  photographic/RAW parity and measured before/after. Prepared pixel-stage caches remain open.
+
 - [x] Hold History commits until physical pointer/key release; preserve paused drag, rapid
   next gestures, numeric focus/commit and ordered Undo/Redo. Native and actual React/synthetic
   IPC checks pass; installed full workflow/recovery and all Phase 18 acceptance remain open.

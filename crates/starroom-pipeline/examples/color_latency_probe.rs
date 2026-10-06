@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ] {
         let mut samples = Vec::new();
         let mut max_delta = 0;
+        let mut last_profile = None;
         for index in 0..6 {
             let mut settings = RenderSettings::default();
             let value = (index as f32 + 1.0) / 10.0;
@@ -49,7 +50,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 _ => unreachable!("static control list"),
             }
             let start = Instant::now();
-            let accelerated = render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)?;
+            let (accelerated, profile) = starroom_render::profiling::capture(|| {
+                render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+            });
+            let accelerated = accelerated?;
+            last_profile = Some(profile);
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             // Warm-up omitted; CPU reference is deliberately outside the measured GPU interval.
             if index > 0 {
@@ -73,6 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "control": control, "samples": 5, "medianMs": samples[2], "p95Ms": samples[4],
             "maxRgb8Delta": max_delta,
             "changedParameters": control != "AutoWhiteBalance",
+            "lastProfile": last_profile,
         }));
     }
     println!(
@@ -82,6 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "colorPolicy": starroom_pipeline::COLOR_POLICY_VERSION,
             "adapter": gpu.status(), "measurements": report,
             "gpuResources": gpu.resource_stats(),
+            "iccTransformCache": starroom_color_management::icc_transform_cache_stats()?,
         })
     );
     Ok(())

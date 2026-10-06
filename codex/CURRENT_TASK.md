@@ -2,6 +2,12 @@
 
 ## Current Milestone
 
+History boundaries `9e23d85` targeted CI 37485049480 passed. Current group reuses actual mature
+LCMS input/output transforms under bounded exact keys and keeps cold construction/pixel work
+outside the shared lock. Four new cache regressions, final Full Rust 374 ordinary tests and
+photographic/shared regressions pass; measured before/after is in doc 45. This is object reuse,
+not full prepared pixel-stage caches, GPU-resident presentation or final UI/Windows acceptance.
+
 GPU allocation cleanup `13224c9` has successful targeted Blueprint CI 37482319053. Physical
 History pointer/key boundaries now prevent paused-drag splits and preserve numeric/rapid
 gesture intent; Native and real React/synthetic IPC tests pass. Do not infer complete Phase 18,

@@ -9,6 +9,10 @@ use lcms2::{
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use starroom_color::LinearRgb;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex, OnceLock},
+};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -396,6 +400,8 @@ impl std::fmt::Display for ProfileRole {
 
 #[derive(Debug, Error)]
 pub enum ColorManagementError {
+    #[error("LittleCMS transform cache is unavailable")]
+    TransformCacheUnavailable,
     #[error("chromatic adaptation requires a finite, positive, nonsingular measured white point")]
     InvalidWhitePoint,
     #[error("invalid {role} ICC profile: {source}")]
@@ -446,6 +452,231 @@ pub struct LcmsTransform {
 
 struct ParallelLcmsTransform {
     transform: Transform<[f32; 3], [f32; 3], GlobalContext, DisallowCache>,
+}
+
+const TRANSFORM_CACHE_ENTRIES: usize = 8;
+const TRANSFORM_CACHE_PROFILE_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TransformDirection {
+    Input,
+    Output,
+}
+
+impl TransformDirection {
+    fn role(self) -> ProfileRole {
+        match self {
+            Self::Input => ProfileRole::Input,
+            Self::Output => ProfileRole::Output,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Input => "input-to-working",
+            Self::Output => "working-to-output",
+        }
+    }
+}
+
+struct CachedTransform {
+    direction: TransformDirection,
+    profile: Option<Vec<u8>>,
+    intent: RenderingIntent,
+    black_point_compensation: bool,
+    transform: Arc<ParallelLcmsTransform>,
+}
+
+#[derive(Default, Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IccTransformCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub builds: u64,
+    pub evictions: u64,
+    pub entries: usize,
+    /// Retained exact profile keys only, not native transform/CLUT or physical process memory.
+    pub profile_bytes: usize,
+}
+
+#[derive(Default)]
+struct IccTransformCache {
+    entries: VecDeque<CachedTransform>,
+    stats: IccTransformCacheStats,
+}
+
+impl IccTransformCache {
+    fn snapshot(&self) -> IccTransformCacheStats {
+        IccTransformCacheStats {
+            entries: self.entries.len(),
+            profile_bytes: self
+                .entries
+                .iter()
+                .map(|entry| entry.profile.as_ref().map_or(0, Vec::len))
+                .sum(),
+            ..self.stats
+        }
+    }
+
+    fn lookup(
+        &mut self,
+        direction: TransformDirection,
+        profile: Option<&[u8]>,
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+    ) -> Result<Option<Arc<ParallelLcmsTransform>>, ColorManagementError> {
+        if let Some(index) = self.entries.iter().position(|entry| {
+            entry.direction == direction
+                && entry.profile.as_deref() == profile
+                && entry.intent == intent
+                && entry.black_point_compensation == black_point_compensation
+        }) {
+            let entry = self
+                .entries
+                .remove(index)
+                .ok_or(ColorManagementError::TransformCacheUnavailable)?;
+            let transform = Arc::clone(&entry.transform);
+            self.entries.push_back(entry);
+            self.stats.hits = self.stats.hits.saturating_add(1);
+            return Ok(Some(transform));
+        }
+        self.stats.misses = self.stats.misses.saturating_add(1);
+        Ok(None)
+    }
+
+    fn retain(
+        &mut self,
+        direction: TransformDirection,
+        profile: Option<&[u8]>,
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+        transform: Arc<ParallelLcmsTransform>,
+    ) -> Arc<ParallelLcmsTransform> {
+        self.stats.builds = self.stats.builds.saturating_add(1);
+        // Another worker may have populated this key while we built outside the lock. Do not
+        // retain duplicate native objects or duplicate profile bytes. Count the actual build.
+        if let Some(entry) = self.entries.iter().find(|entry| {
+            entry.direction == direction
+                && entry.profile.as_deref() == profile
+                && entry.intent == intent
+                && entry.black_point_compensation == black_point_compensation
+        }) {
+            return Arc::clone(&entry.transform);
+        }
+        let bytes = profile.map_or(0, <[u8]>::len);
+        // Large valid ICCs still execute through LittleCMS, but are not retained. Never replace
+        // their profile or flags to meet a cache budget. Invalid profiles are never cached.
+        if bytes <= TRANSFORM_CACHE_PROFILE_BYTES {
+            while self.entries.len() >= TRANSFORM_CACHE_ENTRIES
+                || self.snapshot().profile_bytes + bytes > TRANSFORM_CACHE_PROFILE_BYTES
+            {
+                self.entries.pop_front();
+                self.stats.evictions = self.stats.evictions.saturating_add(1);
+            }
+            self.entries.push_back(CachedTransform {
+                direction,
+                profile: profile.map(<[u8]>::to_vec),
+                intent,
+                black_point_compensation,
+                transform: Arc::clone(&transform),
+            });
+        }
+        transform
+    }
+
+    #[cfg(test)]
+    fn get(
+        &mut self,
+        direction: TransformDirection,
+        profile: Option<&[u8]>,
+        intent: RenderingIntent,
+        black_point_compensation: bool,
+    ) -> Result<Arc<ParallelLcmsTransform>, ColorManagementError> {
+        if let Some(transform) =
+            self.lookup(direction, profile, intent, black_point_compensation)?
+        {
+            return Ok(transform);
+        }
+        let transform =
+            create_parallel_transform(direction, profile, intent, black_point_compensation)?;
+        Ok(self.retain(
+            direction,
+            profile,
+            intent,
+            black_point_compensation,
+            transform,
+        ))
+    }
+}
+
+fn create_parallel_transform(
+    direction: TransformDirection,
+    profile: Option<&[u8]>,
+    intent: RenderingIntent,
+    black_point_compensation: bool,
+) -> Result<Arc<ParallelLcmsTransform>, ColorManagementError> {
+    let named = match profile {
+        Some(bytes) => {
+            Profile::new_icc(bytes).map_err(|source| ColorManagementError::InvalidProfile {
+                role: direction.role(),
+                source,
+            })?
+        }
+        None => Profile::new_srgb(),
+    };
+    let working = rec2020_linear_d65_profile()?;
+    let (input, output) = match direction {
+        TransformDirection::Input => (&named, &working),
+        TransformDirection::Output => (&working, &named),
+    };
+    build_parallel_lcms_transform(
+        input,
+        output,
+        intent,
+        black_point_compensation,
+        direction.name(),
+    )
+    .map(Arc::new)
+}
+
+fn transform_cache() -> &'static Mutex<IccTransformCache> {
+    static CACHE: OnceLock<Mutex<IccTransformCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(IccTransformCache::default()))
+}
+
+pub fn icc_transform_cache_stats() -> Result<IccTransformCacheStats, ColorManagementError> {
+    transform_cache()
+        .lock()
+        .map(|cache| cache.snapshot())
+        .map_err(|_| ColorManagementError::TransformCacheUnavailable)
+}
+
+fn cached_parallel_transform(
+    direction: TransformDirection,
+    profile: Option<&[u8]>,
+    intent: RenderingIntent,
+    black_point_compensation: bool,
+) -> Result<Arc<ParallelLcmsTransform>, ColorManagementError> {
+    // Neither ICC parsing/building nor pixel execution holds the shared cache lock. An export
+    // constructing a new profile must not block an interactive preview's warm transform lookup.
+    if let Some(transform) = transform_cache()
+        .lock()
+        .map_err(|_| ColorManagementError::TransformCacheUnavailable)?
+        .lookup(direction, profile, intent, black_point_compensation)?
+    {
+        return Ok(transform);
+    }
+    let transform =
+        create_parallel_transform(direction, profile, intent, black_point_compensation)?;
+    Ok(transform_cache()
+        .lock()
+        .map_err(|_| ColorManagementError::TransformCacheUnavailable)?
+        .retain(
+            direction,
+            profile,
+            intent,
+            black_point_compensation,
+            transform,
+        ))
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -662,22 +893,11 @@ impl LittleCmsProvider {
         } else {
             InputProfileSource::AssumedSrgb
         };
-        let input = match embedded_icc {
-            Some(bytes) => {
-                Profile::new_icc(bytes).map_err(|source| ColorManagementError::InvalidProfile {
-                    role: ProfileRole::Input,
-                    source,
-                })?
-            }
-            None => Profile::new_srgb(),
-        };
-        let working = rec2020_linear_d65_profile()?;
-        let transform = build_parallel_lcms_transform(
-            &input,
-            &working,
+        let transform = cached_parallel_transform(
+            TransformDirection::Input,
+            embedded_icc,
             intent,
             black_point_compensation,
-            "input-to-working",
         )?;
         transform_pixels_parallel(&transform, pixels);
         ensure_finite("linear Rec.2020 working output", pixels)?;
@@ -697,22 +917,11 @@ impl LittleCmsProvider {
         } else {
             OutputProfileSource::Srgb
         };
-        let working = rec2020_linear_d65_profile()?;
-        let output = match output_icc {
-            Some(bytes) => {
-                Profile::new_icc(bytes).map_err(|source| ColorManagementError::InvalidProfile {
-                    role: ProfileRole::Output,
-                    source,
-                })?
-            }
-            None => Profile::new_srgb(),
-        };
-        let transform = build_parallel_lcms_transform(
-            &working,
-            &output,
+        let transform = cached_parallel_transform(
+            TransformDirection::Output,
+            output_icc,
             intent,
             black_point_compensation,
-            "working-to-output",
         )?;
         transform_pixels_parallel(&transform, pixels);
         ensure_finite("encoded output", pixels)?;
@@ -829,6 +1038,171 @@ pub enum WorkingSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icc_cache_reuses_only_exact_profile_direction_intent_and_bpc() {
+        let mut cache = IccTransformCache::default();
+        let intent = RenderingIntent::RelativeColorimetric;
+        let first = cache
+            .get(TransformDirection::Input, None, intent, true)
+            .unwrap();
+        let same = cache
+            .get(TransformDirection::Input, None, intent, true)
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        let output = cache
+            .get(TransformDirection::Output, None, intent, true)
+            .unwrap();
+        let perceptual = cache
+            .get(
+                TransformDirection::Input,
+                None,
+                RenderingIntent::Perceptual,
+                true,
+            )
+            .unwrap();
+        let no_bpc = cache
+            .get(TransformDirection::Input, None, intent, false)
+            .unwrap();
+        for other in [&output, &perceptual, &no_bpc] {
+            assert!(!Arc::ptr_eq(&first, other));
+        }
+        let explicit_srgb = LittleCmsProvider.srgb_profile_bytes().unwrap();
+        let embedded = cache
+            .get(
+                TransformDirection::Input,
+                Some(&explicit_srgb),
+                intent,
+                true,
+            )
+            .unwrap();
+        let p3 = LittleCmsProvider
+            .builtin_output_profile_bytes(BuiltinOutputProfile::DisplayP3)
+            .unwrap();
+        let different = cache
+            .get(TransformDirection::Input, Some(&p3), intent, true)
+            .unwrap();
+        assert!(!Arc::ptr_eq(&embedded, &different));
+        assert_eq!(cache.snapshot().hits, 1);
+        assert_eq!(cache.snapshot().builds, 6);
+        assert_eq!(cache.snapshot().entries, 6);
+    }
+
+    #[test]
+    fn icc_cache_bounds_keys_evicts_lru_and_does_not_retain_invalid_or_oversized_profiles() {
+        let mut cache = IccTransformCache::default();
+        let intent = RenderingIntent::RelativeColorimetric;
+        let profile = LittleCmsProvider.srgb_profile_bytes().unwrap();
+        let first = cache
+            .get(TransformDirection::Input, Some(&profile), intent, true)
+            .unwrap();
+        for index in 1..=TRANSFORM_CACHE_ENTRIES {
+            let mut key = profile.clone();
+            key.resize(key.len() + index, 0); // Legal unused trailing bytes, distinct exact identity.
+            cache
+                .get(TransformDirection::Input, Some(&key), intent, true)
+                .unwrap();
+        }
+        assert_eq!(cache.snapshot().entries, TRANSFORM_CACHE_ENTRIES);
+        assert_eq!(cache.snapshot().evictions, 1);
+        let rebuilt = cache
+            .get(TransformDirection::Input, Some(&profile), intent, true)
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        let before = cache.snapshot();
+        for _ in 0..2 {
+            assert!(matches!(
+                cache.get(TransformDirection::Input, Some(b"invalid"), intent, true),
+                Err(ColorManagementError::InvalidProfile {
+                    role: ProfileRole::Input,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(cache.snapshot().entries, before.entries);
+        assert_eq!(cache.snapshot().builds, before.builds);
+        let mut large = profile;
+        large.resize(TRANSFORM_CACHE_PROFILE_BYTES + 1, 0);
+        cache
+            .get(TransformDirection::Output, Some(&large), intent, true)
+            .unwrap();
+        assert_eq!(cache.snapshot().entries, before.entries);
+        assert!(cache.snapshot().profile_bytes <= TRANSFORM_CACHE_PROFILE_BYTES);
+        let mut bounded = IccTransformCache::default();
+        large.truncate(TRANSFORM_CACHE_PROFILE_BYTES / 2 + 1);
+        bounded
+            .get(TransformDirection::Input, Some(&large), intent, true)
+            .unwrap();
+        bounded
+            .get(TransformDirection::Output, Some(&large), intent, true)
+            .unwrap();
+        assert_eq!(bounded.snapshot().entries, 1);
+        assert_eq!(bounded.snapshot().evictions, 1);
+    }
+
+    #[test]
+    fn shared_cached_lcms_transform_is_exact_against_uncached_parallel_reference() {
+        let mut cache = IccTransformCache::default();
+        let intent = RenderingIntent::RelativeColorimetric;
+        for direction in [TransformDirection::Input, TransformDirection::Output] {
+            let cached = cache.get(direction, None, intent, true).unwrap();
+            let srgb = Profile::new_srgb();
+            let working = rec2020_linear_d65_profile().unwrap();
+            let (input, output) = match direction {
+                TransformDirection::Input => (&srgb, &working),
+                TransformDirection::Output => (&working, &srgb),
+            };
+            let reference =
+                build_parallel_lcms_transform(input, output, intent, true, direction.name())
+                    .unwrap();
+            let source = vec![[0.18, 0.6, 0.93], [-0.05, 1.5, 0.3], [0.0, 0.0, 0.0]];
+            let mut expected = source.clone();
+            transform_pixels_parallel(&reference, &mut expected);
+            std::thread::scope(|scope| {
+                let jobs = (0..4)
+                    .map(|_| {
+                        let cached = Arc::clone(&cached);
+                        let mut pixels = source.clone();
+                        scope.spawn(move || {
+                            transform_pixels_parallel(&cached, &mut pixels);
+                            pixels
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                for job in jobs {
+                    assert_eq!(job.join().unwrap(), expected);
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn duplicate_cold_builds_retain_one_exact_transform_key() {
+        let mut cache = IccTransformCache::default();
+        let direction = TransformDirection::Input;
+        let intent = RenderingIntent::RelativeColorimetric;
+        assert!(
+            cache
+                .lookup(direction, None, intent, true)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .lookup(direction, None, intent, true)
+                .unwrap()
+                .is_none()
+        );
+        let first = create_parallel_transform(direction, None, intent, true).unwrap();
+        let second = create_parallel_transform(direction, None, intent, true).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second));
+        let retained = cache.retain(direction, None, intent, true, first);
+        let raced = cache.retain(direction, None, intent, true, second);
+        assert!(Arc::ptr_eq(&retained, &raced));
+        assert_eq!(cache.snapshot().entries, 1);
+        assert_eq!(cache.snapshot().builds, 2);
+        assert_eq!(cache.snapshot().misses, 2);
+    }
 
     #[test]
     fn relative_wb_cat_has_correct_axes_neutral_identity_and_black_anchor() {
