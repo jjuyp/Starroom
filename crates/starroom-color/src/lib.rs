@@ -309,6 +309,11 @@ fn tone_luminance(y: f32, parameters: ToneParameters) -> f32 {
 /// Applies tone by remapping luminance and scaling RGB together. This keeps hue/chroma much
 /// more stable than moving each RGB channel independently toward white or black.
 pub fn apply_tone(rgb: LinearRgb, parameters: ToneParameters) -> LinearRgb {
+    if parameters == ToneParameters::default()
+        && [rgb.r, rgb.g, rgb.b].into_iter().all(f32::is_finite)
+    {
+        return rgb;
+    }
     let source_luminance = luminance(rgb).max(0.0);
     let target_luminance = tone_luminance(source_luminance, parameters);
     if source_luminance <= 1.0e-7 {
@@ -466,6 +471,13 @@ pub fn apply_color_mixer(rgb: LinearRgb, mixer: ColorMixer) -> LinearRgb {
             g: 0.0,
             b: 0.0,
         };
+    }
+    if mixer
+        .bands
+        .iter()
+        .all(|band| *band == BandAdjustment::default())
+    {
+        return rgb;
     }
     let mut lch = oklab_to_oklch(rec2020_to_oklab(rgb));
     if lch.c < 1.0e-4 {
@@ -644,6 +656,57 @@ impl PreparedCurve {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neutral_tone_and_mixer_are_exact_for_finite_hdr_and_negative_working_values() {
+        for rgb in [
+            LinearRgb {
+                r: 0.7,
+                g: 0.45,
+                b: 0.3,
+            },
+            LinearRgb {
+                r: -0.2,
+                g: 0.1,
+                b: 0.4,
+            },
+            LinearRgb {
+                r: 12.0,
+                g: 2.0,
+                b: 0.0,
+            },
+        ] {
+            assert_eq!(apply_tone(rgb, ToneParameters::default()), rgb);
+            assert_eq!(apply_color_mixer(rgb, ColorMixer::default()), rgb);
+            assert_eq!(
+                apply_color_mixer(
+                    rgb,
+                    ColorMixer {
+                        hue_lock: false,
+                        band_width_degrees: 30.0,
+                        ..Default::default()
+                    }
+                ),
+                rgb
+            );
+        }
+        let invalid = apply_color_mixer(
+            LinearRgb {
+                r: f32::NAN,
+                g: 0.2,
+                b: 0.3,
+            },
+            ColorMixer::default(),
+        );
+        assert_eq!(
+            invalid,
+            LinearRgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0
+            }
+        );
+    }
 
     #[test]
     fn chroma_controls_have_true_gray_endpoint_and_exact_neutral_identity() {

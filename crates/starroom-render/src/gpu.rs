@@ -55,7 +55,7 @@ fn exposure_main(@builtin(global_invocation_id) id: vec3<u32>) {
 "#;
 
 const CREATIVE_WGSL: &str = r#"
-struct CreativeParameters { values: array<vec4<f32>, 20>, };
+struct CreativeParameters { values: array<vec4<f32>, 23>, };
 @group(0) @binding(0) var<storage, read> source: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> output: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> p: CreativeParameters;
@@ -66,7 +66,6 @@ fn sstep(a:f32,b:f32,v:f32)->f32 { let t=clamp((v-a)/max(b-a,1e-7),0.0,1.0); ret
 fn xyz(rgb:vec3<f32>)->vec3<f32>{return vec3<f32>(.63695806*rgb.r+.1446169*rgb.g+.16888098*rgb.b,.2627002*rgb.r+.67799807*rgb.g+.05930172*rgb.b,.028072693*rgb.g+1.0609851*rgb.b);}
 fn lab(rgb:vec3<f32>)->vec3<f32>{let q=xyz(rgb);let l=pow(abs(.818933*q.x+.36186674*q.y-.12885971*q.z),1.0/3.0)*sign(.818933*q.x+.36186674*q.y-.12885971*q.z);let m=pow(abs(.032984544*q.x+.9293119*q.y+.03614564*q.z),1.0/3.0)*sign(.032984544*q.x+.9293119*q.y+.03614564*q.z);let s=pow(abs(.0482003*q.x+.26436627*q.y+.6338517*q.z),1.0/3.0)*sign(.0482003*q.x+.26436627*q.y+.6338517*q.z);return vec3<f32>(.21045426*l+.7936178*m-.004072047*s,1.9779985*l-2.4285922*m+.4505937*s,.025904037*l+.78277177*m-.80867577*s);}
 fn rgb(v:vec3<f32>)->vec3<f32>{let lp=v.x+.39633778*v.y+.21580376*v.z;let mp=v.x-.105561346*v.y-.06385417*v.z;let sp=v.x-.08948418*v.y-1.2914855*v.z;let l=lp*lp*lp;let m=mp*mp*mp;let s=sp*sp*sp;let x=1.227014*l-.5578*m+.28125614*s;let y=-.04058018*l+1.1122569*m-.07167668*s;let z=-.07638129*l-.42148197*m+1.5861632*s;return vec3<f32>(1.7166512*x-.35567078*y-.2533663*z,-.6666843*x+1.6164812*y+.015768546*z,.017639857*x-.042770613*y+.9421031*z);}
-fn tone(y0:f32)->f32{var y=max(y0,0.0)*exp2(clamp(p.values[0].x,-5.0,5.0));let sw=sstep(.004,.012,y)*(1.0-sstep(.06,.18,y));let bw=1.0-sstep(0.0,.11,y);let hw=sstep(.34,.62,y)*(1.0-.25*sstep(1.10,8.0,y));let ww=sstep(.72,1.02,y);let sh=clamp(p.values[0].w,-1.0,1.0);if(sh>=0.0){y+=sh*sw*(.24+.18*sqrt(y))*(1.0-min(y,1.0));}else{y*=1.0+sh*sw*.72;}let hi=clamp(p.values[0].z,-1.0,1.0);if(hi<0.0){let strength=-hi*hw;let fr=pow(.000152+y,1.22+strength*1.45);let mapped=pow(fr/(.84+fr),1.0+strength*.55);let shoulder=select(y,.1845+max(mapped-.1845,0.0),y>.1845);y+= (shoulder-y)*strength;}else{y+=hi*hw*(1.0-min(y,1.0))*.22;}let bl=clamp(p.values[1].x,-1.0,1.0);if(bl>=0.0){y+=bl*bw*.055;}else{y*=1.0+bl*bw*.82;}let wh=clamp(p.values[1].y,-1.0,1.0);if(wh>=0.0){y+=wh*ww*(.10+.10*min(y,1.0));}else{y*=1.0+wh*ww*.48;}let c=clamp(p.values[0].y,-1.0,1.0);if(abs(c)>1e-7){y=.18*exp2(log2(max(y,1e-6)/.18)*(1.0+c*.62));}return max(finite(y),0.0);}
 fn curve(channel:u32,v:f32)->f32{let base=channel*1024u;if(v<=0.0){return curves[base]+v*(curves[base+1u]-curves[base])*1023.0;}if(v>=1.0){return curves[base+1023u]+(v-1.0)*(curves[base+1023u]-curves[base+1022u])*1023.0;}let x=v*1023.0;let i=u32(floor(x));return mix(curves[base+i],curves[base+min(i+1u,1023u)],fract(x));}
 fn tone_lut(v:f32)->f32{if(v<=0.0){return curves[4096u];}let x=clamp((log2(v)+24.0)/40.0,0.0,1.0)*4094.0+1.0;let i=u32(floor(x));return mix(curves[4096u+i],curves[4096u+min(i+1u,4095u)],fract(x));}
 fn hue_dist(a:f32,b:f32)->f32{let d=abs(a-b);return min(d,360.0-d);}
@@ -84,11 +83,13 @@ fn protected_chroma(l:vec3<f32>)->vec3<f32>{
     return vec3<f32>(l.x,l.y*scale,l.z*scale);
 }
 @compute @workgroup_size(64) fn creative_main(@builtin(global_invocation_id) id:vec3<u32>){
-    let n=u32(p.values[18].x);if(id.x>=n){return;}var c=source[id.x].rgb;var l=lab(c);
-    l.z+=clamp(p.values[1].z,-1.0,1.0)*.035;l.y+=clamp(p.values[1].w,-1.0,1.0)*.025;
-    c=rgb(protected_chroma(l));
-    let lum=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);let mapped=tone_lut(lum);
-    c=select(vec3<f32>(mapped),c*(mapped/max(lum,1e-7)),lum>1e-7);
+    let n=u32(p.values[18].x);if(id.x>=n){return;}var c=source[id.x].rgb;
+    if(p.values[3].w>0.5){c=vec3<f32>(dot(p.values[20].xyz,c),dot(p.values[21].xyz,c),dot(p.values[22].xyz,c));}
+    if(abs(p.values[2].x)>1.1920929e-7 || abs(p.values[2].y)>1.1920929e-7){c=rgb(protected_chroma(lab(c)));}
+    if(p.values[4].y>0.5){
+        let lum=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);let mapped=tone_lut(lum);
+        c=select(vec3<f32>(mapped),c*(mapped/max(lum,1e-7)),lum>1e-7);
+    }
     if(p.values[19].x>0.5){c=vec3<f32>(curve(1u,curve(0u,c.r)),curve(2u,curve(0u,c.g)),curve(3u,curve(0u,c.b)));}
     if(p.values[19].y>0.5){c=mixer(c);}if(p.values[19].z>0.5){c=grade(c);}
     if(p.values[19].w>0.5){
@@ -206,7 +207,7 @@ struct ExposureParameters {
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct GpuCreativeParameters {
-    pub values: [[f32; 4]; 20],
+    pub values: [[f32; 4]; 23],
 }
 
 /// Owns the wgpu instance, adapter, device, queue, shader module, pipeline cache boundary and
@@ -1034,7 +1035,7 @@ mod tests {
             };
         }
         let mut parameters = GpuCreativeParameters {
-            values: [[0.0; 4]; 20],
+            values: [[0.0; 4]; 23],
         };
         parameters.values[18] = [pixels.len() as f32, pixels.len() as f32, 1.0, 0.0];
         renderer.reset_resource_stats();

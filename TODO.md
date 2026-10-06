@@ -28,6 +28,9 @@ evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from 
 - [x] Preserve unsaturated sensor WB headroom using mature LibRaw unclip normalization, restore
   scale in f32 and retain the declared sensor white level; full/half controlled DNG, six real
   RAW and shared graph tests pass. Whole RAW scene/IQ/precision acceptance remains open.
+- [x] Wire formal relative Temperature/Tint CAT into Native global/local/fused GPU; verify axes,
+  exact neutral/black/local identity, HDR/negative values, portrait/RAW parity and engine timing.
+  Physical editable RAW WB and full end-to-end color/latency acceptance remain open.
 - [ ] Complete GPU/presentation/cache/tiles/spatial work and real end-to-end <100ms controls.
 - [ ] Complete frozen AI/history gestures/bulk workflows, memory/100MP/streaming, error/legacy and
   pristine offline Windows gates; expand real perceptual Golden and benchmark acceptance.

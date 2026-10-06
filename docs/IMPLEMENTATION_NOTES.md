@@ -1,5 +1,47 @@
 # Implementation Notes
 
+## 2026-10-06 relative Temperature/Tint CAT and exact neutral stages
+
+Foundation decision: reuse LittleCMS `cmsWhitePointFromTemp` daylight locus and the prepared
+`cmsAdaptToIlluminant` adapter. Starroom maps relative -100..100 controls to reciprocal-temperature
+displacement around an internal D65 anchor and a perpendicular CIE 1960 u/v tint direction.
+6504K is a mapping anchor, never a claim about an encoded source's physical temperature. No
+upstream polynomial/CAT code is copied. The CPU global graph and prepared local layers apply
+the same matrix; the fused GPU receives the three Native matrix rows. No per-pixel FFI, browser
+color math or second WB engine. HDR and negative working values stay unbounded, black stays black,
+and the color recipe policy advances to v4. Editable RAW camera gains/profile interpolation
+remain a separate requirement: this working-space relative correction does not qualify them.
+
+New regressions check warm/cool and green/magenta direction, exact neutral/black, measured gray
+luminance, 603 extreme/reversible matrix cases, the daylight-piecewise boundary, invalid controls,
+real fused f32 GPU reference (2e-5, preserving alpha at this kernel boundary), full-opacity local
+versus global byte equality, and real portrait/RAW Preview/Export/GPU parity with immutable sources.
+The strict local/global test initially found one-code drift from neutral local Color Mixer doing
+an unnecessary OKLab round trip. Repair the operator's exact identity path instead of weakening
+the assertion. Neutral Tone also preserves finite negative/HDR pixels exactly, matching the global
+stage bypass. Nonfinite input protection remains active. Existing historical Browser fixture
+values/tolerances are unchanged. Full alpha handling remains open despite kernel-alpha checks.
+
+The GPU skips unused perceptual conversions and neutral tone-LUT application; remove the unused
+old WGSL `tone` routine while retaining the authoritative darktable-derived Native tone LUT.
+Same 512px portrait / RTX 3050 Laptop DX12 engine measurements: Exposure median/p95 32.448/32.874ms,
+Temperature 31.146/33.019ms, Tint 30.065/32.463ms, Saturation 32.216/33.883ms, Vibrance 30.883/32.436ms,
+Auto WB 32.141/33.096ms, Picker 31.393/32.515ms. Compared with the earlier same-machine v3 samples,
+Saturation 34.720 -> 32.216ms, Vibrance 33.380 -> 30.883ms and Picker 35.051 -> 31.393ms median.
+Five samples are diagnostic evidence, not comprehensive benchmark statistics. Native engine
+timing excludes IPC/presentation; 24MP/100MP end-to-end latency and all named controls remain open.
+
+The preceding RAW/neutral/chroma group `6fa51eb` Full Check passed at run 37399874663, while
+Draft PR #2 remained Open/CLEAN. This result does not qualify subsequent v4 source or a Final
+installer. Full current-group acceptance and every stronger Phase 30 gate remain mandatory.
+
+Current v4 local Full Rust passes: 360 ordinary tests, four opt-in tests counted separately,
+all doc-test runners, format and warning-denied workspace/all-target Clippy. Report:
+`test-timing-1791252390430.json`; the preceding targeted color milestone report is
+`test-timing-1791252027947.json`. JSON/Golden/generator validation remains green. Frontend
+source/lockfile are unchanged from the 189-test Full web gate. A new same-SHA CI run qualifies
+this source group only; the stronger Final/Windows/100MP/end-to-end gates remain open.
+
 ## 2026-10-06 LibRaw sensor-white / WB headroom repair
 
 The authored controlled DNG probe executes real sensor unpack/demosaic, not a simulated RAW

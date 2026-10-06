@@ -11,6 +11,14 @@ profile/alpha/gamut/RAW/WB, then GPU/cache/tile/latency and full Windows release
 No Final tag/version claim until all new gates pass. Do not move historical tags, merge main,
 close Draft PR #2, publicly package private model weights or begin unrelated new features.
 
+Current accepted repair groups: protected chroma `74ea429`, measured-neutral LCMS `790345a`,
+sensor-white/WB-headroom + CI compatibility `6fa51eb` (Full CI 37399874663 success). Current
+work completes relative Temperature/Tint CAT, exact local neutral stages and GPU bypass parity;
+do not repeat those earlier repairs. Next dependency group remains true editable RAW camera WB,
+destination gamut/alpha/monitor ownership and durable profile/domain provenance, then prepared
+stage-cache/GPU presentation and real end-to-end performance. All original Phases 0-30 remain
+active; relative working-space WB is not physical RAW Kelvin acceptance.
+
 ## Historical RC field batch baseline
 
 M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.

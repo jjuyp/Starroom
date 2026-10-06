@@ -15,6 +15,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let gpu = GpuRenderer::try_new()?;
     let mut report = Vec::new();
     for control in [
+        "Exposure",
+        "Temperature",
+        "Tint",
         "Saturation",
         "Vibrance",
         "AutoWhiteBalance",
@@ -26,6 +29,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut settings = RenderSettings::default();
             let value = (index as f32 + 1.0) / 10.0;
             match control {
+                "Exposure" => settings.tone.exposure_ev = value,
+                "Temperature" => settings.relative_color.temperature = value,
+                "Tint" => settings.relative_color.tint = value,
                 "Saturation" => settings.relative_color.saturation = value,
                 "Vibrance" => settings.relative_color.vibrance = value,
                 "AutoWhiteBalance" => settings.white_balance.mode = WhiteBalanceMode::Auto,

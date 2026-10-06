@@ -15,6 +15,7 @@ use starroom_color::{
 use starroom_color_management::{
     ColorManagementError, InputProfileSource, LittleCmsProvider, Matrix3 as ColorMatrix3,
     OutputProfileSource, RenderingIntent, Xyz, measured_neutral_adaptation,
+    relative_white_balance_adaptation,
 };
 use starroom_detail::{
     DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise,
@@ -48,7 +49,7 @@ use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
 /// Reproducible render-policy identity. Change whenever authoritative color semantics change.
-pub const COLOR_POLICY_VERSION: &str = "starroom-color-v3-measured-neutral-cat";
+pub const COLOR_POLICY_VERSION: &str = "starroom-color-v4-relative-white-cat";
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -735,17 +736,30 @@ impl RenderedRgbF32 {
     }
 }
 
-fn apply_relative_color(rgb: LinearRgb, parameters: RelativeColorParameters) -> LinearRgb {
-    let temperature = parameters.temperature.clamp(-1.0, 1.0);
-    let tint = parameters.tint.clamp(-1.0, 1.0);
-    let mut lab = rec2020_to_oklab(rgb);
-    // This is deliberately labeled relative editing rather than Kelvin. Positive b is warmer;
-    // positive a is more magenta in Oklab opponent coordinates.
-    lab.b += temperature * 0.035;
-    lab.a += tint * 0.025;
-
+fn apply_relative_color(
+    rgb: LinearRgb,
+    parameters: RelativeColorParameters,
+    matrix: ColorMatrix3,
+) -> LinearRgb {
+    let rgb = if matrix == ColorMatrix3::IDENTITY {
+        rgb
+    } else {
+        let value = matrix.multiply_vec(Xyz {
+            x: rgb.r,
+            y: rgb.g,
+            z: rgb.b,
+        });
+        LinearRgb {
+            r: value.x,
+            g: value.y,
+            b: value.z,
+        }
+    };
+    if parameters.saturation.abs() <= f32::EPSILON && parameters.vibrance.abs() <= f32::EPSILON {
+        return rgb;
+    }
     oklab_to_rec2020(apply_chroma_controls(
-        lab,
+        rec2020_to_oklab(rgb),
         parameters.saturation,
         parameters.vibrance,
     ))
@@ -780,6 +794,7 @@ fn apply_curve(rgb: LinearRgb, legacy: &[CurvePoint], curves: &ToneCurveSet) -> 
 
 struct PreparedLayer<'a> {
     layer: &'a NativeAdjustmentLayer,
+    relative_color_matrix: ColorMatrix3,
     master: PreparedCurve,
     red: PreparedCurve,
     green: PreparedCurve,
@@ -802,6 +817,10 @@ impl<'a> PreparedLayer<'a> {
         }
         Ok(Self {
             layer,
+            relative_color_matrix: relative_white_balance_adaptation(
+                layer.adjustments.relative_color.temperature,
+                layer.adjustments.relative_color.tint,
+            )?,
             master: PreparedCurve::new(&layer.adjustments.curves.master),
             red: PreparedCurve::new(&layer.adjustments.curves.red),
             green: PreparedCurve::new(&layer.adjustments.curves.green),
@@ -1215,7 +1234,11 @@ fn apply_prepared_layers(
         let adjusted = apply_grading(
             apply_color_mixer(
                 prepared_layer.apply_curve(apply_tone(
-                    apply_relative_color(rgb, layer.adjustments.relative_color),
+                    apply_relative_color(
+                        rgb,
+                        layer.adjustments.relative_color,
+                        prepared_layer.relative_color_matrix,
+                    ),
                     layer.adjustments.tone,
                 )),
                 layer.adjustments.color_mixer,
@@ -1461,8 +1484,8 @@ fn gpu_creative_parameters(
     pixel_count: usize,
     width: usize,
     height: usize,
-) -> GpuCreativeParameters {
-    let mut values = [[0.0; 4]; 20];
+) -> Result<GpuCreativeParameters, PipelineError> {
+    let mut values = [[0.0; 4]; 23];
     values[0] = [
         settings.tone.exposure_ev,
         settings.tone.contrast,
@@ -1492,6 +1515,15 @@ fn gpu_creative_parameters(
         0.0,
     ];
     values[4][0] = settings.color_mixer.band_width_degrees;
+    values[4][1] = (settings.tone != ToneParameters::default()) as u8 as f32;
+    let matrix = relative_white_balance_adaptation(
+        settings.relative_color.temperature,
+        settings.relative_color.tint,
+    )?;
+    values[3][3] = (matrix != ColorMatrix3::IDENTITY) as u8 as f32;
+    for (index, row) in matrix.0.into_iter().enumerate() {
+        values[20 + index] = [row[0], row[1], row[2], 0.0];
+    }
     for (index, band) in settings.color_mixer.bands.iter().enumerate() {
         values[5 + index] = [band.hue_degrees, band.chroma, band.lightness, 0.0];
     }
@@ -1520,7 +1552,7 @@ fn gpu_creative_parameters(
         (gpu_can_fuse_vignette(settings) && settings.vignette.amount.abs() > f32::EPSILON) as u8
             as f32,
     ];
-    GpuCreativeParameters { values }
+    Ok(GpuCreativeParameters { values })
 }
 
 fn apply_creative_graph_mapped(
@@ -1537,6 +1569,14 @@ fn apply_creative_graph_mapped(
     let pixel_count = pixels.len();
     checkpoint()?;
     let working_bytes = (pixel_count as u64).saturating_mul(3 * F32_BYTES);
+    let relative_matrix = if gpu.is_some() {
+        ColorMatrix3::IDENTITY
+    } else {
+        relative_white_balance_adaptation(
+            settings.relative_color.temperature,
+            settings.relative_color.tint,
+        )?
+    };
     let prepared = profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         if gpu.is_some() || settings.relative_color == RelativeColorParameters::default() {
             pixels
@@ -1558,6 +1598,7 @@ fn apply_creative_graph_mapped(
                             b: pixel[2],
                         },
                         settings.relative_color,
+                        relative_matrix,
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1569,7 +1610,7 @@ fn apply_creative_graph_mapped(
             .map(|rgb| [rgb.r, rgb.g, rgb.b, 1.0])
             .collect();
         let started = Instant::now();
-        let parameters = gpu_creative_parameters(settings, pixel_count, width, height);
+        let parameters = gpu_creative_parameters(settings, pixel_count, width, height)?;
         let luts = gpu_curve_luts(settings);
         let exposed = profiling::measure(ProfileStage::Tone, working_bytes, || {
             renderer.apply_creative(
@@ -3650,7 +3691,7 @@ mod tests {
             let actual = gpu
                 .apply_creative(
                     &input,
-                    &gpu_creative_parameters(&settings, input.len(), input.len(), 1),
+                    &gpu_creative_parameters(&settings, input.len(), input.len(), 1).unwrap(),
                     &gpu_curve_luts(&settings),
                     None,
                 )
@@ -3705,6 +3746,114 @@ mod tests {
                         |(actual, expected)| i16::from(*actual).abs_diff(i16::from(*expected)) <= 1
                     )
             );
+        }
+    }
+
+    #[test]
+    fn relative_wb_local_and_global_use_identical_prepared_color_stage() {
+        let source = DecodedSourceImage::Rendered(fixture(&[
+            [0.0, 0.0, 0.0, 1.0],
+            [0.18, 0.18, 0.18, 1.0],
+            [0.7, 0.45, 0.3, 1.0],
+            [0.2, 0.4, 0.9, 1.0],
+        ]));
+        for (temperature, tint) in [(-1.0, 1.0), (0.0, 0.0), (1.0, -1.0)] {
+            let relative_color = RelativeColorParameters {
+                temperature,
+                tint,
+                ..Default::default()
+            };
+            let global = RenderSettings {
+                relative_color,
+                ..Default::default()
+            };
+            let local = RenderSettings {
+                layers: vec![NativeAdjustmentLayer {
+                    id: "whole-image-wb".into(),
+                    name: "WB".into(),
+                    enabled: true,
+                    opacity: 1.0,
+                    blend_mode: LayerBlendMode::Normal,
+                    mask: MaskDefinition::None.into(),
+                    adjustments: LayerAdjustments {
+                        relative_color,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            };
+            let expected = render_source_export_to_srgb8(&source, &global).unwrap();
+            assert_eq!(
+                expected.data,
+                render_source_export_to_srgb8(&source, &local).unwrap().data
+            );
+            assert_eq!(expected.data[..3], [0, 0, 0]);
+            if let Ok(gpu) = GpuRenderer::try_new() {
+                for settings in [&global, &local] {
+                    let result =
+                        render_source_preview_with_gpu_to_srgb8(&source, settings, &gpu).unwrap();
+                    assert!(
+                        result
+                            .data
+                            .iter()
+                            .zip(&expected.data)
+                            .all(|(a, b)| a.abs_diff(*b) <= 1)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn relative_wb_fused_gpu_matches_prepared_lcms_reference_for_hdr_negative_and_black() {
+        let Ok(gpu) = GpuRenderer::try_new() else {
+            return;
+        };
+        let input = [
+            [0.0, 0.0, 0.0, 1.0],
+            [-0.2, 0.4, 1.1, 0.3],
+            [1.6, 0.5, 0.1, 0.7],
+        ];
+        for temperature in [-1.0, 0.0, 1.0] {
+            for tint in [-1.0, 0.0, 1.0] {
+                let settings = RenderSettings {
+                    relative_color: RelativeColorParameters {
+                        temperature,
+                        tint,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let matrix = relative_white_balance_adaptation(temperature, tint).unwrap();
+                let output = gpu
+                    .apply_creative(
+                        &input,
+                        &gpu_creative_parameters(&settings, input.len(), 3, 1).unwrap(),
+                        &gpu_curve_luts(&settings),
+                        None,
+                    )
+                    .unwrap();
+                for (result, source) in output.into_iter().zip(input) {
+                    let reference = matrix.multiply_vec(Xyz {
+                        x: source[0],
+                        y: source[1],
+                        z: source[2],
+                    });
+                    for (a, b) in result[..3]
+                        .iter()
+                        .zip([reference.x, reference.y, reference.z])
+                    {
+                        assert!(
+                            (*a - b).abs() < 2.0e-5,
+                            "{temperature} {tint}: {result:?} {reference:?}"
+                        );
+                    }
+                    assert_eq!(result[3], source[3]);
+                    if temperature == 0.0 && tint == 0.0 {
+                        assert_eq!(result, source);
+                    }
+                }
+            }
         }
     }
 
@@ -3814,7 +3963,7 @@ mod tests {
         cases.push(settings);
         for settings in cases {
             assert!(!gpu_can_fuse_vignette(&settings));
-            let parameters = gpu_creative_parameters(&settings, 32, 8, 4);
+            let parameters = gpu_creative_parameters(&settings, 32, 8, 4).unwrap();
             assert_eq!(parameters.values[2][2], 0.0);
             assert_eq!(parameters.values[19][3], 0.0);
             assert_eq!(settings.vignette.amount, 0.72);

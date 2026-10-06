@@ -33,6 +33,7 @@ pub const D65: Xyz = Xyz {
 pub struct Matrix3(pub [[f32; 3]; 3]);
 
 impl Matrix3 {
+    pub const IDENTITY: Self = Self([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
     pub fn multiply_vec(self, value: Xyz) -> Xyz {
         Xyz {
             x: self.0[0][0] * value.x + self.0[0][1] * value.y + self.0[0][2] * value.z,
@@ -228,6 +229,66 @@ pub fn measured_neutral_adaptation(sample: LinearRgb) -> Result<Matrix3, ColorMa
             g: 1.0,
             b: 1.0,
         }),
+    )
+}
+
+/// Relative encoded-image warm/cool and green/magenta intent. LittleCMS supplies the daylight
+/// locus and Bradford adapter; Starroom maps its relative UI units, never claims source Kelvin.
+/// Temperature follows reciprocal-temperature displacement around D65. Tint is perpendicular
+/// to that locus in CIE 1960 u/v, not an OKLab a/b offset added to every pixel.
+pub fn relative_white_balance_adaptation(
+    temperature: f32,
+    tint: f32,
+) -> Result<Matrix3, ColorManagementError> {
+    if !temperature.is_finite() || !tint.is_finite() {
+        return Err(ColorManagementError::InvalidWhitePoint);
+    }
+    let temperature = f64::from(temperature.clamp(-1.0, 1.0));
+    let tint = f64::from(tint.clamp(-1.0, 1.0));
+    if temperature == 0.0 && tint == 0.0 {
+        return Ok(Matrix3::IDENTITY);
+    }
+    // Both endpoints and the finite-difference locus samples stay in the mature LCMS
+    // daylight provider's documented 4000..25000K domain. These are mapping anchors,
+    // not a measurement of the source camera or encoded photograph's color temperature.
+    const BASE_K: f64 = 6504.0;
+    let kelvin = 1.0e6 / (1.0e6 / BASE_K + temperature * 65.0);
+    let uv = |kelvin: f64| -> Result<[f64; 2], ColorManagementError> {
+        let white =
+            lcms2::white_point_from_temp(kelvin).ok_or(ColorManagementError::InvalidWhitePoint)?;
+        let denominator = -2.0 * white.x + 12.0 * white.y + 3.0;
+        Ok([4.0 * white.x / denominator, 6.0 * white.y / denominator])
+    };
+    let base = uv(BASE_K)?;
+    let target = uv(kelvin)?;
+    let warm = uv(kelvin - 10.0)?;
+    let cool = uv(kelvin + 10.0)?;
+    let tangent = [cool[0] - warm[0], cool[1] - warm[1]];
+    let length = tangent[0].hypot(tangent[1]);
+    if !length.is_finite() || length < 1.0e-12 {
+        return Err(ColorManagementError::InvalidWhitePoint);
+    }
+    let source = rec2020_linear_to_xyz_d65(LinearRgb {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+    });
+    let sum = f64::from(source.x + source.y + source.z);
+    let x = f64::from(source.x) / sum;
+    let y = f64::from(source.y) / sum;
+    let denominator = -2.0 * x + 12.0 * y + 3.0;
+    let u = 4.0 * x / denominator + target[0] - base[0] - tangent[1] / length * tint * 0.01;
+    let v = 6.0 * y / denominator + target[1] - base[1] + tangent[0] / length * tint * 0.01;
+    let denominator = 2.0 * u - 8.0 * v + 4.0;
+    let x = 3.0 * u / denominator;
+    let y = 2.0 * v / denominator;
+    chromatic_adaptation_rec2020(
+        source,
+        Xyz {
+            x: (x / y) as f32,
+            y: 1.0,
+            z: ((1.0 - x - y) / y) as f32,
+        },
     )
 }
 
@@ -768,6 +829,104 @@ pub enum WorkingSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_wb_cat_has_correct_axes_neutral_identity_and_black_anchor() {
+        assert_eq!(
+            relative_white_balance_adaptation(0.0, 0.0).unwrap(),
+            Matrix3::IDENTITY
+        );
+        let gray = Xyz {
+            x: 0.18,
+            y: 0.18,
+            z: 0.18,
+        };
+        let warm = relative_white_balance_adaptation(1.0, 0.0)
+            .unwrap()
+            .multiply_vec(gray);
+        let cool = relative_white_balance_adaptation(-1.0, 0.0)
+            .unwrap()
+            .multiply_vec(gray);
+        assert!(warm.x > warm.z && cool.x < cool.z);
+        let magenta = relative_white_balance_adaptation(0.0, 1.0)
+            .unwrap()
+            .multiply_vec(gray);
+        let green = relative_white_balance_adaptation(0.0, -1.0)
+            .unwrap()
+            .multiply_vec(gray);
+        assert!(
+            magenta.x > magenta.y && magenta.z > magenta.y,
+            "{magenta:?}"
+        );
+        assert!(green.y > green.x && green.y > green.z, "{green:?}");
+        for temperature in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            for tint in [-1.0, 0.0, 1.0] {
+                let matrix = relative_white_balance_adaptation(temperature, tint).unwrap();
+                assert_eq!(
+                    matrix.multiply_vec(Xyz {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0
+                    }),
+                    Xyz {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0
+                    }
+                );
+                let result = matrix.multiply_vec(gray);
+                let xyz = rec2020_linear_to_xyz_d65(LinearRgb {
+                    r: result.x,
+                    g: result.y,
+                    b: result.z,
+                });
+                assert!((xyz.y - 0.18).abs() < 1.0e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn relative_wb_is_finite_reversible_and_continuous_without_hdr_clamping() {
+        for step in -100..=100 {
+            for tint in [-1.0, 0.0, 1.0] {
+                let matrix = relative_white_balance_adaptation(step as f32 / 100.0, tint).unwrap();
+                let input = Xyz {
+                    x: -0.2,
+                    y: 1.5,
+                    z: 12.0,
+                };
+                let result = matrix.multiply_vec(input);
+                assert!(result.z > 1.0);
+                assert!(
+                    [result.x, result.y, result.z]
+                        .into_iter()
+                        .all(f32::is_finite)
+                );
+                let restored = matrix.inverse().unwrap().multiply_vec(result);
+                for (a, b) in [restored.x, restored.y, restored.z]
+                    .into_iter()
+                    .zip([input.x, input.y, input.z])
+                {
+                    assert!((a - b).abs() < 2.0e-5);
+                }
+            }
+        }
+        let boundary = ((1.0e6 / 7000.0 - 1.0e6 / 6504.0) / 65.0) as f32;
+        for tint in [-1.0, 0.0, 1.0] {
+            let before = relative_white_balance_adaptation(boundary - 1.0e-5, tint).unwrap();
+            let after = relative_white_balance_adaptation(boundary + 1.0e-5, tint).unwrap();
+            for (a, b) in before
+                .0
+                .into_iter()
+                .flatten()
+                .zip(after.0.into_iter().flatten())
+            {
+                assert!((a - b).abs() < 5.0e-4);
+            }
+        }
+        assert!(relative_white_balance_adaptation(f32::NAN, 0.0).is_err());
+        assert!(relative_white_balance_adaptation(0.0, f32::INFINITY).is_err());
+    }
 
     #[test]
     fn prepared_lcms_adaptation_agrees_with_bradford_reference_and_is_reversible() {

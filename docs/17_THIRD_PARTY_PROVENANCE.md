@@ -43,6 +43,13 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Relative Temperature/Tint now additionally calls the same pinned LittleCMS public daylight
+white-point API (`cmsWhitePointFromTemp`, `vendor/src/cmswtpnt.c`) and prepared adaptation API.
+The relative UI displacement/perpendicular u/v mapping and GPU matrix application are authored
+Starroom adapter/workflow code, not a polynomial or CAT source port. No dependency, model,
+upstream revision or license changes. Encoded values are relative, not measured physical Kelvin;
+RAW editable camera WB is not declared completed by this working-space correction.
+
 The RAW bridge headroom repair uses the same LibRaw revision/public options (`highlight=1`,
 `adjust_maximum_thr=0`) and restores its effective maximum/minimum WB normalization in f32 after
 the mature 16-bit demosaic boundary. Behavioral sources: `src/postprocessing/postprocessing_utils_dcrdefs.cpp::scale_colors`,
