@@ -37,6 +37,9 @@ evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from 
 - [x] Correct actual Native graph order/capability declarations and stage-key projection for
   source/visible WB, geometry, relative color and finishing. Prepared stage-result reuse,
   direct presentation and complete tile/latency acceptance are not closed by metadata tests.
+- [x] Repair demonstrated DNG no-ForwardMatrix neutral/WB input-domain error and interpolate
+  ColorMatrix before inversion; bind resolver v3 into render/thumbnail/export identities.
+  Full DNG calibration/AnalogBalance/mixed-profile and physical RAW WB remain unverified.
 - [ ] Complete GPU/presentation/cache/tiles/spatial work and real end-to-end <100ms controls.
 - [ ] Complete frozen AI/history gestures/bulk workflows, memory/100MP/streaming, error/legacy and
   pristine offline Windows gates; expand real perceptual Golden and benchmark acceptance.

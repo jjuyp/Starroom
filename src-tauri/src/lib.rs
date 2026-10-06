@@ -3586,6 +3586,7 @@ fn preview_stage_identity(
         encoded(&(
             settings.color_management,
             starroom_pipeline::RAW_DECODE_POLICY_VERSION,
+            starroom_pipeline::CAMERA_PROFILE_RESOLVER_VERSION,
             starroom_pipeline::COLOR_POLICY_VERSION,
         ))?,
     );

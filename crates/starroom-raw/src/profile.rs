@@ -13,7 +13,7 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
     [0.019_333_9, 0.119_192, 0.950_304_1],
 ]);
 
-pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v2";
+pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v3-neutral-color-matrix";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,7 +130,6 @@ impl CameraProfileResolver {
 
         let (status, source, matrix, illuminants, weight, resolved_family) =
             if input.dng_version != 0 && !dng_candidates.is_empty() {
-                let (matrix, weight) = interpolate_dng_candidates(&dng_candidates, input);
                 let all_forward = dng_candidates.iter().all(|item| item.used_forward);
                 let none_forward = dng_candidates.iter().all(|item| !item.used_forward);
                 let source = if all_forward {
@@ -140,14 +139,28 @@ impl CameraProfileResolver {
                 } else {
                     CameraProfileSource::DngForwardAndColorMatrix
                 };
-                (
-                    CameraProfileStatus::Resolved,
-                    source,
-                    adapt_matrix(matrix, D50, D65),
-                    dng_candidates.iter().map(|item| item.illuminant).collect(),
-                    weight,
-                    CameraFamily::EmbeddedDng,
-                )
+                let transformed = interpolate_dng_candidates(&dng_candidates, input).and_then(
+                    |(matrix, weight)| {
+                        if none_forward {
+                            balanced_color_matrix_to_xyz_d65(matrix, input.camera_neutral)
+                                .map(|matrix| (matrix, weight))
+                        } else {
+                            Some((adapt_matrix(matrix, D50, D65), weight))
+                        }
+                    },
+                );
+                if let Some((matrix, weight)) = transformed {
+                    (
+                        CameraProfileStatus::Resolved,
+                        source,
+                        matrix,
+                        dng_candidates.iter().map(|item| item.illuminant).collect(),
+                        weight,
+                        CameraFamily::EmbeddedDng,
+                    )
+                } else {
+                    generic_profile_tuple()
+                }
             } else if family != CameraFamily::Unknown {
                 if let Some(matrix) = libraw_camera_to_xyz(input.libraw_cam_xyz) {
                     (
@@ -308,9 +321,9 @@ fn dng_candidate(set: &DngMatrixSet) -> Option<CandidateMatrix> {
 fn interpolate_dng_candidates(
     candidates: &[CandidateMatrix],
     input: &CameraProfileInput,
-) -> (Matrix3, Option<f32>) {
+) -> Option<(Matrix3, Option<f32>)> {
     if candidates.len() == 1 {
-        return (candidates[0].matrix, None);
+        return Some((candidates[0].matrix, None));
     }
     let first = candidates[0];
     let second = candidates[1];
@@ -333,10 +346,13 @@ fn interpolate_dng_candidates(
         }
         _ => 0.5,
     };
-    (
-        lerp_matrix(first.matrix, second.matrix, weight),
-        Some(weight),
-    )
+    let matrix = if !first.used_forward && !second.used_forward {
+        // Interpolate original XYZ->camera ColorMatrix values, then invert, not vice versa.
+        lerp_matrix(first.matrix.inverse()?, second.matrix.inverse()?, weight).inverse()?
+    } else {
+        lerp_matrix(first.matrix, second.matrix, weight)
+    };
+    valid_matrix(matrix).then_some((matrix, Some(weight)))
 }
 
 /// Estimates correlated color temperature from real RAW camera-neutral metadata.
@@ -389,6 +405,40 @@ fn libraw_camera_to_xyz(cam_xyz: [[f32; 3]; 4]) -> Option<Matrix3> {
 
 fn adapt_matrix(matrix: Matrix3, source_white: Xyz, destination_white: Xyz) -> Matrix3 {
     bradford_adaptation(source_white, destination_white).multiply(matrix)
+}
+
+/// Adobe DNG 1.7.1 chapter 6: ColorMatrix inverts unbalanced camera coordinates, unlike
+/// ForwardMatrix's already white-balanced D50 coordinates. The LibRaw boundary has baked WB;
+/// undo that diagonal, find the measured neutral illuminant and adapt it, never assume D50.
+fn balanced_color_matrix_to_xyz_d65(matrix: Matrix3, neutral: [f32; 4]) -> Option<Matrix3> {
+    if !neutral[..3].iter().all(|v| v.is_finite() && *v > 0.0) {
+        return None;
+    }
+    let white = matrix.multiply_vec(Xyz {
+        x: neutral[0],
+        y: neutral[1],
+        z: neutral[2],
+    });
+    if ![white.x, white.y, white.z]
+        .into_iter()
+        .all(|v| v.is_finite() && v > 1.0e-8)
+    {
+        return None;
+    }
+    let undo_wb = Matrix3([
+        [neutral[0] / white.y, 0.0, 0.0],
+        [0.0, neutral[1] / white.y, 0.0],
+        [0.0, 0.0, neutral[2] / white.y],
+    ]);
+    let white = Xyz {
+        x: white.x / white.y,
+        y: 1.0,
+        z: white.z / white.y,
+    };
+    let output = bradford_adaptation(white, D65)
+        .multiply(matrix)
+        .multiply(undo_wb);
+    valid_matrix(output).then_some(output)
 }
 
 fn lerp_matrix(first: Matrix3, second: Matrix3, weight: f32) -> Matrix3 {
@@ -545,18 +595,73 @@ mod tests {
         let profile = CameraProfileResolver::resolve(&value);
         assert_eq!(profile.source, CameraProfileSource::DngColorMatrix);
         let d50_xyz = Matrix3(profile.camera_to_xyz_d65).multiply_vec(Xyz {
-            x: 2.0,
+            // The public resolver receives camera RGB after LibRaw WB. Convert this test's
+            // unbalanced [2,4,5] to that explicit boundary instead of assuming XYZ is D50.
+            x: 2.0 / value.camera_neutral[0],
             y: 4.0,
-            z: 5.0,
+            z: 5.0 / value.camera_neutral[2],
         });
-        let expected = bradford_adaptation(D50, D65).multiply_vec(Xyz {
-            x: 1.0,
-            y: 1.0,
-            z: 1.0,
+        let expected = bradford_adaptation(
+            Xyz {
+                x: 1.0,
+                y: 1.0,
+                z: 0.56,
+            },
+            D65,
+        )
+        .multiply_vec(Xyz {
+            x: 4.0,
+            y: 4.0,
+            z: 4.0,
         });
         assert!((d50_xyz.x - expected.x).abs() < 1.0e-4);
         assert!((d50_xyz.y - expected.y).abs() < 1.0e-4);
         assert!((d50_xyz.z - expected.z).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn dng_color_matrix_neutral_maps_to_d65_not_an_assumed_d50() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.camera_neutral = [1.0; 4];
+        value.dng[0].parsed_fields = DNG_COLOR_MATRIX | DNG_ILLUMINANT;
+        value.dng[0].illuminant = 21;
+        // XYZ->camera matrix for a Rec.2020/D65 reference camera, independent published values.
+        value.dng[0].color_matrix = [
+            [1.716_651_2, -0.355_670_78, -0.253_366_3],
+            [-0.666_684_3, 1.616_481_2, 0.015_768_546],
+            [0.017_639_857, -0.042_770_613, 0.942_103_1],
+            [0.0; 3],
+        ];
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.status, CameraProfileStatus::Resolved);
+        let actual = profile.camera_rgb_to_xyz_d65([1.0; 3]);
+        for (a, b) in actual.into_iter().zip([D65.x, D65.y, D65.z]) {
+            assert!((a - b).abs() < 2.0e-5);
+        }
+        value.camera_neutral[0] = 0.0;
+        let invalid = CameraProfileResolver::resolve(&value);
+        assert_eq!(invalid.status, CameraProfileStatus::Generic);
+        assert_eq!(invalid.source, CameraProfileSource::GenericLinearSrgb);
+    }
+
+    #[test]
+    fn dual_color_matrix_interpolation_happens_before_inversion() {
+        let mut value = input();
+        value.dng_version = 1;
+        for (index, diagonal) in [[2.0, 4.0, 5.0], [4.0, 6.0, 7.0]].into_iter().enumerate() {
+            value.dng[index].parsed_fields = DNG_COLOR_MATRIX | DNG_ILLUMINANT;
+            value.dng[index].illuminant = if index == 0 { 17 } else { 21 };
+            for (row, entry) in diagonal.into_iter().enumerate() {
+                value.dng[index].color_matrix[row][row] = entry;
+            }
+        }
+        let candidates: Vec<_> = value.dng.iter().filter_map(dng_candidate).collect();
+        let (matrix, weight) = interpolate_dng_candidates(&candidates, &value).unwrap();
+        assert!((weight.unwrap() - 0.5).abs() < 1.0e-5);
+        for (row, expected) in [1.0 / 3.0, 1.0 / 5.0, 1.0 / 6.0].into_iter().enumerate() {
+            assert!((matrix.0[row][row] - expected).abs() < 1.0e-6);
+        }
     }
 
     #[test]

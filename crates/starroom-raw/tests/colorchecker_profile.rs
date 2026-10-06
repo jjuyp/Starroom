@@ -35,6 +35,52 @@ fn xy_y_to_xyz(value: [f32; 3]) -> Xyz {
 }
 
 #[test]
+fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
+    let diagonal = [2.0, 4.0, 5.0];
+    let white = [D65.x, D65.y, D65.z];
+    let neutral = [
+        diagonal[0] * white[0] / 4.0,
+        1.0,
+        diagonal[2] * white[2] / 4.0,
+        1.0,
+    ];
+    let mut dng = DngMatrixSet {
+        parsed_fields: (1 << 1) | (1 << 2),
+        illuminant: 21,
+        ..Default::default()
+    };
+    for (row, value) in diagonal.into_iter().enumerate() {
+        dng.color_matrix[row][row] = value;
+    }
+    let profile = CameraProfileResolver::resolve(&CameraProfileInput {
+        make: "Starroom ColorChecker Oracle".into(),
+        model: "D65 ColorMatrix camera".into(),
+        dng_version: 1,
+        libraw_cam_xyz: [[0.0; 3]; 4],
+        camera_neutral: neutral,
+        dng: [dng, DngMatrixSet::default()],
+    });
+    assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    assert_eq!(profile.source, CameraProfileSource::DngColorMatrix);
+    for patch in fixture().patches {
+        let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
+        let input = [
+            xyz.x * diagonal[0] / neutral[0] / 4.0,
+            xyz.y * diagonal[1] / 4.0,
+            xyz.z * diagonal[2] / neutral[2] / 4.0,
+        ];
+        let output = profile.camera_rgb_to_xyz_d65(input);
+        for (actual, expected) in output.into_iter().zip([xyz.x, xyz.y, xyz.z]) {
+            assert!(
+                (actual - expected).abs() < 2.0e-5,
+                "{}: {actual} {expected}",
+                patch.name
+            );
+        }
+    }
+}
+
+#[test]
 fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
     let mut dng = DngMatrixSet {
         parsed_fields: 1 | (1 << 1),

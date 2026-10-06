@@ -56,6 +56,13 @@ private model weights. All original requirements remain active.
 
 ## Confirmed high-priority source findings (not hypothetical causes)
 
+**Additional DNG color boundary:** a real Native resolver on authored D65 ColorMatrix/neutral
+returned working [.915141,1.012765,1.330013], because inverse ColorMatrix was treated like an
+already-WB-balanced D50 ForwardMatrix. No-ForwardMatrix baked-WB undo/measured-white adaptation
+now maps to D65; independent strict chart and real RAW/shared tests pass, with version identities
+updated. Complete calibration/AnalogBalance/mixed-profile/dual-white/physical-WB coverage remains
+open. Do not infer general camera IQ or whole Phase 1/3/10 acceptance from this targeted repair.
+
 0. **Original-file / replacement safety:** professional export resolves `Overwrite` to an existing
    path without rejecting the current source or other registered Library sources. `atomic_write`
    removes the old destination before rename, so replacement is not atomic/failure-safe, and its

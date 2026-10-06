@@ -31,6 +31,14 @@ lens/geometry preparation before creative stages, adds relative/finishing depend
 removes fictitious wgpu capabilities. Targeted Native/shared tests pass. This is not complete
 stage-result caching or full GPU/tile execution; do not reset or narrow the remaining objective.
 
+Canonical declaration/Native identity group `44467c3` Full CI 37457035843 is successful.
+Current DNG no-ForwardMatrix source-domain repair proves a D65 neutral previously blue-biased
+to working [.915,1.013,1.330], now maps to D65 with baked WB undo/measured-white adaptation.
+ColorMatrix interpolation now precedes inversion; resolver v3 binds Native/thumbnail/export.
+Full local Rust/strict chart/real RAW/shared regressions pass. Do not call all DNG calibration,
+AnalogBalance/mixed profiles/dual-white solving or physical RAW WB complete. Those and every
+other original production phase remain in the active full requirement matrix.
+
 ## Historical RC field batch baseline
 
 M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.

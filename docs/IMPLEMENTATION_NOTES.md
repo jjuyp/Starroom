@@ -1,5 +1,44 @@
 # Implementation Notes
 
+## 2026-10-06 DNG ColorMatrix neutral and inversion boundary
+
+Native authored D65 ColorMatrix counterexample produced working RGB [.915141,1.012765,1.330013]
+for a known neutral. The resolver treated inverse ColorMatrix like ForwardMatrix, always adapting
+from D50 even though the former maps unbalanced camera coordinates and the LibRaw bridge already
+bakes Camera WB. Foundation decision: implement the public standard boundary equations using
+the existing validated matrix/Bradford provider, not another demosaic/ICC engine or copied SDK.
+[Adobe DNG 1.7.1 chapter 6](https://helpx.adobe.com/content/dam/help/en/photoshop/pdf/DNG_Spec_1_7_1_0.pdf)
+distinguishes these input domains and uses the measured neutral white for the no-ForwardMatrix path.
+
+No-ForwardMatrix profiles now undo baked diagonal WB, derive/normalize the neutral illuminant,
+adapt it to D65 and retain scene-linear range. Two ColorMatrix candidates interpolate their original
+XYZ-to-camera matrices before inversion, not inverse matrices. Invalid neutral/singular transform
+produces the existing explicitly Generic descriptor; it never keeps a Resolved label with substituted
+matrix values. The same D65 probe now maps XYZ to D65 within float precision (working RGB
+[1.000082,.999987,.999786], with the established XYZ/Rec.2020 matrix rounding). ForwardMatrix's
+D50 path remains unchanged. Profile resolver version advances to v3 and is bound into Native
+transform, thumbnail and export recipe identities, not source/photo/History identities.
+
+14 raw unit tests, two ColorChecker tests, six immutable real RAW sensor fixtures, full/half
+controlled headroom oracle, three RAW shared-graph cases and 20 export unit / seven workflow
+recovery tests pass. New D65/invalid-neutral/pre-inversion interpolation and independent 24-patch
+ColorChecker tests keep strict numerical bounds. The old inversion test now supplies WB-balanced
+input and measured-neutral expectation matching the actual boundary; its 1e-4 bound is unchanged,
+not removed or widened to hide a regression. Diagnostic example data is authored matrices, not
+an added camera photograph or new lighting/manufacturer coverage.
+
+This closes the demonstrated no-ForwardMatrix white-point/baked-WB error. It does not qualify all
+DNG modes: independent CameraCalibration interpolation, AnalogBalance extraction, calibration
+signatures, mixed Forward/Color profile semantics, iterative dual-white solving, n>3 reduction,
+physical editable RAW WB and actual scene-quality validation still need complete source audit and
+tests. No Final/camera-quality-complete claim follows from these numerical and decode regressions.
+
+This group local Full Rust Acceptance passed: 370 ordinary Rust tests and four separately
+gated tests, all doc-test runners, format and warning-denied workspace/all-target Clippy.
+Report `test-timing-1791288166325.json`; targeted color milestone report
+`test-timing-1791287673929.json`. Existing frontend source/lockfile are unchanged from its
+189-test Full web gate; JSON, Golden/RAW/generator hashes pass. Final phase acceptance remains open.
+
 ## 2026-10-06 canonical execution declarations and Native stage identities
 
 The declared graph put lens/geometry after Detail and claimed nearly every operation had a

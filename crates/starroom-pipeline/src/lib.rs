@@ -38,6 +38,7 @@ use starroom_project::{
     GeneratedMaskSemantic, MaskDefinition, MaskOperation, MaskTree, PortraitMaskRegion,
     PortraitSourceCrop,
 };
+pub use starroom_raw::CAMERA_PROFILE_RESOLVER_VERSION;
 pub use starroom_raw::RAW_DECODE_POLICY_VERSION;
 use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
 use starroom_render::profiling::{self, ProfileStage};

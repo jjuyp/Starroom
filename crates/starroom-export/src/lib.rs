@@ -530,6 +530,7 @@ pub fn export_recipe_identity(request: &ExportRequest) -> Result<String, ExportE
     hash.update(EXPORT_ENGINE_VERSION.as_bytes());
     hash.update(starroom_pipeline::COLOR_POLICY_VERSION.as_bytes());
     hash.update(starroom_pipeline::RAW_DECODE_POLICY_VERSION.as_bytes());
+    hash.update(starroom_pipeline::CAMERA_PROFILE_RESOLVER_VERSION.as_bytes());
     // Bind the actual output transform resource even when the caller disables embedding.
     // Otherwise a corrected TRC could produce different pixels under the same recipe identity.
     hash.update(
@@ -1354,6 +1355,7 @@ mod tests {
         expected.update(EXPORT_ENGINE_VERSION.as_bytes());
         expected.update(starroom_pipeline::COLOR_POLICY_VERSION.as_bytes());
         expected.update(starroom_pipeline::RAW_DECODE_POLICY_VERSION.as_bytes());
+        expected.update(starroom_pipeline::CAMERA_PROFILE_RESOLVER_VERSION.as_bytes());
         let without_resource = hex(expected.clone().finalize());
         expected.update(profile);
         assert_eq!(

@@ -43,6 +43,14 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+The DNG ColorMatrix boundary repair independently implements public DNG 1.7.1 chapter-6
+domain/neutral equations, retaining the existing validated Bradford/matrix provider. Reference:
+[Adobe specification](https://helpx.adobe.com/content/dam/help/en/photoshop/pdf/DNG_Spec_1_7_1_0.pdf),
+September 2023 version; `crates/starroom-raw/src/profile.rs` no-ForwardMatrix path, resolver v3.
+No Adobe SDK/source/PDF is copied or bundled, no new dependency/license/LibRaw revision changes.
+The existing DNG patent notice remains prominent in NOTICE and the C bridge. The authored D65
+matrix diagnostic and unchanged BSD ColorChecker data do not add third-party camera assets.
+
 Relative Temperature/Tint now additionally calls the same pinned LittleCMS public daylight
 white-point API (`cmsWhitePointFromTemp`, `vendor/src/cmswtpnt.c`) and prepared adaptation API.
 The relative UI displacement/perpendicular u/v mapping and GPU matrix application are authored
