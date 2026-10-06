@@ -1,5 +1,41 @@
 # Implementation Notes
 
+## 2026-10-06 — Physical History gesture boundaries
+
+The actual App History effect previously persisted after 220ms of inactivity, including while
+the mouse remained down. A long slider drag therefore produced several semantic commands.
+`HistoryGestureBoundary` now records physical pointer/key lifetime separately from preview
+quality and numeric-editor focus. Window capture observes input before React edit callbacks;
+only an editing begin attaches the latest input, so unrelated clicks/held navigation keys do
+not block persistence. Intermediate changes replace the pending state without starting an idle
+commit while held. Release/cancel resumes persistence; window blur and photo switches release
+the hold. Starting the next gesture flushes its predecessor even before the 220ms idle deadline.
+Explicit close/undo/snapshot/export flushes retain the existing serialized Native command path.
+No second persisted History database, Native state schema or creative math is introduced.
+
+Six new boundary regressions (14 History queue tests total) cover 1000 changes plus a ten-second
+paused hold, matched pointer release, unrelated input, overlapping/repeated keyboard input,
+lost/cancelled input and focus-only behavior. Full frontend 195/195 (27 files), lint and
+TypeScript/production build pass. Native History 16/16, Session 4/4, pipeline 69 + 8 integration,
+render 31, Golden/RAW manifests and workspace warning-denied Clippy pass in the History
+milestone report `.starroom-reports/test-timing-1791298829003.json`. The last extra boundary
+case is covered by the subsequent full frontend run, not retroactively by the earlier report.
+
+Playwright CLI drove the actual App slider in an isolated Chromium session with explicitly
+synthetic IPC, not a mock renderer accepted as Native production evidence. Two 1200ms held
+pauses produced zero commits; three separate drags produced exactly three commands, including
+the next drag starting before its predecessor's idle deadline. Before/after exposure values
+were .5 -> 2.06 -> 2.48 -> 2.89. UI Undo/Redo restored 2.48/2.89 without phantom commits.
+Held keyboard repeat added one command to 2.99; a numeric draft stayed uncommitted until Enter
+and then added one command to 4.2. The unchanged scheduling audit still published 20 frames
+during continuous dragging, zero catalog scans and latest final -0.7. These are interaction
+ordering tests, not measured Native input-to-present latency or installed recovery acceptance.
+Local reproducible scripts/screenshot: `output/playwright/history-gesture-audit.js`,
+`history-gesture-final.png` and the existing slider scheduling setup/drag scripts.
+
+Complete mask/AI/style/delete/recovery installed workflows and the same-SHA final Windows
+release gate remain open. No dependency or third-party license change is involved.
+
 ## 2026-10-06 — Remove unused persistent GPU allocations
 
 Production `GpuBufferResources` reserved a full RGBA f32 working buffer and a full single-channel

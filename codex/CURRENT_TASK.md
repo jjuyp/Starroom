@@ -2,6 +2,12 @@
 
 ## Current Milestone
 
+GPU allocation cleanup `13224c9` has successful targeted Blueprint CI 37482319053. Physical
+History pointer/key boundaries now prevent paused-drag splits and preserve numeric/rapid
+gesture intent; Native and real React/synthetic IPC tests pass. Do not infer complete Phase 18,
+Native latency or installed runtime qualification from the browser test. All Phases 0-30 remain
+active, including RAW/WB/alpha/gamut/monitor, actual caches/tiles/residency and final release.
+
 The user's 2026-10-06 Final Completion / Color Engine Perfection Pass supersedes the earlier
 RC-only stopping condition below. Execute Phases 0-30 from the supplied master prompt and keep
 the full objective. `docs/44_PRODUCTION_COMPLETION_MATRIX.md` is the active requirement/evidence

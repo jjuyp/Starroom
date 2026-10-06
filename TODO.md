@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Hold History commits until physical pointer/key release; preserve paused drag, rapid
+  next gestures, numeric focus/commit and ordered Undo/Redo. Native and actual React/synthetic
+  IPC checks pass; installed full workflow/recovery and all Phase 18 acceptance remain open.
+
 - [x] Remove never-bound full-frame GPU working/mask reservations; expose actual owned buffer
   sizes to stats and production profiler, verify reuse/resize/identity and photographic parity.
   Physical VRAM/process peak, direct presentation and full UI latency remain separate open gates.

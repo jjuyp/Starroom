@@ -1,5 +1,99 @@
-import { describe, expect, it } from 'vitest'
-import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
+import { describe, expect, it, vi } from 'vitest'
+import { adjustmentKeys, HistoryCommandQueue, HistoryGestureBoundary, nativeHistoryStateChanged } from './historyCommandQueue'
+
+describe('History physical gesture boundary', () => {
+  it('does not turn focus, presets or unrelated clicks into a persistence hold', () => {
+    const boundary = new HistoryGestureBoundary()
+    boundary.begin()
+    expect(boundary.commitDelay).toBe(220)
+    boundary.inputDown('pointer:7')
+    expect(boundary.commitDelay).toBe(220)
+    boundary.inputUp('pointer:7')
+    expect(boundary.holding).toBe(false)
+  })
+
+  it('holds a paused slider for any duration and releases on the matching pointer', () => {
+    const boundary = new HistoryGestureBoundary()
+    boundary.inputDown('pointer:7')
+    boundary.begin()
+    expect(boundary.commitDelay).toBeNull()
+    boundary.inputUp('pointer:8')
+    expect(boundary.commitDelay).toBeNull()
+    boundary.inputUp('pointer:7')
+    expect(boundary.commitDelay).toBe(220)
+  })
+
+  it('coalesces 1000 changes and a long paused hold to one queued semantic command', async () => {
+    vi.useFakeTimers()
+    try {
+      const boundary = new HistoryGestureBoundary()
+      const commands = new HistoryCommandQueue()
+      let acknowledged = 0
+      let pending = 0
+      const history: number[] = []
+      const schedule = () => {
+        const delay = boundary.commitDelay
+        if (delay !== null) setTimeout(() => {
+          void commands.run(async () => { history.push(acknowledged); acknowledged = pending })
+        }, delay)
+      }
+      boundary.inputDown('pointer:1')
+      boundary.begin()
+      for (let value = 1; value <= 1000; value++) { pending = value; schedule() }
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(history).toEqual([])
+      boundary.inputUp('pointer:1')
+      schedule()
+      await vi.advanceTimersByTimeAsync(220)
+      await commands.idle()
+      expect(history).toEqual([0])
+      expect(acknowledged).toBe(1000)
+      await commands.run(async () => { acknowledged = history.pop()! })
+      expect(acknowledged).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps repeated keyboard input held until key-up and preserves overlapping input', () => {
+    const boundary = new HistoryGestureBoundary()
+    boundary.inputDown('key:ArrowRight')
+    boundary.begin()
+    for (let repeat = 0; repeat < 100; repeat++) boundary.inputDown('key:ArrowRight')
+    boundary.inputDown('pointer:2')
+    boundary.begin()
+    boundary.inputUp('key:ArrowRight')
+    expect(boundary.holding).toBe(true)
+    boundary.inputUp('pointer:2')
+    expect(boundary.holding).toBe(false)
+    expect(adjustmentKeys.has('ArrowRight')).toBe(true)
+    expect(adjustmentKeys.has('Enter')).toBe(false)
+  })
+
+  it('releases cancelled or lost input without permanently blocking future edits', () => {
+    const boundary = new HistoryGestureBoundary()
+    boundary.inputDown('pointer:1')
+    boundary.begin()
+    boundary.clear()
+    expect(boundary.commitDelay).toBe(220)
+    boundary.begin()
+    expect(boundary.holding).toBe(false)
+    boundary.inputDown('pointer:2')
+    boundary.begin()
+    boundary.inputUp('pointer:2')
+    expect(boundary.holding).toBe(false)
+  })
+
+  it('does not attach an unrelated held key to a new pointer editing gesture', () => {
+    const boundary = new HistoryGestureBoundary()
+    boundary.inputDown('key:ArrowDown') // Library navigation, not an editing begin.
+    boundary.inputDown('pointer:2')
+    boundary.begin()
+    boundary.inputUp('pointer:2')
+    expect(boundary.holding).toBe(false)
+    boundary.inputUp('key:ArrowDown')
+    boundary.begin() // Preset after input was released.
+    expect(boundary.holding).toBe(false)
+  })
+})
 
 describe('Native history command ordering', () => {
   it('acknowledges the last commit before another edit or undo', async () => {

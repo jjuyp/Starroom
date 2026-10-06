@@ -1,6 +1,6 @@
-/** Native history follows changed render state, not the lifetime of a pointer/focus gesture.
- * A numeric editor may stay focused longer than the debounce, and a slider drag may pause.
- * Restored state is already acknowledged and must never create a new history command.
+/** Only changed render state is eligible for persistence. Gesture boundaries decide when it
+ * commits, independently of preview quality or numeric-editor focus. Restored state is already
+ * acknowledged and must never create a new history command.
  */
 export function nativeHistoryStateChanged<T>(acknowledged: T | undefined, current: T, restoring: boolean): boolean {
   // serde_json::Value returns sorted object keys; JavaScript insertion order is not edit intent.
@@ -26,6 +26,26 @@ export function nativeHistoryStateChanged<T>(acknowledged: T | undefined, curren
     return child
   })
   return !restoring && acknowledged !== undefined && canonicalJson(acknowledged) !== canonicalJson(current)
+}
+
+export const adjustmentKeys = new Set([
+  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown',
+])
+
+/** Tracks physical input lifetime, not an idle timeout. Begin is called only by an editor;
+ * unrelated clicks therefore cannot suppress autosave. Focus alone never creates a hold.
+ */
+export class HistoryGestureBoundary {
+  private down = new Set<string>()
+  private held = new Set<string>()
+  private latestInput: string | null = null
+
+  inputDown(input: string) { this.down.add(input); this.latestInput = input }
+  inputUp(input: string) { this.down.delete(input); this.held.delete(input) }
+  begin() { if (this.latestInput !== null && this.down.has(this.latestInput)) this.held.add(this.latestInput) }
+  get holding() { return this.held.size > 0 }
+  get commitDelay(): number | null { return this.holding ? null : 220 }
+  clear() { this.down.clear(); this.held.clear(); this.latestInput = null }
 }
 
 /** Serialize native history commands so each commit uses the acknowledged server state. */

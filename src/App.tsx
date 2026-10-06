@@ -5,7 +5,7 @@ import { advisorAdjustments } from './advisorInteraction'
 import { loadSessionLibrary, type LibraryFilter } from './librarySession'
 import { CatalogEditMembership } from './catalogEditMembership'
 import { loadProgressiveThumbnails } from './progressiveThumbnails'
-import { HistoryCommandQueue, nativeHistoryStateChanged } from './historyCommandQueue'
+import { adjustmentKeys, HistoryCommandQueue, HistoryGestureBoundary, nativeHistoryStateChanged } from './historyCommandQueue'
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
@@ -1184,6 +1184,7 @@ export function App() {
   const pendingNativeBefore = useRef<NativeEditSettings | null>(null)
   const nativeHistoryTimer = useRef<number | null>(null)
   const historyCommands = useRef(new HistoryCommandQueue())
+  const historyGesture = useRef(new HistoryGestureBoundary())
   const acknowledgedHistory = useRef(new Map<number, NativeEditSettings>())
   const selectedHistoryAsset = useRef<number | null>(null)
   const scheduledHistory = useRef<{ assetId: number; state: NativeEditSettings } | null>(null)
@@ -1259,17 +1260,30 @@ export function App() {
     })
   }, [restoreSession])
   useEffect(() => {
-    const finish = () => setPreviewInteraction('final')
-    const finishKeyboard = (event: KeyboardEvent) => {
-      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) finish()
+    const finish = () => { if (!historyGesture.current.holding) setPreviewInteraction('final') }
+    // Capture runs before an editor's React onBeginEdit callback.
+    const startPointer = (event: PointerEvent) => historyGesture.current.inputDown(`pointer:${event.pointerId}`)
+    const finishPointer = (event: PointerEvent) => { historyGesture.current.inputUp(`pointer:${event.pointerId}`); finish() }
+    const startKeyboard = (event: KeyboardEvent) => {
+      if (adjustmentKeys.has(event.key)) historyGesture.current.inputDown(`key:${event.key}`)
     }
-    window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
+    const finishKeyboard = (event: KeyboardEvent) => {
+      if (adjustmentKeys.has(event.key)) { historyGesture.current.inputUp(`key:${event.key}`); finish() }
+    }
+    const loseWindowFocus = () => { historyGesture.current.clear(); finish() }
+    window.addEventListener('pointerdown', startPointer, true)
+    window.addEventListener('keydown', startKeyboard, true)
+    window.addEventListener('pointerup', finishPointer)
+    window.addEventListener('pointercancel', finishPointer)
+    window.addEventListener('blur', loseWindowFocus)
     window.addEventListener('focusout', finish)
     window.addEventListener('keyup', finishKeyboard)
     return () => {
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('pointerdown', startPointer, true)
+      window.removeEventListener('keydown', startKeyboard, true)
+      window.removeEventListener('pointerup', finishPointer)
+      window.removeEventListener('pointercancel', finishPointer)
+      window.removeEventListener('blur', loseWindowFocus)
       window.removeEventListener('focusout', finish)
       window.removeEventListener('keyup', finishKeyboard)
     }
@@ -1306,6 +1320,7 @@ export function App() {
 
   const flushNativeHistory = useCallback(() => {
     if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current)
+    nativeHistoryTimer.current = null
     const scheduled = scheduledHistory.current
     scheduledHistory.current = null
     pendingNativeBefore.current = null
@@ -1323,6 +1338,8 @@ export function App() {
   }, [recordCatalogMembership])
 
   const selectPhoto = useCallback((id: string) => {
+    historyGesture.current.clear()
+    setPreviewInteraction('final')
     editorRequests.current.invalidate()
     if (activeAiMaskRequest.current) void cancelNativeAiMask(activeAiMaskRequest.current).catch(() => undefined)
     activeAiMaskRequest.current = null
@@ -1533,18 +1550,20 @@ export function App() {
     if (!assetId || applyingNativeHistory.current) return
     if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current)
     nativeHistoryTimer.current = null
-    // Focus/pointer-down alone is not an edit. Conversely, every actual changed state
-    // must persist even when typing or a paused drag outlives the 220 ms debounce.
+    // Replace the pending state during a held gesture, but never commit its intermediate
+    // values merely because input paused. Numeric edits outside a held input retain debounce.
     if (!nativeHistoryStateChanged(acknowledgedHistory.current.get(assetId), nativeHistoryState, false)) {
       scheduledHistory.current = null
       return
     }
     scheduledHistory.current = { assetId, state: nativeHistoryState }
+    const delay = historyGesture.current.commitDelay
+    if (delay === null) return
     nativeHistoryTimer.current = window.setTimeout(() => {
       void flushNativeHistory()
-    }, 220)
+    }, delay)
     return () => { if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current) }
-  }, [nativeHistoryState, selected.libraryAsset?.id, flushNativeHistory])
+  }, [nativeHistoryState, selected.libraryAsset?.id, flushNativeHistory, previewInteraction])
   const activeLayer = selected.layers.find((layer) => layer.id === selectedLayerId)
   const activeLayerIsBrush = Boolean(activeLayer && 'type' in activeLayer.mask && activeLayer.mask.type === 'brush')
   // The Develop filmstrip is the current working set, independent of the last
@@ -1815,7 +1834,12 @@ export function App() {
   }
 
   function beginInteractiveEdit() {
-    setPreviewInteraction('interactive')
+    // Finish a previous gesture before the next begins, even if its debounce has not elapsed.
+    if (!historyGesture.current.holding) void flushNativeHistory()
+    historyGesture.current.begin()
+    if (nativeHistoryTimer.current !== null) window.clearTimeout(nativeHistoryTimer.current)
+    nativeHistoryTimer.current = null
+    setPreviewInteraction(historyGesture.current.holding ? 'interactive' : 'final')
     updateSelected((photo) => ({ ...photo, history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
   }
 
