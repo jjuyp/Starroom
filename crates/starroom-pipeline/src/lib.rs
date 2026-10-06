@@ -8,8 +8,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
-    ColorBand, ColorMixer, CurvePoint, LinearRgb, PreparedCurve, ToneParameters, apply_color_mixer,
-    apply_tone, compress_to_unit_gamut, oklab_to_oklch, oklab_to_rec2020, oklch_to_oklab,
+    ColorBand, ColorMixer, CurvePoint, LinearRgb, PreparedCurve, ToneParameters,
+    apply_chroma_controls, apply_color_mixer, apply_tone, compress_to_unit_gamut, oklab_to_rec2020,
     rec2020_to_oklab, sample_color_band,
 };
 use starroom_color_management::{
@@ -46,6 +46,8 @@ use starroom_render::{
 use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
+/// Reproducible render-policy identity. Change whenever authoritative color semantics change.
+pub const COLOR_POLICY_VERSION: &str = "starroom-color-v2-protected-chroma";
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -728,14 +730,11 @@ fn apply_relative_color(rgb: LinearRgb, parameters: RelativeColorParameters) -> 
     lab.b += temperature * 0.035;
     lab.a += tint * 0.025;
 
-    let mut lch = oklab_to_oklch(lab);
-    let saturation = parameters.saturation.clamp(-1.0, 1.0);
-    let vibrance = parameters.vibrance.clamp(-1.0, 1.0);
-    let normalized_chroma = (lch.c / 0.32).clamp(0.0, 1.0);
-    let vibrance_weight = 1.0 - normalized_chroma;
-    let scale = (1.0 + saturation * 0.85 + vibrance * vibrance_weight * 0.65).max(0.0);
-    lch.c *= scale;
-    oklab_to_rec2020(oklch_to_oklab(lch))
+    oklab_to_rec2020(apply_chroma_controls(
+        lab,
+        parameters.saturation,
+        parameters.vibrance,
+    ))
 }
 
 #[cfg(test)]
@@ -3693,6 +3692,77 @@ mod tests {
                         |(actual, expected)| i16::from(*actual).abs_diff(i16::from(*expected)) <= 1
                     )
             );
+        }
+    }
+
+    #[test]
+    fn saturation_minimum_is_achromatic_in_cpu_and_gpu_shared_outputs() {
+        let decoded = DecodedSourceImage::Rendered(fixture(&[
+            [0.9, 0.3, 0.1, 1.0],
+            [0.2, 0.5, 0.9, 1.0],
+            [0.6, 0.32, 0.24, 1.0],
+            [0.08, 0.03, 0.02, 1.0],
+            [1.0, 0.0, 1.0, 1.0],
+        ]));
+        let gpu = GpuRenderer::try_new().ok();
+        for vibrance in [-1.0, 0.0, 1.0] {
+            let mut settings = RenderSettings::default();
+            settings.relative_color.saturation = -1.0;
+            settings.relative_color.vibrance = vibrance;
+            let cpu = render_source_export_to_srgb8(&decoded, &settings).unwrap();
+            for pixel in cpu.data.chunks_exact(3) {
+                assert!(
+                    pixel[0].abs_diff(pixel[1]) <= 1 && pixel[1].abs_diff(pixel[2]) <= 1,
+                    "not gray: {pixel:?}"
+                );
+            }
+            if let Some(gpu) = &gpu {
+                let accelerated =
+                    render_source_preview_with_gpu_to_srgb8(&decoded, &settings, gpu).unwrap();
+                for pixel in accelerated.data.chunks_exact(3) {
+                    assert!(pixel[0].abs_diff(pixel[1]) <= 1 && pixel[1].abs_diff(pixel[2]) <= 1);
+                }
+                assert!(
+                    cpu.data
+                        .iter()
+                        .zip(&accelerated.data)
+                        .all(|(a, b)| a.abs_diff(*b) <= 1)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn skin_protected_vibrance_has_native_cpu_gpu_identity_and_extreme_parity() {
+        let decoded = DecodedSourceImage::Rendered(fixture(&[
+            [0.7, 0.45, 0.32, 1.0],
+            [0.4, 0.27, 0.18, 1.0],
+            [0.12, 0.08, 0.05, 1.0],
+            [0.4, 0.5, 0.7, 1.0],
+            [0.98, 0.03, 0.05, 1.0],
+            [0.3, 0.3, 0.3, 1.0],
+        ]));
+        let gpu = GpuRenderer::try_new().ok();
+        for vibrance in [-1.0, 0.0, 0.5, 1.0] {
+            let mut settings = RenderSettings::default();
+            settings.relative_color.vibrance = vibrance;
+            let cpu = render_source_export_to_srgb8(&decoded, &settings).unwrap();
+            assert_eq!(
+                cpu.data,
+                render_source_preview_to_srgb8(&decoded, &settings)
+                    .unwrap()
+                    .data
+            );
+            if let Some(gpu) = &gpu {
+                let accelerated =
+                    render_source_preview_with_gpu_to_srgb8(&decoded, &settings, gpu).unwrap();
+                assert!(
+                    cpu.data
+                        .iter()
+                        .zip(&accelerated.data)
+                        .all(|(a, b)| a.abs_diff(*b) <= 1)
+                );
+            }
         }
     }
 

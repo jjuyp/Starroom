@@ -73,7 +73,35 @@ fn hue_dist(a:f32,b:f32)->f32{let d=abs(a-b);return min(d,360.0-d);}
 fn mixer(c:vec3<f32>)->vec3<f32>{var l=lab(c);var h=degrees(atan2(l.z,l.y));if(h<0.0){h+=360.0;}let chroma=length(l.yz);if(chroma<1e-4){return c;}let centers=array<f32,8>(25.0,55.0,95.0,145.0,195.0,250.0,300.0,335.0);var total=0.0;var dh=0.0;var dc=0.0;var dl=0.0;let width=clamp(p.values[4].x,30.0,80.0);for(var i:u32=0u;i<8u;i++){let w=1.0-sstep(width*.42,width,hue_dist(h,centers[i]));let a=p.values[5u+i];total+=w;dh+=clamp(a.x,-30.0,30.0)*w;dc+=clamp(a.y,-1.0,1.0)*w;dl+=clamp(a.z,-1.0,1.0)*w;}if(total>1e-7){let nh=radians(h+dh/total);let nc=max(chroma*(1.0+dc/total*.75),0.0);l=vec3<f32>(l.x+dl/total*.16,nc*cos(nh),nc*sin(nh));}return rgb(l);}
 fn wheel(l:ptr<function,vec3<f32>>,w:vec4<f32>,weight:f32,amount:f32){let a=radians(w.x);(*l).y+=cos(a)*clamp(w.y,-1.0,1.0)*.12*weight*amount;(*l).z+=sin(a)*clamp(w.y,-1.0,1.0)*.12*weight*amount;(*l).x+=clamp(w.z,-1.0,1.0)*.12*weight*amount;}
 fn grade(c:vec3<f32>)->vec3<f32>{var l=lab(c);let q=p.values[17];let amount=clamp(q.z,0.0,1.0);let shift=clamp(q.x,-1.0,1.0)*.12;let overlap=.08+clamp(q.y,0.0,1.0)*.18;let sw=1.0-sstep(.42+shift-overlap,.42+shift+overlap,l.x);let hw=sstep(.58+shift-overlap,.58+shift+overlap,l.x);let mw=clamp(1.0-max(sw,hw),0.0,1.0);let sum=max(sw+mw+hw,1e-7);wheel(&l,p.values[13],sw/sum,amount);wheel(&l,p.values[14],mw/sum,amount);wheel(&l,p.values[15],hw/sum,amount);wheel(&l,p.values[16],1.0,amount);l.x=max(l.x,0.0);return rgb(l);}
-@compute @workgroup_size(64) fn creative_main(@builtin(global_invocation_id) id:vec3<u32>){let n=u32(p.values[18].x);if(id.x>=n){return;}var c=source[id.x].rgb;var l=lab(c);l.z+=clamp(p.values[1].z,-1.0,1.0)*.035;l.y+=clamp(p.values[1].w,-1.0,1.0)*.025;let ch=length(l.yz);let scale=max(1.0+clamp(p.values[2].y,-1.0,1.0)*.85+clamp(p.values[2].x,-1.0,1.0)*(1.0-clamp(ch/.32,0.0,1.0))*.65,0.0);l.y*=scale;l.z*=scale;c=rgb(l);let lum=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);let mapped=tone_lut(lum);c=select(vec3<f32>(mapped),c*(mapped/max(lum,1e-7)),lum>1e-7);if(p.values[19].x>0.5){c=vec3<f32>(curve(1u,curve(0u,c.r)),curve(2u,curve(0u,c.g)),curve(3u,curve(0u,c.b)));}if(p.values[19].y>0.5){c=mixer(c);}if(p.values[19].z>0.5){c=grade(c);}if(p.values[19].w>0.5){let width=max(p.values[18].y,1.0);let height=max(p.values[18].z,1.0);let px=f32(id.x%u32(width));let py=f32(id.x/u32(width));let dx=(px-(width-1.0)*.5)/max((width-1.0)*.5,1.0);let dy=(py-(height-1.0)*.5)/max((height-1.0)*.5,1.0);let roundness=(clamp(p.values[3].x,-1.0,1.0)+1.0)*.5;let aspect=width/height;let aspect_correction=1.0+(max(aspect,1.0)-1.0)*(1.0-roundness);let radius=sqrt((dx*aspect_correction)*(dx*aspect_correction)+dy*dy);let edge=clamp((radius-clamp(p.values[2].w,0.0,1.0))/max(abs(p.values[3].y),.02),0.0,1.0);let edge_weight=edge*edge*(3.0-2.0*edge);let vignette_luminance=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);let highlight_weight=clamp((vignette_luminance-.55)/1.45,0.0,1.0);let protect_weight=1.0-clamp(p.values[3].z,0.0,1.0)*highlight_weight*highlight_weight*(3.0-2.0*highlight_weight);c*=exp2(-clamp(p.values[2].z,-1.0,1.0)*2.0*edge_weight*protect_weight);}output[id.x]=vec4<f32>(finite(c.r),finite(c.g),finite(c.b),source[id.x].a);}
+fn protected_chroma(l:vec3<f32>)->vec3<f32>{
+    let saturation=clamp(p.values[2].y,-1.0,1.0);let vibrance=clamp(p.values[2].x,-1.0,1.0);
+    if(abs(saturation)<=1.1920929e-7 && abs(vibrance)<=1.1920929e-7){return l;}
+    let ch=length(l.yz);var h=degrees(atan2(l.z,l.y));if(h<0.0){h+=360.0;}
+    let skin=(1.0-sstep(12.0,50.0,hue_dist(h,50.0)))*sstep(.015,.045,ch)*(1.0-sstep(.25,.45,ch))*sstep(.08,.25,l.x)*(1.0-sstep(.9,1.1,l.x));
+    let low_chroma=1.0-clamp(ch/.32,0.0,1.0);let protection=1.0-.7*clamp(skin,0.0,1.0);
+    let saturation_scale=select(1.0+.85*saturation,1.0+saturation,saturation<0.0);
+    let scale=saturation_scale*(1.0+.65*vibrance*low_chroma*protection);
+    return vec3<f32>(l.x,l.y*scale,l.z*scale);
+}
+@compute @workgroup_size(64) fn creative_main(@builtin(global_invocation_id) id:vec3<u32>){
+    let n=u32(p.values[18].x);if(id.x>=n){return;}var c=source[id.x].rgb;var l=lab(c);
+    l.z+=clamp(p.values[1].z,-1.0,1.0)*.035;l.y+=clamp(p.values[1].w,-1.0,1.0)*.025;
+    c=rgb(protected_chroma(l));
+    let lum=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);let mapped=tone_lut(lum);
+    c=select(vec3<f32>(mapped),c*(mapped/max(lum,1e-7)),lum>1e-7);
+    if(p.values[19].x>0.5){c=vec3<f32>(curve(1u,curve(0u,c.r)),curve(2u,curve(0u,c.g)),curve(3u,curve(0u,c.b)));}
+    if(p.values[19].y>0.5){c=mixer(c);}if(p.values[19].z>0.5){c=grade(c);}
+    if(p.values[19].w>0.5){
+        let width=max(p.values[18].y,1.0);let height=max(p.values[18].z,1.0);let px=f32(id.x%u32(width));let py=f32(id.x/u32(width));
+        let dx=(px-(width-1.0)*.5)/max((width-1.0)*.5,1.0);let dy=(py-(height-1.0)*.5)/max((height-1.0)*.5,1.0);
+        let roundness=(clamp(p.values[3].x,-1.0,1.0)+1.0)*.5;let aspect=width/height;let aspect_correction=1.0+(max(aspect,1.0)-1.0)*(1.0-roundness);
+        let radius=sqrt((dx*aspect_correction)*(dx*aspect_correction)+dy*dy);let edge=clamp((radius-clamp(p.values[2].w,0.0,1.0))/max(abs(p.values[3].y),.02),0.0,1.0);
+        let edge_weight=edge*edge*(3.0-2.0*edge);let vignette_luminance=max(dot(c,vec3<f32>(.2627,.6780,.0593)),0.0);
+        let highlight_weight=clamp((vignette_luminance-.55)/1.45,0.0,1.0);let protect_weight=1.0-clamp(p.values[3].z,0.0,1.0)*highlight_weight*highlight_weight*(3.0-2.0*highlight_weight);
+        c*=exp2(-clamp(p.values[2].z,-1.0,1.0)*2.0*edge_weight*protect_weight);
+    }
+    output[id.x]=vec4<f32>(finite(c.r),finite(c.g),finite(c.b),source[id.x].a);
+}
 "#;
 
 fn storage_layout_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {

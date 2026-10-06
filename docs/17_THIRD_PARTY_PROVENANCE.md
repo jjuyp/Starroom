@@ -41,6 +41,15 @@ actual stage input. This is a recorded adaptation change, not a new dependency o
 Dense single/combined-control monotonicity and real photographic detail/parity regressions
 are required; the Browser prototype is retained as a migration record, not the tone IQ oracle.
 
+### October Native chroma semantics
+
+The saturation endpoint and perceptual Vibrance skin-like heuristic in `starroom-color` and the
+matching fused WGSL are Starroom-authored OKLCh workflow code, implementing `docs/12_TONE_COLOR_ENGINE.md`.
+No darktable implementation/model is copied for this heuristic, no third-party revision changes,
+and no face-detection claim is made. Existing permissive color-reference data and NASA portrait
+licenses/hashes remain unchanged. Complete destination-gamut and photographic quality validation
+is still required before a Production release.
+
 The acceleration workflow pins CI actions by immutable commit: `actions/checkout` v4 `11d5960a326750d5838078e36cf38b85af677262`, `actions/setup-node` v4 `49933ea5288caeca8642d1e84afbd3f7d6820020`, `actions/cache` v4 `0057852bfaa89a56745cba8c7296529d2fc39830`, `actions/upload-artifact` v4 `ea165f8d65b6e75b540449e92b4886f43607fa02`, and `dtolnay/rust-toolchain` stable snapshot `4360b52568e2003a75bf9bc1d59f33a8e3fc893c`. These execute only in GitHub-hosted CI and do not enter Starroom source/binaries. Their source/licenses and GitHub Actions terms must be reviewed when pins change.
 
 ## Public RAW fixture assets

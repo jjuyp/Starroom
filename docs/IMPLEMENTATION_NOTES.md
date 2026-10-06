@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## 2026-10-06 protected Native chroma controls
+
+The old additive saturation/vibrance scale retained 15% chroma at Saturation -100, or more with
+positive Vibrance. Native color now has a true zero-chroma saturation endpoint, multiplicative
+Vibrance, exact neutral identity in the perceptual operator and continuous protection based on
+OKLCh hue, chroma and lightness. This is an authored Starroom OKLCh workflow heuristic, not face
+detection or an upstream foundation replacement. It must not be described as recognizing every
+person/skin tone. The existing NASA portrait fixture is unchanged; no new dependency/model or
+external source code is introduced. LibRaw, LittleCMS and the shared graph remain authoritative.
+
+The same operator is implemented in the production fused WGSL and CPU reference, preserving
+OKLab lightness/hue before output gamut conversion. Three numerical operator tests, two shared
+CPU/GPU tests and a real licensed portrait integration test cover identity, grayscale despite
+positive Vibrance, smooth skin-like weights, high-chroma protection, extreme controls, repeated
+deterministic output and unchanged source bytes. CPU preview/export are exact; available real GPU
+tests retain the existing one-code RGB8 bound. No existing regression tolerance was relaxed.
+Export recipe identity now includes `COLOR_POLICY_VERSION`, avoiding reuse of an old color recipe
+after semantics change. This does not yet bind every durable project/cache/profile version.
+
+This closes the demonstrated endpoint/protection defects, not full Phase 3 acceptance. Relative
+Temperature/Tint still use the previous OKLab offsets and require formal Native chromatic
+adaptation; editable RAW WB, destination-gamut clipping, complete perceptual photographic baselines,
+end-to-end latency and final same-SHA installed Windows acceptance remain open in the matrix.
+
 ## 2026-10-06 Display P3 named-transfer correctness
 
 Keep LittleCMS as the input/working/output provider. Generated Display P3 formerly used a generic

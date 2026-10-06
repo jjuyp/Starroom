@@ -392,6 +392,38 @@ pub fn oklch_to_oklab(lch: Oklch) -> Oklab {
     }
 }
 
+/// Continuous perceptual skin-like color protection; this is not face detection and never uses
+/// hue alone. The native OKLCh workflow owns this authored heuristic (see image pipeline spec).
+pub fn skin_like_chroma_weight(lab: Oklab) -> f32 {
+    let lch = oklab_to_oklch(lab);
+    let hue = 1.0 - smoothstep(12.0, 50.0, circular_distance_degrees(lch.h_deg, 50.0));
+    let chroma = smoothstep(0.015, 0.045, lch.c) * (1.0 - smoothstep(0.25, 0.45, lch.c));
+    let lightness = smoothstep(0.08, 0.25, lch.l) * (1.0 - smoothstep(0.9, 1.1, lch.l));
+    (hue * chroma * lightness).clamp(0.0, 1.0)
+}
+
+/// Preserve OKLab lightness and hue while scaling chroma. Saturation=-1 is true grayscale,
+/// even with positive Vibrance. Vibrance favors low-chroma colors and protects skin/high chroma.
+pub fn apply_chroma_controls(mut lab: Oklab, saturation: f32, vibrance: f32) -> Oklab {
+    let saturation = saturation.clamp(-1.0, 1.0);
+    let vibrance = vibrance.clamp(-1.0, 1.0);
+    if saturation.abs() <= f32::EPSILON && vibrance.abs() <= f32::EPSILON {
+        return lab;
+    }
+    let chroma = lab.a.hypot(lab.b);
+    let low_chroma = 1.0 - (chroma / 0.32).clamp(0.0, 1.0);
+    let protection = 1.0 - 0.7 * skin_like_chroma_weight(lab);
+    let saturation_scale = if saturation < 0.0 {
+        1.0 + saturation
+    } else {
+        1.0 + 0.85 * saturation
+    };
+    let scale = saturation_scale * (1.0 + 0.65 * vibrance * low_chroma * protection);
+    lab.a *= scale;
+    lab.b *= scale;
+    lab
+}
+
 pub fn rotate_hue(rgb: LinearRgb, degrees: f32) -> LinearRgb {
     let mut lch = oklab_to_oklch(rec2020_to_oklab(rgb));
     lch.h_deg = (lch.h_deg + degrees).rem_euclid(360.0);
@@ -612,6 +644,103 @@ impl PreparedCurve {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chroma_controls_have_true_gray_endpoint_and_exact_neutral_identity() {
+        for lab in [
+            Oklab {
+                l: 0.65,
+                a: 0.1,
+                b: 0.12,
+            },
+            Oklab {
+                l: 2.0,
+                a: -0.3,
+                b: 0.2,
+            },
+            Oklab {
+                l: 0.02,
+                a: 0.01,
+                b: -0.03,
+            },
+        ] {
+            assert_eq!(apply_chroma_controls(lab, 0.0, 0.0), lab);
+            for vibrance in [-1.0, 0.0, 1.0] {
+                let gray = apply_chroma_controls(lab, -1.0, vibrance);
+                assert_eq!(gray.l, lab.l);
+                assert_eq!(gray.a, 0.0);
+                assert_eq!(gray.b, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn vibrance_protects_skin_and_high_chroma_without_hue_rotation() {
+        let skin = oklch_to_oklab(Oklch {
+            l: 0.65,
+            c: 0.08,
+            h_deg: 50.0,
+        });
+        let other = oklch_to_oklab(Oklch {
+            l: 0.65,
+            c: 0.08,
+            h_deg: 230.0,
+        });
+        let saturated = oklch_to_oklab(Oklch {
+            l: 0.65,
+            c: 0.4,
+            h_deg: 230.0,
+        });
+        let changed_skin = oklab_to_oklch(apply_chroma_controls(skin, 0.0, 1.0));
+        let changed_other = oklab_to_oklch(apply_chroma_controls(other, 0.0, 1.0));
+        assert!((changed_skin.c - 0.08) < (changed_other.c - 0.08) * 0.5);
+        assert!(circular_distance_degrees(changed_skin.h_deg, 50.0) < 1.0e-4);
+        assert!(circular_distance_degrees(changed_other.h_deg, 230.0) < 1.0e-4);
+        assert_eq!(changed_skin.l, 0.65);
+        let protected = apply_chroma_controls(saturated, 0.0, 1.0);
+        assert_eq!(protected, saturated);
+    }
+
+    #[test]
+    fn skin_chroma_protection_is_continuous_and_never_hue_only() {
+        for lch in [
+            Oklch {
+                l: 0.65,
+                c: 0.0,
+                h_deg: 50.0,
+            },
+            Oklch {
+                l: 0.03,
+                c: 0.08,
+                h_deg: 50.0,
+            },
+            Oklch {
+                l: 0.65,
+                c: 0.6,
+                h_deg: 50.0,
+            },
+            Oklch {
+                l: 1.2,
+                c: 0.08,
+                h_deg: 50.0,
+            },
+        ] {
+            assert_eq!(skin_like_chroma_weight(oklch_to_oklab(lch)), 0.0);
+        }
+        for hue in [0.0, 12.0, 50.0, 90.0, 180.0, 359.99] {
+            let a = skin_like_chroma_weight(oklch_to_oklab(Oklch {
+                l: 0.65,
+                c: 0.08,
+                h_deg: hue,
+            }));
+            let b = skin_like_chroma_weight(oklch_to_oklab(Oklch {
+                l: 0.65,
+                c: 0.08,
+                h_deg: hue + 0.01,
+            }));
+            assert!((a - b).abs() < 0.002);
+        }
+    }
 
     fn delta(a: f32, b: f32) -> f32 {
         (a - b).abs()
