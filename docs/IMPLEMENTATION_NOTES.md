@@ -1,5 +1,41 @@
 # Implementation Notes
 
+## 2026-10-06 bounded GPU readback and real failure callbacks
+
+The active renderer formerly ignored `Device::poll` errors, waited indefinitely for all/latest
+submissions and then blocked on an unbounded callback receive. Device loss was only a manual bool
+hook. Use existing wgpu official `PollType::Wait` with the exact owned submission and a shared
+five-second fault deadline, followed by remaining-deadline callback receipt. This is an error
+ceiling, not acceptable normal interaction latency. The staging mapping is unconditionally
+cancelled/unmapped through RAII; mapped byte alignment/casting failures are typed, not panics.
+Real device-loss and uncaptured OOM/validation callbacks latch the first failure. Exposure,
+creative and texture entry points reject failed devices explicitly; OOM is no longer mislabeled
+as InvalidPixels/DeviceLost. No normal image arithmetic, precision, cache key or provider changes.
+
+The actual desktop preview retires only critical GPU loss/OOM/readback/validation failures so
+the same bad device does not incur repeated waits on every edit. Oversized/capability and source
+errors do not permanently disable a healthy GPU. Existing binary CPU-fallback labeling remains;
+no Browser or cloud renderer is used. A real isolated `Device::destroy` triggers the official
+callback and rejects subsequent work. Production wait-helper tests cover expired deadline,
+ready callback and disconnected callback; explicit OOM and Native retirement classifier tests
+cover every affected operation. Physical driver-removal/hang/OOM stress remains a final hardware
+qualification item, not inferred from this device-destroy test.
+
+Registry/lock inspection also found stale provenance claiming wgpu 30.0.0: the already locked
+and license-reported version is 30.0.1, packaged commit 40f4a34/checksum recorded in the inventory.
+Only the inventory is corrected; no dependency/lockfile/model/license change occurs. Header docs
+now honestly distinguish production f32 buffers from planned Float16 textures. Full GPU residency,
+direct presentation, remaining release-path expects and complete error/performance gates remain open.
+
+GPU milestone validation (`test-timing-1791254401581.json`) passes 29 render unit tests, 69
+pipeline unit tests, photographic/RAW/shared integrations and warning-denied workspace Clippy;
+all 33 ordinary desktop tests pass (two opt-in desktop gates remain separately counted).
+Locked license validation still reports 561 Rust / six production npm packages and 269 notices.
+Real RTX 3050/DX12 512px probe after liveness changes: Exposure median/p95 31.200/31.831ms,
+Temperature 31.107/31.398ms, Tint 31.352/33.445ms, Saturation 31.602/32.642ms, Vibrance 30.175/31.533ms,
+Auto WB 32.219/32.741ms, Picker 30.717/31.170ms; unchanged one-code parity (Auto/Picker zero).
+This is the same small engine-only diagnostic, not a <100ms full-desktop or 100MP acceptance.
+
 ## 2026-10-06 relative Temperature/Tint CAT and exact neutral stages
 
 Foundation decision: reuse LittleCMS `cmsWhitePointFromTemp` daylight locus and the prepared

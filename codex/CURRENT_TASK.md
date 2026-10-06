@@ -19,6 +19,12 @@ destination gamut/alpha/monitor ownership and durable profile/domain provenance,
 stage-cache/GPU presentation and real end-to-end performance. All original Phases 0-30 remain
 active; relative working-space WB is not physical RAW Kelvin acceptance.
 
+Relative CAT group is now `15766d0`, local Full Rust and GitHub Full Check 37402914451 pass.
+Current independent reliability group bounds owned GPU readbacks, uses real device callbacks,
+retains diagnostics and retires critical failed Native devices; do not treat its five-second
+fault ceiling as normal latency acceptance. Keep remaining color/RAW/alpha/gamut/monitor and
+performance/tiles/persistence/Windows work in the full matrix; no phase/Final claim is warranted.
+
 ## Historical RC field batch baseline
 
 M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.

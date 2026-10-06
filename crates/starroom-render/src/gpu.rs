@@ -1,10 +1,10 @@
 //! M12 wgpu acceleration backend.
 //!
 //! The CPU graph remains Starroom's image-quality oracle.  This module owns the explicit GPU
-//! lifecycle and an exposure compute node whose arithmetic is compared with the CPU oracle
-//! before it is eligible for preview scheduling.  The resource contract is linear Rec.2020 D65
-//! RGBA16Float; readback buffers use f32 only at the CPU/GPU boundary so comparisons do not hide
-//! half-float quantisation errors.
+//! lifecycle and production fused creative compute whose arithmetic is compared with the CPU
+//! oracle. Current compute uses linear Rec.2020 D65 f32 storage buffers, including readback;
+//! RGBA16Float/R16Float texture constructors are the migration contract, not a claim that the
+//! production presentation chain already stays in those textures.
 
 use bytemuck::{Pod, Zeroable};
 use serde::Serialize;
@@ -12,13 +12,32 @@ use std::{
     borrow::Cow,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    sync::{Arc, Mutex},
-    time::Instant,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
 pub const GPU_WORKING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GPU_MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+const GPU_READBACK_LIMIT: Duration = Duration::from_secs(5);
+const FAILURE_OOM: u8 = 1;
+const FAILURE_DEVICE_LOST: u8 = 2;
+const FAILURE_VALIDATION: u8 = 3;
+
+fn wait_for_mapping<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+    deadline: Instant,
+) -> Result<T, GpuError> {
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => GpuError::ReadbackTimeout,
+            other => GpuError::Readback(other.to_string()),
+        })
+}
 
 const EXPOSURE_WGSL: &str = r#"
 struct Parameters {
@@ -193,6 +212,10 @@ pub enum GpuError {
     DeviceLost,
     #[error("GPU readback failed: {0}")]
     Readback(String),
+    #[error(
+        "GPU readback exceeded its bounded deadline; preview must use the CPU reference backend"
+    )]
+    ReadbackTimeout,
 }
 
 #[repr(C)]
@@ -223,7 +246,8 @@ pub struct GpuRenderer {
     creative_pipeline: wgpu::ComputePipeline,
     exposure_layout: wgpu::BindGroupLayout,
     creative_layout: wgpu::BindGroupLayout,
-    device_lost: bool,
+    failure: Arc<AtomicU8>,
+    failure_detail: Arc<Mutex<Option<String>>>,
     resources: Mutex<Option<GpuBufferResources>>,
     stats: Mutex<GpuResourceStats>,
 }
@@ -348,6 +372,37 @@ impl GpuRenderer {
         if let Some(error) = validation_scope.pop().await {
             return Err(GpuError::Shader(error.to_string()));
         }
+        let failure = Arc::new(AtomicU8::new(0));
+        let failure_detail = Arc::new(Mutex::new(None));
+        let lost = failure.clone();
+        let lost_detail = failure_detail.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            if let Ok(mut detail) = lost_detail.lock() {
+                if lost.load(Ordering::Acquire) == 0 {
+                    *detail = Some(format!("{reason:?}: {message}"));
+                    lost.store(FAILURE_DEVICE_LOST, Ordering::Release);
+                }
+            } else {
+                lost.store(FAILURE_DEVICE_LOST, Ordering::Release);
+            }
+        });
+        let uncaptured = failure.clone();
+        let uncaptured_detail = failure_detail.clone();
+        device.on_uncaptured_error(Arc::new(move |error| {
+            let kind = if matches!(error, wgpu::Error::OutOfMemory { .. }) {
+                FAILURE_OOM
+            } else {
+                FAILURE_VALIDATION
+            };
+            if let Ok(mut detail) = uncaptured_detail.lock() {
+                if uncaptured.load(Ordering::Acquire) == 0 {
+                    *detail = Some(error.to_string());
+                    uncaptured.store(kind, Ordering::Release);
+                }
+            } else {
+                uncaptured.store(kind, Ordering::Release);
+            }
+        }));
         let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let creative_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("starroom-creative-layout"),
@@ -401,7 +456,8 @@ impl GpuRenderer {
             creative_pipeline,
             exposure_layout,
             creative_layout,
-            device_lost: false,
+            failure,
+            failure_detail,
             resources: Mutex::new(None),
             stats: Mutex::new(GpuResourceStats {
                 pipeline_create_count: 2,
@@ -412,6 +468,14 @@ impl GpuRenderer {
 
     pub fn status(&self) -> &GpuStatus {
         &self.status
+    }
+
+    /// Driver/runtime diagnostics only; resource labels do not contain source photo names/pixels.
+    pub fn failure_diagnostic(&self) -> Option<String> {
+        self.failure_detail
+            .lock()
+            .ok()
+            .and_then(|detail| detail.clone())
     }
 
     pub fn resource_stats(&self) -> GpuResourceStats {
@@ -431,19 +495,74 @@ impl GpuRenderer {
     }
 
     pub fn mark_device_lost(&mut self) {
-        self.device_lost = true;
+        self.failure.store(FAILURE_DEVICE_LOST, Ordering::Release);
     }
 
     /// Explicit test/runtime hook for an allocation failure observed by a scheduler. The caller
     /// must surface the CPU fallback status rather than attempting a hidden retry.
     pub fn mark_out_of_memory(&mut self) {
-        self.device_lost = true;
+        self.failure.store(FAILURE_OOM, Ordering::Release);
+    }
+
+    fn check_device(&self) -> Result<(), GpuError> {
+        match self.failure.load(Ordering::Acquire) {
+            0 => Ok(()),
+            FAILURE_OOM => Err(GpuError::OutOfMemory),
+            FAILURE_DEVICE_LOST => Err(GpuError::DeviceLost),
+            _ => Err(GpuError::Validation(
+                "uncaptured GPU operation failed".into(),
+            )),
+        }
+    }
+
+    /// Await only this submission, not unrelated work; all paths cancel/unmap the owned staging
+    /// mapping. Neither an ignored poll error nor a missing callback may hang a Native worker.
+    fn readback_rgba(
+        &self,
+        buffer: &wgpu::Buffer,
+        byte_len: u64,
+        submission: wgpu::SubmissionIndex,
+    ) -> Result<Vec<[f32; 4]>, GpuError> {
+        struct Unmap<'a>(&'a wgpu::Buffer);
+        impl Drop for Unmap<'_> {
+            fn drop(&mut self) {
+                self.0.unmap();
+            }
+        }
+        let slice = buffer.slice(..byte_len);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        let _unmap = Unmap(buffer);
+        let deadline = Instant::now() + GPU_READBACK_LIMIT;
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(GPU_READBACK_LIMIT),
+            })
+            .map_err(|error| match error {
+                wgpu::PollError::Timeout => GpuError::ReadbackTimeout,
+                other => GpuError::Readback(other.to_string()),
+            })?;
+        self.check_device()?;
+        wait_for_mapping(&receiver, deadline)?
+            .map_err(|error| GpuError::Readback(error.to_string()))?;
+        let data = slice
+            .get_mapped_range()
+            .map_err(|error| GpuError::Readback(error.to_string()))?;
+        let result = bytemuck::try_cast_slice::<u8, [f32; 4]>(&data)
+            .map_err(|error| GpuError::Readback(error.to_string()))?
+            .to_vec();
+        drop(data);
+        Ok(result)
     }
 
     /// Creates the canonical RGBA16Float / R16Float resources used by preview and masks. Their
     /// ownership is explicit, so tile/cache eviction can release GPU memory without touching CPU
     /// reference buffers.
     pub fn create_texture_set(&self, width: u32, height: u32) -> Result<GpuTextureSet, GpuError> {
+        self.check_device()?;
         if width == 0 || height == 0 {
             return Err(GpuError::InvalidPixels);
         }
@@ -499,9 +618,7 @@ impl GpuRenderer {
         pixels: &[[f32; 4]],
         exposure_ev: f32,
     ) -> Result<Vec<[f32; 4]>, GpuError> {
-        if self.device_lost {
-            return Err(GpuError::DeviceLost);
-        }
+        self.check_device()?;
         if pixels.is_empty()
             || !exposure_ev.is_finite()
             || !pixels.iter().flatten().all(|value| value.is_finite())
@@ -633,23 +750,8 @@ impl GpuRenderer {
             pass.dispatch_workgroups((pixels.len() as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&resources.output, 0, &resources.staging, 0, byte_len);
-        self.queue.submit(Some(encoder.finish()));
-        let slice = resources.staging.slice(..byte_len);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver
-            .recv()
-            .map_err(|error| GpuError::Readback(error.to_string()))?
-            .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let data = slice
-            .get_mapped_range()
-            .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let result = bytemuck::cast_slice::<u8, [f32; 4]>(&data).to_vec();
-        drop(data);
-        resources.staging.unmap();
+        let submission = self.queue.submit(Some(encoder.finish()));
+        let result = self.readback_rgba(&resources.staging, byte_len, submission)?;
         self.stats
             .lock()
             .expect("GPU resource statistics")
@@ -669,8 +771,8 @@ impl GpuRenderer {
         curve_luts: &[f32; 8192],
         stage_identity: Option<&str>,
     ) -> Result<Vec<[f32; 4]>, GpuError> {
-        if self.device_lost
-            || pixels.is_empty()
+        self.check_device()?;
+        if pixels.is_empty()
             || !pixels.iter().flatten().all(|value| value.is_finite())
             || !parameters
                 .values
@@ -833,24 +935,9 @@ impl GpuRenderer {
             pass.dispatch_workgroups((pixels.len() as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&resources.output, 0, &resources.staging, 0, byte_len);
-        self.queue.submit(Some(encoder.finish()));
+        let submission = self.queue.submit(Some(encoder.finish()));
         let readback_started = Instant::now();
-        let slice = resources.staging.slice(..byte_len);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        receiver
-            .recv()
-            .map_err(|error| GpuError::Readback(error.to_string()))?
-            .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let data = slice
-            .get_mapped_range()
-            .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let result = bytemuck::cast_slice::<u8, [f32; 4]>(&data).to_vec();
-        drop(data);
-        resources.staging.unmap();
+        let result = self.readback_rgba(&resources.staging, byte_len, submission)?;
         crate::profiling::record_gpu_transfer(
             0,
             u64::try_from(readback_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -936,6 +1023,67 @@ pub fn resolve_preview_backend(prefer_gpu: bool, gpu: Result<&GpuRenderer, GpuEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapping_callback_deadline_and_disconnect_are_typed_and_bounded() {
+        let (sender, receiver) = std::sync::mpsc::channel::<u8>();
+        assert!(matches!(
+            wait_for_mapping(&receiver, Instant::now()),
+            Err(GpuError::ReadbackTimeout)
+        ));
+        sender.send(7).unwrap();
+        assert_eq!(wait_for_mapping(&receiver, Instant::now()).unwrap(), 7);
+        drop(sender);
+        assert!(matches!(
+            wait_for_mapping(&receiver, Instant::now()),
+            Err(GpuError::Readback(_))
+        ));
+    }
+
+    #[test]
+    fn real_device_destroy_callback_reports_loss_before_any_new_gpu_work() {
+        let Ok(renderer) = GpuRenderer::try_new() else {
+            return;
+        };
+        renderer.device.destroy();
+        let _ = renderer.device.poll(wgpu::PollType::Poll);
+        assert!(matches!(renderer.check_device(), Err(GpuError::DeviceLost)));
+        assert!(renderer.failure_diagnostic().is_some());
+        assert!(matches!(
+            renderer.apply_exposure(&[[0.18, 0.18, 0.18, 1.0]], 0.0),
+            Err(GpuError::DeviceLost)
+        ));
+        assert!(matches!(
+            renderer.create_texture_set(16, 16),
+            Err(GpuError::DeviceLost)
+        ));
+        let status = resolve_preview_backend(true, Err(GpuError::DeviceLost));
+        assert_eq!(status.backend, GpuBackendKind::CpuFallback);
+        assert!(status.reason.is_some());
+    }
+
+    #[test]
+    fn explicit_oom_is_not_mislabeled_invalid_pixels_or_device_loss() {
+        let Ok(mut renderer) = GpuRenderer::try_new() else {
+            return;
+        };
+        renderer.mark_out_of_memory();
+        assert!(matches!(
+            renderer.apply_exposure(&[[0.18, 0.18, 0.18, 1.0]], 0.0),
+            Err(GpuError::OutOfMemory)
+        ));
+        assert!(matches!(
+            renderer.apply_creative(
+                &[[0.18, 0.18, 0.18, 1.0]],
+                &GpuCreativeParameters {
+                    values: [[0.0; 4]; 23]
+                },
+                &[0.0; 8192],
+                None
+            ),
+            Err(GpuError::OutOfMemory)
+        ));
+    }
 
     #[test]
     fn cpu_exposure_oracle_preserves_scene_linear_hdr_and_alpha() {

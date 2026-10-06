@@ -2190,6 +2190,20 @@ fn recoverable_gpu_attempt<T>(
     }
 }
 
+fn gpu_failure_requires_retirement(error: &starroom_pipeline::PipelineError) -> bool {
+    use starroom_render::gpu::GpuError;
+    matches!(
+        error,
+        starroom_pipeline::PipelineError::Gpu(
+            GpuError::DeviceLost
+                | GpuError::OutOfMemory
+                | GpuError::ReadbackTimeout
+                | GpuError::Validation(_)
+                | GpuError::Readback(_)
+        )
+    )
+}
+
 fn resolve_local_model_root(
     configured: Option<std::ffi::OsString>,
     executable: Option<&Path>,
@@ -3895,9 +3909,21 @@ fn native_preview_inner(
                 .get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()))
                 .as_ref()
                 .map_err(Clone::clone)?;
-            let rendered =
-                render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer)
-                    .map_err(|error| error.to_string())?;
+            let result =
+                render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer);
+            let rendered = match result {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    let retire = gpu_failure_requires_retirement(&error);
+                    let reason = renderer
+                        .failure_diagnostic()
+                        .map_or_else(|| error.to_string(), |detail| format!("{error}: {detail}"));
+                    if retire {
+                        *gpu = Some(Err(reason.clone()));
+                    }
+                    return Err(reason);
+                }
+            };
             let flag = match renderer.status().backend {
                 GpuBackendKind::Dx12 | GpuBackendKind::Other => 0x0008,
                 GpuBackendKind::CpuFallback => 0x0010,
@@ -5537,6 +5563,28 @@ mod tests {
         );
         drop(runtime);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn gpu_retirement_preserves_source_and_capability_error_classification() {
+        use starroom_pipeline::PipelineError;
+        use starroom_render::gpu::GpuError;
+        for error in [
+            GpuError::DeviceLost,
+            GpuError::OutOfMemory,
+            GpuError::ReadbackTimeout,
+            GpuError::Readback("closed callback".into()),
+            GpuError::Validation("driver operation".into()),
+        ] {
+            assert!(gpu_failure_requires_retirement(&PipelineError::Gpu(error)));
+        }
+        for error in [
+            PipelineError::Geometry,
+            PipelineError::Gpu(GpuError::InvalidPixels),
+            PipelineError::Gpu(GpuError::Unsupported("oversized full-frame request".into())),
+        ] {
+            assert!(!gpu_failure_requires_retirement(&error));
+        }
     }
 
     #[test]
