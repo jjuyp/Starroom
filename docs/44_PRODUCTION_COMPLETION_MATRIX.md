@@ -120,6 +120,11 @@ private model weights. All original requirements remain active.
 6. **Graph metadata:** default DAG lists optics/geometry after detail and labels nearly all stages
    GPU-capable; actual execution prepares optics/geometry before AI/creative and keeps spatial/local
    stages on CPU. Cache/planning declarations must reflect the real production graph.
+   **Targeted repair:** canonical declarations now match actual preparation/creative/finishing
+   ownership, source and visible WB have distinct keys, and only real wgpu global kernels are
+   GPU-supported. Actual Native settings tests verify exposure/geometry/Auto/Picker/relative/
+   finishing invalidation; no processing/math is reordered. Stage-result reuse and tile execution
+   remain separate uncompleted work, not inferred from a valid DAG.
 7. **Presentation/profiling:** storage-buffer source is rehashed and converted/copied per frame;
    final readback blocks with `wait_indefinitely`, then CPU ICC/JPEG and browser image decode run.
    Recorded GPU duration is host elapsed time. Actual hardware adapter identity and pointer-to-paint

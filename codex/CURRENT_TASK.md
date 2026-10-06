@@ -25,6 +25,12 @@ retains diagnostics and retires critical failed Native devices; do not treat its
 fault ceiling as normal latency acceptance. Keep remaining color/RAW/alpha/gamut/monitor and
 performance/tiles/persistence/Windows work in the full matrix; no phase/Final claim is warranted.
 
+GPU reliability `0025ad3` now has Full CI success 37405670752 and secondary success 37405675242.
+Current canonical-declaration/cache-key correction splits source/visible WB, places actual
+lens/geometry preparation before creative stages, adds relative/finishing dependencies and
+removes fictitious wgpu capabilities. Targeted Native/shared tests pass. This is not complete
+stage-result caching or full GPU/tile execution; do not reset or narrow the remaining objective.
+
 ## Historical RC field batch baseline
 
 M30 — **Starroom v1.0.0-rc.3 field-quality hotfix (feature freeze)**.

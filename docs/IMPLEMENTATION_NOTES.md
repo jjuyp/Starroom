@@ -1,5 +1,32 @@
 # Implementation Notes
 
+## 2026-10-06 canonical execution declarations and Native stage identities
+
+The declared graph put lens/geometry after Detail and claimed nearly every operation had a
+wgpu implementation. Actual preparation runs source-WB intent/Auto, lens/geometry, visible
+Neutral Picker and AI denoise before relative color/global creative processing; local layers,
+Skin/Healing/Detail and finishing follow. Split SourceWhiteBalance, visible WhiteBalance,
+RelativeColor and Finishing, declare the actual order and mark wgpu support only for the fused
+global kernels. DirectML availability is separate, not a wgpu stage. RAW Camera WB remains baked
+by the mature decoder; SourceWhiteBalance here denotes source-intent/Auto processing, not proof
+of a separate editable sensor-WB implementation. Static tile flags are conservative; conditional
+Native ROI eligibility is still validated by the existing viewport path.
+
+The production `preview_stage_identity` uses this chain, not a second settings hash. Exposure
+does not alter prepared Geometry/WB keys; geometry/optics changes invalidate all later creative
+work; measured Picker changes do not invalidate prior geometry; Auto ignores irrelevant picker
+rectangles; relative controls do not invalidate source/geometry/AI preparation; Grain/Vignette
+bind the real finishing stage instead of ColorGrading. Existing GPU pixel/parameter fingerprints
+still guard hybrid/vignette fusion. No processing order, pixels, source/History identity, graph
+algorithm, codec, model, dependency or durable schema is changed in this correction.
+
+31 render unit tests, 69 pipeline unit tests/photographic/RAW integrations, 34 ordinary desktop
+tests (two opt-in cases counted separately), format and warning-denied workspace Clippy pass
+through the GPU milestone and desktop suite. Three new tests assert stage order/capability truth,
+upstream/downstream keys and actual Native settings projection. This repairs declarations and
+invalidation correctness, not missing stage-result caches, dirty/prefetch execution, GPU residency,
+100MP memory or end-to-end latency. All Phase 0-30 requirements remain active.
+
 ## 2026-10-06 bounded GPU readback and real failure callbacks
 
 The active renderer formerly ignored `Device::poll` errors, waited indefinitely for all/latest

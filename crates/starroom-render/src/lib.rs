@@ -15,8 +15,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub enum StageId {
     Decode,
     InputTransform,
+    SourceWhiteBalance,
     WhiteBalance,
     AiDenoise,
+    RelativeColor,
     Exposure,
     Tone,
     Curve,
@@ -27,6 +29,7 @@ pub enum StageId {
     Skin,
     Healing,
     Detail,
+    Finishing,
     Optics,
     Geometry,
     Resize,
@@ -56,8 +59,12 @@ impl Default for RenderGraph {
         let linear = [
             Decode,
             InputTransform,
+            SourceWhiteBalance,
+            Optics,
+            Geometry,
             WhiteBalance,
             AiDenoise,
+            RelativeColor,
             Exposure,
             Tone,
             Curve,
@@ -68,8 +75,7 @@ impl Default for RenderGraph {
             Skin,
             Healing,
             Detail,
-            Optics,
-            Geometry,
+            Finishing,
             Resize,
             DisplayTransform,
             Encode,
@@ -82,9 +88,12 @@ impl Default for RenderGraph {
             } else {
                 vec![linear[index - 1]]
             };
+            // Conservative capabilities of this declared stage, not a promise that every
+            // parameter/provider can execute independently on an arbitrary source tile.
             let (halo_pixels, tile_safe) = match id {
-                AiDenoise | Detail | Skin | Healing => (32, true),
-                Optics | Geometry => (4, true),
+                AiDenoise | Detail | Skin | Healing => (32, false),
+                Optics | Geometry => (4, false),
+                Decode | SourceWhiteBalance | WhiteBalance | Finishing => (0, false),
                 _ => (0, true),
             };
             stages.push(StageNode {
@@ -93,7 +102,12 @@ impl Default for RenderGraph {
                 halo_pixels,
                 tile_safe,
                 cpu_supported: true,
-                gpu_supported: !matches!(id, Decode | Export),
+                // Wgpu ownership only. DirectML AI is a separately validated provider, not
+                // evidence that the shared wgpu graph has an AI/spatial/ICC/geometry kernel.
+                gpu_supported: matches!(
+                    id,
+                    RelativeColor | Exposure | Tone | Curve | ColorMixer | ColorGrading
+                ),
             });
         }
         Self { stages }
@@ -326,6 +340,103 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonical_graph_matches_preparation_creative_and_finishing_ownership() {
+        use StageId::*;
+        let graph = RenderGraph::default();
+        let order: Vec<_> = graph.stages.iter().map(|stage| stage.id).collect();
+        assert_eq!(
+            order,
+            [
+                Decode,
+                InputTransform,
+                SourceWhiteBalance,
+                Optics,
+                Geometry,
+                WhiteBalance,
+                AiDenoise,
+                RelativeColor,
+                Exposure,
+                Tone,
+                Curve,
+                ColorMixer,
+                ColorGrading,
+                Mask,
+                Layers,
+                Skin,
+                Healing,
+                Detail,
+                Finishing,
+                Resize,
+                DisplayTransform,
+                Encode,
+                Export
+            ]
+        );
+        for stage in &graph.stages {
+            assert_eq!(
+                stage.gpu_supported,
+                matches!(
+                    stage.id,
+                    RelativeColor | Exposure | Tone | Curve | ColorMixer | ColorGrading
+                )
+            );
+        }
+        assert!(!graph.node(AiDenoise).unwrap().tile_safe);
+        assert!(!graph.node(SourceWhiteBalance).unwrap().tile_safe);
+        assert!(!graph.node(Geometry).unwrap().gpu_supported);
+    }
+
+    #[test]
+    fn actual_geometry_and_finishing_changes_have_correct_downstream_cache_dependencies() {
+        let graph = RenderGraph::default();
+        let baseline = StageStateIdentity::build(&graph, "image", &BTreeMap::new()).unwrap();
+        for stage in [StageId::Geometry, StageId::Optics] {
+            let changed = StageStateIdentity::build(
+                &graph,
+                "image",
+                &BTreeMap::from([(stage, "changed".into())]),
+            )
+            .unwrap();
+            assert_eq!(
+                baseline.key(StageId::SourceWhiteBalance),
+                changed.key(StageId::SourceWhiteBalance)
+            );
+            assert_ne!(
+                baseline.key(StageId::WhiteBalance),
+                changed.key(StageId::WhiteBalance)
+            );
+            assert_ne!(
+                baseline.key(StageId::ColorGrading),
+                changed.key(StageId::ColorGrading)
+            );
+        }
+        let finishing = StageStateIdentity::build(
+            &graph,
+            "image",
+            &BTreeMap::from([(StageId::Finishing, "vignette".into())]),
+        )
+        .unwrap();
+        for stage in [
+            StageId::Decode,
+            StageId::Geometry,
+            StageId::RelativeColor,
+            StageId::Tone,
+            StageId::ColorGrading,
+            StageId::Detail,
+        ] {
+            assert_eq!(baseline.key(stage), finishing.key(stage));
+        }
+        assert_ne!(
+            baseline.key(StageId::DisplayTransform),
+            finishing.key(StageId::DisplayTransform)
+        );
+        let source_wb = graph.invalidate_from(StageId::SourceWhiteBalance);
+        assert!(source_wb.contains(&StageId::Geometry));
+        assert!(source_wb.contains(&StageId::Export));
+        assert!(!source_wb.contains(&StageId::Decode));
+    }
+
+    #[test]
     fn default_graph_is_valid_and_acyclic() {
         let graph = RenderGraph::default();
         assert_eq!(graph.validate(), Ok(()));
@@ -349,7 +460,7 @@ mod tests {
         let invalid = graph.invalidate_from(StageId::WhiteBalance);
         assert!(invalid.contains(&StageId::Tone));
         assert!(invalid.contains(&StageId::Layers));
-        assert!(invalid.contains(&StageId::Geometry));
+        assert!(!invalid.contains(&StageId::Geometry));
         assert!(invalid.contains(&StageId::Export));
         assert!(!invalid.contains(&StageId::Decode));
     }

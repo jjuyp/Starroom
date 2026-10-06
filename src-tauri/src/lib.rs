@@ -3589,15 +3589,22 @@ fn preview_stage_identity(
             starroom_pipeline::COLOR_POLICY_VERSION,
         ))?,
     );
-    parameters.insert(
-        StageId::WhiteBalance,
-        encoded(&(
-            settings.white_balance,
-            settings.relative_color.temperature,
-            settings.relative_color.tint,
-        ))?,
-    );
+    let source_wb = match settings.white_balance.mode {
+        WhiteBalanceMode::NeutralPicker => WhiteBalanceSettings::default(),
+        _ => WhiteBalanceSettings {
+            mode: settings.white_balance.mode,
+            sample: None,
+        },
+    };
+    parameters.insert(StageId::SourceWhiteBalance, encoded(&source_wb)?);
+    let measured_wb = if settings.white_balance.mode == WhiteBalanceMode::NeutralPicker {
+        settings.white_balance
+    } else {
+        WhiteBalanceSettings::default()
+    };
+    parameters.insert(StageId::WhiteBalance, encoded(&measured_wb)?);
     parameters.insert(StageId::AiDenoise, encoded(&settings.ai_denoise)?);
+    parameters.insert(StageId::RelativeColor, encoded(&settings.relative_color)?);
     parameters.insert(StageId::Exposure, encoded(&settings.tone.exposure_ev)?);
     parameters.insert(
         StageId::Tone,
@@ -3614,15 +3621,10 @@ fn preview_stage_identity(
         encoded(&(&settings.curve, &settings.curves))?,
     );
     parameters.insert(StageId::ColorMixer, encoded(&settings.color_mixer)?);
+    parameters.insert(StageId::ColorGrading, encoded(&settings.grading)?);
     parameters.insert(
-        StageId::ColorGrading,
-        encoded(&(
-            &settings.grading,
-            settings.relative_color.vibrance,
-            settings.relative_color.saturation,
-            settings.grain,
-            settings.vignette,
-        ))?,
+        StageId::Finishing,
+        encoded(&(settings.grain, settings.vignette))?,
     );
     let portrait_mask_keys = settings
         .portrait_masks
@@ -5563,6 +5565,58 @@ mod tests {
         );
         drop(runtime);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_stage_cache_identity_tracks_real_upstream_and_finishing_parameters() {
+        let base = RenderSettings::default();
+        let baseline = preview_stage_identity("same-source", &base).unwrap();
+        let mut settings = base.clone();
+        settings.tone.exposure_ev = 0.5;
+        let exposure = preview_stage_identity("same-source", &settings).unwrap();
+        assert_eq!(baseline.source_texture, exposure.source_texture);
+        assert_eq!(baseline.geometry, exposure.geometry);
+        assert_eq!(baseline.input_white_balance, exposure.input_white_balance);
+        assert_ne!(baseline.global_creative, exposure.global_creative);
+        settings = base.clone();
+        settings.geometry.rotation_degrees = 90.0;
+        let geometry = preview_stage_identity("same-source", &settings).unwrap();
+        assert_ne!(baseline.geometry, geometry.geometry);
+        assert_ne!(baseline.input_white_balance, geometry.input_white_balance);
+        assert_ne!(baseline.global_creative, geometry.global_creative);
+        settings = base.clone();
+        settings.vignette.amount = 0.5;
+        let finishing = preview_stage_identity("same-source", &settings).unwrap();
+        assert_eq!(baseline.global_creative, finishing.global_creative);
+        assert_eq!(baseline.local_composite, finishing.local_composite);
+        assert_ne!(baseline.display, finishing.display);
+        settings = base.clone();
+        settings.relative_color.temperature = 0.4;
+        let relative = preview_stage_identity("same-source", &settings).unwrap();
+        assert_eq!(baseline.input_white_balance, relative.input_white_balance);
+        assert_eq!(baseline.geometry, relative.geometry);
+        assert_ne!(baseline.global_creative, relative.global_creative);
+        settings = base.clone();
+        settings.white_balance = WhiteBalanceSettings {
+            mode: WhiteBalanceMode::NeutralPicker,
+            sample: Some(WhiteBalanceSample {
+                x: 0.2,
+                y: 0.2,
+                width: 0.1,
+                height: 0.1,
+            }),
+        };
+        let picker = preview_stage_identity("same-source", &settings).unwrap();
+        assert_eq!(baseline.geometry, picker.geometry);
+        assert_ne!(baseline.input_white_balance, picker.input_white_balance);
+        settings.white_balance.mode = WhiteBalanceMode::Auto;
+        let auto = preview_stage_identity("same-source", &settings).unwrap();
+        settings.white_balance.sample = None;
+        assert_eq!(
+            auto,
+            preview_stage_identity("same-source", &settings).unwrap(),
+            "Auto ignores picker rectangles"
+        );
     }
 
     #[test]
