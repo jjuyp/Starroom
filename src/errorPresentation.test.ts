@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { presentError } from './errorPresentation'
 
 describe('typed production error presentation', () => {
+  it.each([
+    'InvalidWhiteBalanceSample',
+    'Preview failed: neutral-picker sample is missing or invalid',
+    'InvalidWhitePoint',
+    'chromatic adaptation requires a finite, positive, nonsingular measured white point',
+  ])('gives actionable neutral-white guidance for %s', (diagnostic) => {
+    expect(presentError(diagnostic, '預覽失敗')).toEqual({ category: 'Color', diagnostic,
+      message: '無法從這個區域取得有效白平衡。請選擇有亮度的中性灰或白色區域。' })
+  })
   it('clearly explains immutable-source export protection without hiding diagnostics', () => {
     const diagnostic = 'SourceOverwriteForbidden: C:/照片/原始.png'
     expect(presentError(diagnostic, 'Export failed')).toEqual({ category: 'Export',

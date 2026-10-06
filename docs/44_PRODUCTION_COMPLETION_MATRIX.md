@@ -81,6 +81,10 @@ private model weights. All original requirements remain active.
    the CPU/fused GPU operator protects low/moderate-chroma skin-like colors continuously, favors
    low chroma and preserves perceptual hue/lightness before output conversion. Real portrait and
    numerical/extreme/parity tests retain the one-code bound. This is not full WB/gamut acceptance.
+   **Measured-neutral repair:** Auto WB and visible Gray Picker now use the prepared mature
+   LittleCMS CAT, not a working-RGB diagonal. CMM/geometry/RAW/photographic CPU-GPU tests pass,
+   preserve neutral luminance/HDR and reject invalid samples. Temp/Tint offsets, editable RAW
+   WB, robust/outlier sampling and full quality/latency gates remain open.
 3. **ICC transfer identity:** `builtin_output_profile_bytes` uses gamma 2.2 for Display P3 and
    Rec.2020. Review exact named TRCs against authoritative definitions and bind output recipe
    versions/hashes to any correction; self round-trip of the same generated profile is insufficient.

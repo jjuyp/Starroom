@@ -13,8 +13,8 @@ use starroom_color::{
     rec2020_to_oklab, sample_color_band,
 };
 use starroom_color_management::{
-    ColorManagementError, InputProfileSource, LittleCmsProvider, OutputProfileSource,
-    RenderingIntent,
+    ColorManagementError, InputProfileSource, LittleCmsProvider, Matrix3 as ColorMatrix3,
+    OutputProfileSource, RenderingIntent, Xyz, measured_neutral_adaptation,
 };
 use starroom_detail::{
     DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise,
@@ -47,7 +47,7 @@ use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
 /// Reproducible render-policy identity. Change whenever authoritative color semantics change.
-pub const COLOR_POLICY_VERSION: &str = "starroom-color-v2-protected-chroma";
+pub const COLOR_POLICY_VERSION: &str = "starroom-color-v3-measured-neutral-cat";
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -476,36 +476,49 @@ enum SourceKind {
     Encoded,
 }
 
-fn neutral_scale(sum: [f32; 3], count: usize) -> Option<[f32; 3]> {
+fn measured_neutral(sum: [f32; 3], count: usize) -> Option<LinearRgb> {
     if count == 0 || !sum.into_iter().all(f32::is_finite) {
         return None;
     }
     let mean = sum.map(|channel| channel / count as f32);
-    // Green is the stable reference used by common RAW pipelines; refuse black/non-finite
-    // samples instead of inventing a white point.
+    // Refuse black/non-finite measurements rather than inventing a white point. The color
+    // provider determines chromatic adaptation; an RGB diagonal is not a working-space CAT.
     if mean.iter().any(|channel| *channel <= 1.0e-6) {
         return None;
     }
-    Some([mean[1] / mean[0], 1.0, mean[1] / mean[2]])
+    Some(LinearRgb {
+        r: mean[0],
+        g: mean[1],
+        b: mean[2],
+    })
 }
 
-fn apply_diagonal_white_balance(pixels: &mut [[f32; 3]], scale: [f32; 3]) {
-    for pixel in pixels {
-        pixel[0] *= scale[0];
-        pixel[1] *= scale[1];
-        pixel[2] *= scale[2];
-    }
+fn apply_white_balance_matrix(pixels: &mut [[f32; 3]], matrix: ColorMatrix3) {
+    pixels.par_iter_mut().for_each(|pixel| {
+        let adapted = matrix.multiply_vec(Xyz {
+            x: pixel[0],
+            y: pixel[1],
+            z: pixel[2],
+        });
+        *pixel = [adapted.x, adapted.y, adapted.z];
+    });
+}
+
+fn sampled_white_balance_matrix(sample: LinearRgb) -> Result<ColorMatrix3, PipelineError> {
+    measured_neutral_adaptation(sample).map_err(|_| PipelineError::InvalidWhiteBalanceSample)
 }
 
 pub trait AutoWhiteBalanceProvider {
-    fn estimate_scale(&self, pixels: &[[f32; 3]]) -> Option<[f32; 3]>;
+    /// Estimate a measured neutral in Linear Rec.2020 D65. The color-management stage, not
+    /// this provider, owns adaptation. Providers must never return encoded RGB channel gains.
+    fn estimate_neutral(&self, pixels: &[[f32; 3]]) -> Option<LinearRgb>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GrayWorldAutoWhiteBalance;
 
 impl AutoWhiteBalanceProvider for GrayWorldAutoWhiteBalance {
-    fn estimate_scale(&self, pixels: &[[f32; 3]]) -> Option<[f32; 3]> {
+    fn estimate_neutral(&self, pixels: &[[f32; 3]]) -> Option<LinearRgb> {
         // Deterministic grey-world provider: reject very dark and clipped samples so highlights
         // and empty black borders do not define the estimated neutral. It is an active provider,
         // not a fallback for Camera/As-Shot WB.
@@ -523,16 +536,16 @@ impl AutoWhiteBalanceProvider for GrayWorldAutoWhiteBalance {
                 count += 1;
             }
         }
-        neutral_scale(sum, count)
+        measured_neutral(sum, count)
     }
 }
 
-fn picker_white_balance_scale(
+fn picker_white_balance_neutral(
     pixels: &[[f32; 3]],
     width: u32,
     height: u32,
     sample: WhiteBalanceSample,
-) -> Option<[f32; 3]> {
+) -> Option<LinearRgb> {
     if !sample.validated() {
         return None;
     }
@@ -553,7 +566,7 @@ fn picker_white_balance_scale(
             }
         }
     }
-    neutral_scale(sum, count)
+    measured_neutral(sum, count)
 }
 
 fn apply_white_balance(
@@ -581,19 +594,19 @@ fn apply_white_balance(
             })
         }
         (_, WhiteBalanceMode::Auto) => {
-            let scale = GrayWorldAutoWhiteBalance
-                .estimate_scale(pixels)
+            let neutral = GrayWorldAutoWhiteBalance
+                .estimate_neutral(pixels)
                 .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
-            apply_diagonal_white_balance(pixels, scale);
+            apply_white_balance_matrix(pixels, sampled_white_balance_matrix(neutral)?);
             Ok(())
         }
         (_, WhiteBalanceMode::NeutralPicker) => {
             let sample = settings
                 .sample
                 .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
-            let scale = picker_white_balance_scale(pixels, width, height, sample)
+            let neutral = picker_white_balance_neutral(pixels, width, height, sample)
                 .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
-            apply_diagonal_white_balance(pixels, scale);
+            apply_white_balance_matrix(pixels, sampled_white_balance_matrix(neutral)?);
             Ok(())
         }
         (SourceKind::Raw, WhiteBalanceMode::Relative) => Err(PipelineError::WhiteBalanceSemantic {
@@ -1922,18 +1935,17 @@ fn apply_precreative_geometry_mapped(
                 .white_balance
                 .sample
                 .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
-            let scale = picker_white_balance_scale(
+            let neutral = picker_white_balance_neutral(
                 image.data.as_chunks::<3>().0,
                 image.width as u32,
                 image.height as u32,
                 sample,
             )
             .ok_or(PipelineError::InvalidWhiteBalanceSample)?;
-            for pixel in image.data.as_chunks_mut::<3>().0 {
-                for (value, scale) in pixel.iter_mut().zip(scale) {
-                    *value *= scale;
-                }
-            }
+            apply_white_balance_matrix(
+                image.data.as_chunks_mut::<3>().0,
+                sampled_white_balance_matrix(neutral)?,
+            );
             Ok::<_, PipelineError>(())
         })?;
     }
@@ -4255,6 +4267,56 @@ mod tests {
                     .all(f32::is_finite)
             );
         }
+    }
+
+    #[test]
+    fn measured_white_balance_uses_prepared_lcms_cat_for_all_pixels_before_creative_processing() {
+        let original = [[0.4, 0.3, 0.2], [0.7, 0.42, 0.25], [3.0, 1.0, 0.2]];
+        let mut pixels = original;
+        let settings = WhiteBalanceSettings {
+            mode: WhiteBalanceMode::NeutralPicker,
+            sample: Some(WhiteBalanceSample {
+                x: 0.0,
+                y: 0.0,
+                width: 0.3,
+                height: 1.0,
+            }),
+        };
+        apply_white_balance(&mut pixels, 3, 1, SourceKind::Encoded, settings).unwrap();
+        let matrix = measured_neutral_adaptation(LinearRgb {
+            r: 0.4,
+            g: 0.3,
+            b: 0.2,
+        })
+        .unwrap();
+        for (actual, input) in pixels.into_iter().zip(original) {
+            let expected = matrix.multiply_vec(Xyz {
+                x: input[0],
+                y: input[1],
+                z: input[2],
+            });
+            assert_eq!(actual, [expected.x, expected.y, expected.z]);
+        }
+        assert!((pixels[0][0] - pixels[0][1]).abs() < 1.0e-6);
+        assert!((pixels[0][1] - pixels[0][2]).abs() < 1.0e-6);
+        assert!(
+            pixels[2][0] > 1.0,
+            "scene-linear highlights must not be clipped by CAT"
+        );
+        let mut black = [[0.0; 3]];
+        assert!(matches!(
+            apply_white_balance(
+                &mut black,
+                1,
+                1,
+                SourceKind::Encoded,
+                WhiteBalanceSettings {
+                    mode: WhiteBalanceMode::Auto,
+                    sample: None
+                }
+            ),
+            Err(PipelineError::InvalidWhiteBalanceSample)
+        ));
     }
 
     #[test]

@@ -13,6 +13,7 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
   if (['masksourcemismatch', 'portraitsourcemismatch', 'portraitrestoremetadatamissing'].some((code) => value.includes(code))) return 'AI'
   if (value.includes('outofmemory') || value.includes('out of memory')) return 'Memory'
   if (value.includes('permission') || value.includes('access denied')) return 'Permission'
+  if (['whitebalance', 'white-balance', 'neutral-picker', 'chromatic adaptation', 'invalidwhitepoint'].some((term) => value.includes(term))) return 'Color'
   if (value.includes('raw') || value.includes('libraw') || value.includes('demosaic')) return 'RAW'
   if (value.includes('icc') || value.includes('profile') || value.includes('color')) return 'Color'
   if (value.includes('database') || value.includes('library') || value.includes('history')) return 'Library'
@@ -28,7 +29,9 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
 export function presentError(error: unknown, fallback: string): PresentedError {
   const diagnostic = error instanceof Error ? error.message : typeof error === 'string' ? error : fallback
   const category = categoryFor(diagnostic)
+  const invalidNeutral = /invalidwhitebalancesample|invalidwhitepoint|neutral-picker sample is missing or invalid|chromatic adaptation requires/i.test(diagnostic)
   const message = diagnostic.includes('SourceOverwriteForbidden') ? '匯出不能覆寫原始照片。請更換檔名或匯出資料夾。'
+    : invalidNeutral ? '無法從這個區域取得有效白平衡。請選擇有亮度的中性灰或白色區域。'
     : diagnostic.includes('MaskSourceMismatch') ? '這個 AI 遮罩屬於另一張照片，請在目前照片重新產生遮罩。'
     : diagnostic.includes('PortraitSourceMismatch') ? '這個人像或肌膚選取屬於另一張照片，請重新偵測並選取人臉。'
       : diagnostic.includes('PortraitRestoreMetadataMissing') ? '這個舊人像選取缺少還原資料，請重新偵測並選取人臉。'

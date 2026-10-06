@@ -22,6 +22,9 @@ evidence live in `docs/44_PRODUCTION_COMPLETION_MATRIX.md`; no Final claim from 
 - [x] Correct the Native saturation -100 endpoint and add continuous perceptual skin/high-chroma
   protection to Vibrance in CPU and fused GPU; real licensed portrait, identity/extreme and
   shared Preview/Export regressions pass. WB/CAT, destination gamut and final quality gates remain open.
+- [x] Replace Auto WB / Gray Picker working-RGB diagonal gains with a prepared LittleCMS
+  chromatic-adaptation matrix; verify neutral luminance, HDR, error handling, visible geometry,
+  real photographic GPU parity and RAW/shared graph. Temperature/Tint and editable RAW gains remain open.
 - [ ] Complete GPU/presentation/cache/tiles/spatial work and real end-to-end <100ms controls.
 - [ ] Complete frozen AI/history gestures/bulk workflows, memory/100MP/streaming, error/legacy and
   pristine offline Windows gates; expand real perceptual Golden and benchmark acceptance.

@@ -3,8 +3,8 @@
 //! so the render graph can keep file, working and display transforms explicit.
 
 use lcms2::{
-    CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent, PixelFormat, Profile,
-    ToneCurve, Transform,
+    CIEXYZ, CIEXYZExt, CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent,
+    PixelFormat, Profile, ToneCurve, Transform,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -145,6 +145,92 @@ pub fn rec2020_linear_to_xyz_d65(value: LinearRgb) -> Xyz {
     })
 }
 
+/// Build a scene-linear Rec.2020 chromatic-adaptation matrix with the already linked LittleCMS
+/// provider. White points are chromaticities (Y is normalized); image luminance is not clipped.
+/// Three basis vectors are adapted once, never one FFI call per image pixel.
+pub fn chromatic_adaptation_rec2020(
+    source_white: Xyz,
+    destination_white: Xyz,
+) -> Result<Matrix3, ColorManagementError> {
+    let normalize = |white: Xyz| -> Result<CIEXYZ, ColorManagementError> {
+        if ![white.x, white.y, white.z]
+            .into_iter()
+            .all(|v| v.is_finite() && v > 1.0e-8)
+        {
+            return Err(ColorManagementError::InvalidWhitePoint);
+        }
+        let normalized = CIEXYZ {
+            X: f64::from(white.x) / f64::from(white.y),
+            Y: 1.0,
+            Z: f64::from(white.z) / f64::from(white.y),
+        };
+        if ![normalized.X, normalized.Z]
+            .into_iter()
+            .all(|v| v.is_finite() && v < 1.0e6)
+        {
+            return Err(ColorManagementError::InvalidWhitePoint);
+        }
+        Ok(normalized)
+    };
+    let source = normalize(source_white)?;
+    let destination = normalize(destination_white)?;
+    if source == destination {
+        return Ok(Matrix3([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]));
+    }
+    let mut xyz_matrix = [[0.0; 3]; 3];
+    let basis = [
+        CIEXYZ {
+            X: 1.0,
+            Y: 0.0,
+            Z: 0.0,
+        },
+        CIEXYZ {
+            X: 0.0,
+            Y: 1.0,
+            Z: 0.0,
+        },
+        CIEXYZ {
+            X: 0.0,
+            Y: 0.0,
+            Z: 1.0,
+        },
+    ];
+    for (column, value) in basis.into_iter().enumerate() {
+        let adapted = value
+            .adapt_to_illuminant(&source, &destination)
+            .ok_or(ColorManagementError::InvalidWhitePoint)?;
+        for (row, value) in [adapted.X, adapted.Y, adapted.Z].into_iter().enumerate() {
+            if !value.is_finite() || value.abs() > f64::from(f32::MAX) {
+                return Err(ColorManagementError::InvalidWhitePoint);
+            }
+            xyz_matrix[row][column] = value as f32;
+        }
+    }
+    Ok(XYZ_TO_REC2020_D65
+        .multiply(Matrix3(xyz_matrix))
+        .multiply(REC2020_TO_XYZ_D65))
+}
+
+/// A measured neutral in working RGB defines an illuminant; adapt it to the exact D65 white
+/// represented by the working matrices, preserving the sample's luminance instead of using
+/// a green-channel anchor. Invalid/black measurements remain explicit errors.
+pub fn measured_neutral_adaptation(sample: LinearRgb) -> Result<Matrix3, ColorManagementError> {
+    if ![sample.r, sample.g, sample.b]
+        .into_iter()
+        .all(|v| v.is_finite() && v > 1.0e-8)
+    {
+        return Err(ColorManagementError::InvalidWhitePoint);
+    }
+    chromatic_adaptation_rec2020(
+        rec2020_linear_to_xyz_d65(sample),
+        rec2020_linear_to_xyz_d65(LinearRgb {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        }),
+    )
+}
+
 fn srgb_eotf(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92
@@ -249,6 +335,8 @@ impl std::fmt::Display for ProfileRole {
 
 #[derive(Debug, Error)]
 pub enum ColorManagementError {
+    #[error("chromatic adaptation requires a finite, positive, nonsingular measured white point")]
+    InvalidWhitePoint,
     #[error("invalid {role} ICC profile: {source}")]
     InvalidProfile {
         role: ProfileRole,
@@ -680,6 +768,140 @@ pub enum WorkingSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepared_lcms_adaptation_agrees_with_bradford_reference_and_is_reversible() {
+        let forward = chromatic_adaptation_rec2020(D50, D65).unwrap();
+        let inverse = chromatic_adaptation_rec2020(D65, D50).unwrap();
+        for input in [
+            LinearRgb {
+                r: 0.18,
+                g: 0.18,
+                b: 0.18,
+            },
+            LinearRgb {
+                r: 0.8,
+                g: 0.35,
+                b: 0.2,
+            },
+            LinearRgb {
+                r: -0.1,
+                g: 0.2,
+                b: 0.9,
+            },
+            LinearRgb {
+                r: 3.0,
+                g: 1.5,
+                b: 8.0,
+            },
+        ] {
+            let vector = Xyz {
+                x: input.r,
+                y: input.g,
+                z: input.b,
+            };
+            let actual = forward.multiply_vec(vector);
+            let expected =
+                xyz_d65_to_rec2020_linear(adapt_xyz(rec2020_linear_to_xyz_d65(input), D50, D65));
+            for (a, b) in [actual.x, actual.y, actual.z]
+                .into_iter()
+                .zip([expected.r, expected.g, expected.b])
+            {
+                assert!((a - b).abs() < 2.0e-5, "LittleCMS vs Bradford: {a} {b}");
+            }
+            let restored = inverse.multiply_vec(actual);
+            for (a, b) in [restored.x, restored.y, restored.z]
+                .into_iter()
+                .zip([input.r, input.g, input.b])
+            {
+                assert!((a - b).abs() < 2.0e-5);
+            }
+        }
+        assert_eq!(
+            chromatic_adaptation_rec2020(D65, D65).unwrap(),
+            Matrix3([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        );
+    }
+
+    #[test]
+    fn measured_neutral_cat_preserves_sample_luminance_without_rgb_diagonal_or_clamp() {
+        for sample in [
+            LinearRgb {
+                r: 0.3,
+                g: 0.2,
+                b: 0.1,
+            },
+            LinearRgb {
+                r: 0.08,
+                g: 0.14,
+                b: 0.25,
+            },
+            LinearRgb {
+                r: 3.0,
+                g: 2.0,
+                b: 1.0,
+            },
+        ] {
+            let matrix = measured_neutral_adaptation(sample).unwrap();
+            let result = matrix.multiply_vec(Xyz {
+                x: sample.r,
+                y: sample.g,
+                z: sample.b,
+            });
+            let luminance = rec2020_linear_to_xyz_d65(sample).y;
+            for value in [result.x, result.y, result.z] {
+                assert!((value - luminance).abs() < 2.0e-6, "{sample:?} {result:?}");
+            }
+            assert!(matrix.0.iter().flatten().all(|v| v.is_finite()));
+            assert!(
+                matrix.0[0][1].abs() + matrix.0[0][2].abs() > 1.0e-3,
+                "working RGB must use a full adaptation matrix, not a diagonal gain"
+            );
+        }
+    }
+
+    #[test]
+    fn adaptation_rejects_invalid_white_points_without_invented_fallback() {
+        for white in [
+            Xyz {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Xyz {
+                x: f32::NAN,
+                y: 1.0,
+                z: 1.0,
+            },
+            Xyz {
+                x: 1.0,
+                y: f32::INFINITY,
+                z: 1.0,
+            },
+            Xyz {
+                x: -1.0,
+                y: 1.0,
+                z: 1.0,
+            },
+        ] {
+            assert!(matches!(
+                chromatic_adaptation_rec2020(white, D65),
+                Err(ColorManagementError::InvalidWhitePoint)
+            ));
+            assert!(matches!(
+                chromatic_adaptation_rec2020(D65, white),
+                Err(ColorManagementError::InvalidWhitePoint)
+            ));
+        }
+        assert!(
+            measured_neutral_adaptation(LinearRgb {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0
+            })
+            .is_err()
+        );
+    }
 
     #[test]
     fn display_p3_trc_matches_independent_standard_at_dark_to_white_samples() {

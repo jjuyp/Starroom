@@ -1,5 +1,43 @@
 # Implementation Notes
 
+## 2026-10-06 measured-neutral LittleCMS adaptation
+
+Foundation decision: integrate the already pinned LittleCMS `cmsAdaptToIlluminant` through the
+safe `CIEXYZExt` provider; do not invent another CAT or use RGB diagonal gains as adaptation.
+Auto WB estimates a measured Linear Rec.2020 neutral. The Gray Picker still samples the actually
+visible post-lens/post-geometry rectangle. Both prepare one full working-space adaptation matrix
+from three XYZ basis vectors, normalize white-point chromaticity and preserve measured neutral
+luminance. Per-pixel processing uses the prepared float matrix, no per-pixel FFI or 0-1 clamp.
+Black/nonfinite/invalid white points remain typed errors with actionable Traditional Chinese UX.
+Camera/As-Shot modes and their RAW-versus-encoded rejection semantics are unchanged.
+
+Seventeen CMM tests pass, including three new tests comparing the prepared LCMS adapter with
+the independent existing Bradford reference, reversible D50/D65, HDR/negative intermediates,
+true measured-neutral luminance and invalid white points. All 67 pipeline unit tests and three
+real RAW shared-graph/visible-picker tests pass. A new real portrait/mixed-light/neon integration
+test verifies repeatability, CPU Preview/Export equality, unchanged sources and available real
+GPU at the unchanged one-code bound. Recipe color policy advances to v3. No new dependency,
+model, licensed material or upstream revision is introduced.
+
+`color_latency_probe` measures the production Native pipeline on the existing 512px NASA portrait
+using RTX 3050 Laptop / DX12. Five warmed samples: Saturation median/p95 34.720/36.701ms, Vibrance
+33.380/34.721ms, Auto WB 32.735/35.015ms, Picker 35.051/35.542ms; all max CPU/GPU differences are
+one RGB8 code. Saturation/Vibrance/Picker change parameters each sample; Auto WB repeats its fixed
+intent and is labeled accordingly. These are engine-only measurements, not 24MP pointer-to-paint,
+JPEG/WebView presentation, all-controls latency or new Final performance acceptance. Prior
+512px before-values were not measured; do not claim a before/after speedup from these numbers.
+
+Remaining WB work is explicit: Temperature/Tint still use the previous perceptual offsets;
+editable RAW camera gains, robust picker/outlier qualification, physical illuminant/camera-profile
+tests and full photographic quality metrics are not closed by this measured-neutral group.
+
+The batched protected-chroma/measured-neutral local Full Gate passed: 353 ordinary Rust tests,
+four opt-in release/private-model tests separately counted, all doc-test runners, workspace
+warning-denied Clippy, format, 189 frontend tests / 27 files, lint, TypeScript, production build,
+JSON/schema and immutable Golden/RAW validation. Reports are the local Full Rust run
+`test-timing-1791249198022.json` and Full web run `test-timing-1791248988177.json` in the ignored
+reports directory. This is group acceptance, not the new Phase 30 release gate or an installer claim.
+
 ## 2026-10-06 protected Native chroma controls
 
 The old additive saturation/vibrance scale retained 15% chroma at Saturation -100, or more with
