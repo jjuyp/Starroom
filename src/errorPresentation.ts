@@ -12,6 +12,7 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
   if (value.includes('sourceoverwriteforbidden')) return 'Export'
   if (['masksourcemismatch', 'portraitsourcemismatch', 'portraitrestoremetadatamissing'].some((code) => value.includes(code))) return 'AI'
   if (value.includes('outofmemory') || value.includes('out of memory')
+    || value.includes('memorylimit') || value.includes('memory limit exceeded')
     || value.includes('cropallocation') || value.includes('crop allocation exceeded available memory')) return 'Memory'
   if (value.includes('permission') || value.includes('access denied')) return 'Permission'
   if (value.includes('curvepreview') || value.includes('native_curve_preview') || value.includes('littlecms')) return 'Color'

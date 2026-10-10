@@ -43,6 +43,11 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Typed RAW resource-limit handling uses the same pinned LibRaw public
+`rawparams.max_raw_memory_mb` and error constants. The Starroom C ABI/Rust adapter exposes
+the mature sensor policy; no LibRaw source, allocator/demosaic algorithm, upstream revision
+or license changes. No default resolution, pixel math or embedded-JPEG substitution is added.
+
 RAW/encoded region-copy ownership changes reuse existing Native row extraction and metadata;
 no image algorithm is ported or replaced. The authored DNG test generator uses the existing
 tempfile 3.27.0 exclusive creation/TempPath cleanup provider (already used by Export) rather

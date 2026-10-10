@@ -1,5 +1,27 @@
 # Implementation Notes
 
+## 2026-10-11 — Real LibRaw resource-limit errors
+
+The pinned upstream `LIBRAW_UNSUFFICIENT_MEMORY` (-100007) and `LIBRAW_TOO_BIG` (-100012)
+previously became generic Decode errors. The common adapter now retains their codes/details
+as typed OutOfMemory / MemoryLimit states. Its explicit sensor-budget entry point passes
+the existing LibRaw `rawparams.max_raw_memory_mb` before open/unpack; zero preserves upstream
+default. Default Preview/Export remain on the same provider/options with no pixel change.
+
+An actual immutable CC0 Nikon D1 sensor source under 1MB policy returns MemoryLimit -100012;
+subsequent normal decode succeeds at full sensor resolution, not a smaller/embedded-JPEG
+fallback. Mapping tests retain diagnostics and data-error classification. The frontend handles
+the real memory-limit wording as Memory ahead of RAW wrapping. This validates actual mature
+decoder resource policy, not a mocked success or a deliberate system-OOM crash. It does not
+bound file reads, Rust float buffers, GPU/model memory or whole-application peak; those original
+memory/100MP/typed-error/Final gates remain required. No vendored source/pin/license change.
+
+RAW milestone passed (`test-timing-1791655984674.json`): raw 26 unit/5 chart/3 source tests,
+actual imageio sensor/crop regressions, shared graph and photographic/GPU regressions, format,
+warning-denied workspace Clippy, lint and actual Unicode-path build. Error presentation has
+23 passing cases including real LibRaw limit wording. Prior Full results are not attributed
+to this changed ABI HEAD; complete product/installed/100MP acceptance remains unproven.
+
 ## 2026-10-11 — RAW region copy / buffer safety / fixture ownership
 
 Actual RAW crop first copied selected rows, then cloned the entire source DecodedRawImage

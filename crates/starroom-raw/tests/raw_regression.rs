@@ -34,6 +34,25 @@ fn manifest() -> Manifest {
 }
 
 #[test]
+fn actual_libraw_sensor_memory_limit_is_typed_and_never_downgrades_source() {
+    let path = raw_root().join("sources/nikon-d1.nef");
+    let original = fs::read(&path).unwrap();
+    let error = starroom_raw::decode_raw_with_sensor_memory_limit(&path, 1).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            starroom_raw::RawDecodeError::MemoryLimit { code: -100012, .. }
+        ),
+        "{error}"
+    );
+    assert!(error.to_string().contains("memory limit exceeded"));
+    assert_eq!(original, fs::read(&path).unwrap());
+    let decoded = decode_raw(&path).unwrap();
+    assert!(!decoded.preview_half_size);
+    assert_eq!(decoded.metadata.develop_source, RawDevelopSource::Sensor);
+}
+
+#[test]
 fn all_public_raw_fixtures_decode_from_sensor_through_libraw() {
     for fixture in manifest().fixtures {
         let path = raw_root().join(&fixture.path);

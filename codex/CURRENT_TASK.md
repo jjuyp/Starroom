@@ -2,6 +2,14 @@
 
 ## Current Milestone
 
+Current worktree adds real LibRaw sensor memory-limit entry point and typed upstream OOM/
+resource-limit errors through the same existing decoder; default calls retain upstream policy.
+An actual Nikon D1 1MB-limit test returns -100012, preserves bytes and then decodes normally
+without half-size/thumbnail substitution. Memory UX test passes. Scope is LibRaw sensor budget,
+not all Rust/codec/application allocations. RAW milestone passed 1791655984674, including
+all source/shared/GPU/format/workspace-Clippy/lint/build gates; Memory UX has 23 tests.
+Current 6c5b426 Full CI 38073649004 remains running; preserve it before the next push.
+
 Current worktree removes demonstrated full-RGB RAW clone from region extraction; exact real
 DNG row/profile/metadata tests and MSVC release real RAF benchmark pass (49.2084ms -> 2.5640ms
 median; 195,386,112-byte full clone removed). Doc 49 scopes actual private memory/latency values.

@@ -80,13 +80,16 @@ static int sr_fail(int code, const char *stage, char *error, size_t capacity) {
 }
 
 int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
-                            int half_size, SrRawResult *result, char *error,
+                            int half_size, uint32_t max_raw_memory_mb, SrRawResult *result, char *error,
                             size_t error_capacity) {
   if (!bytes || byte_length == 0 || !result) {
     return sr_fail(LIBRAW_IO_ERROR, "input", error, error_capacity);
   }
   std::memset(result, 0, sizeof(*result));
   LibRaw processor;
+  if (max_raw_memory_mb != 0) {
+    processor.imgdata.rawparams.max_raw_memory_mb = max_raw_memory_mb;
+  }
   int status = processor.open_buffer(const_cast<uint8_t *>(bytes), byte_length);
   if (status != LIBRAW_SUCCESS) {
     return sr_fail(status, "open", error, error_capacity);

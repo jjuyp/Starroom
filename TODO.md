@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Validate real LibRaw OOM/resource-limit typed errors and sensor-budget entry point
+  with an actual source, unchanged bytes/full-resolution recovery and Memory UX; complete
+  whole-application/file/Rust/GPU/model memory gates separately without claiming sensor policy covers them.
+
 - [ ] Validate RAW region-only float copy without full-frame clone, checked/fallible crop
   boundaries and safe authored temp fixture ownership; run shared/parity gates and record
   actual before/after measurements. Do not infer full 100MP/UI latency from this component.

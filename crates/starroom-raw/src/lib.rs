@@ -32,6 +32,10 @@ pub enum RawDecodeError {
     InvalidData { code: i32, detail: String },
     #[error("RAW decode failed: {detail} (LibRaw {code})")]
     Decode { code: i32, detail: String },
+    #[error("RAW decoder out of memory: {detail} (LibRaw {code})")]
+    OutOfMemory { code: i32, detail: String },
+    #[error("RAW decoder memory limit exceeded: {detail} (LibRaw {code})")]
+    MemoryLimit { code: i32, detail: String },
     #[error("RAW decoder returned an invalid RGB buffer")]
     InvalidRgbBuffer,
     #[error("RAW decoder returned invalid white balance headroom scaling")]
@@ -220,6 +224,7 @@ unsafe extern "C" {
         bytes: *const u8,
         byte_length: usize,
         half_size: i32,
+        max_raw_memory_mb: u32,
         result: *mut BridgeResult,
         error: *mut c_char,
         error_capacity: usize,
@@ -263,6 +268,8 @@ fn camera_neutral(multipliers: [f32; 4]) -> [f32; 4] {
 
 fn decode_error(code: i32, detail: String) -> RawDecodeError {
     match code {
+        -100007 => RawDecodeError::OutOfMemory { code, detail },
+        -100012 => RawDecodeError::MemoryLimit { code, detail },
         -2 | -3 => RawDecodeError::Unsupported { code, detail },
         -100008 | -100009 | -100011 => RawDecodeError::InvalidData { code, detail },
         _ => RawDecodeError::Decode { code, detail },
@@ -306,6 +313,23 @@ fn decode_inner(
     path: impl AsRef<Path>,
     half_size: bool,
 ) -> Result<DecodedRawImage, RawDecodeError> {
+    decode_inner_with_memory_limit(path, half_size, 0)
+}
+
+/// Applies LibRaw's sensor-allocation policy only, not a whole-process/Rust buffer budget.
+/// Zero retains the pinned upstream default. No embedded JPEG or smaller decode is substituted.
+pub fn decode_raw_with_sensor_memory_limit(
+    path: impl AsRef<Path>,
+    max_raw_memory_mb: u32,
+) -> Result<DecodedRawImage, RawDecodeError> {
+    decode_inner_with_memory_limit(path, false, max_raw_memory_mb)
+}
+
+fn decode_inner_with_memory_limit(
+    path: impl AsRef<Path>,
+    half_size: bool,
+    max_raw_memory_mb: u32,
+) -> Result<DecodedRawImage, RawDecodeError> {
     let path = path.as_ref();
     let format = RawFormat::from_path(path)?;
     let read_start = std::time::Instant::now();
@@ -319,6 +343,7 @@ fn decode_inner(
             bytes.as_ptr(),
             bytes.len(),
             i32::from(half_size),
+            max_raw_memory_mb,
             &mut bridge,
             error.as_mut_ptr(),
             error.len(),
@@ -487,6 +512,21 @@ mod tests {
     fn camera_neutral_is_reciprocal_and_green_normalized() {
         let neutral = camera_neutral([2.0, 1.0, 0.5, 1.0]);
         assert_eq!(neutral, [0.5, 1.0, 2.0, 1.0]);
+    }
+
+    #[test]
+    fn actual_libraw_memory_codes_keep_typed_classification_and_diagnostics() {
+        let detail = "sensor unpack: insufficient memory".to_owned();
+        assert!(
+            matches!(decode_error(-100007,detail.clone()), RawDecodeError::OutOfMemory {code:-100007, detail: actual} if actual == detail)
+        );
+        assert!(
+            matches!(decode_error(-100012,detail.clone()), RawDecodeError::MemoryLimit {code:-100012, detail: actual} if actual == detail)
+        );
+        assert!(matches!(
+            decode_error(-100008, detail),
+            RawDecodeError::InvalidData { code: -100008, .. }
+        ));
     }
 
     #[test]
