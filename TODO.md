@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Validate RAW region-only float copy without full-frame clone, checked/fallible crop
+  boundaries and safe authored temp fixture ownership; run shared/parity gates and record
+  actual before/after measurements. Do not infer full 100MP/UI latency from this component.
+
 - [ ] Wire mature LittleCMS CIEDE2000 plus XYZ RMSE/Y-error into Native quality gates;
   preserve original strict chart thresholds and extend full photographic/18-category
   metrics without treating matrix or identity parity alone as full image-quality acceptance.
@@ -10,9 +14,10 @@
   transform; repair selected-IFD presence-bit promotion, retain CDDL notices and regression
   all RAW/shared paths. Full physical camera WB/Forward/signature/dual-white remain required.
 
-- [ ] Complete ForwardMatrix reference-neutral/CC/AB processing in the actual baked-WB
+- [x] Complete ForwardMatrix reference-neutral/CC/AB processing in the actual baked-WB
   boundary, independent dual FM/CC interpolation, explicit invalid/mixed states and real
-  sensor/chart/shared regressions. Finish current acceptance; all full-scope gates remain open.
+  sensor/chart/shared regressions; Full CI 38070520079 passes. Signatures/iterative-white/n>3/
+  physical WB and all full-scope gates remain open.
 
 - [x] Fix demonstrated dual DNG CC/CM interpolation cross-term: interpolate independently,
   multiply then invert; test noncommuting/singular cases and strict chart, advance resolver

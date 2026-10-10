@@ -2,6 +2,17 @@
 
 ## Current Milestone
 
+Current worktree removes demonstrated full-RGB RAW clone from region extraction; exact real
+DNG row/profile/metadata tests and MSVC release real RAF benchmark pass (49.2084ms -> 2.5640ms
+median; 195,386,112-byte full clone removed). Doc 49 scopes actual private memory/latency values.
+Checked buffers/fallible reservation are typed. Four parallel tests exposed timestamp fixture
+collision; existing tempfile now owns exclusive creation/cleanup. Shared milestone passed
+1791654096114; Full local Rust/Web passed 1791654662784 / 1791654334479, with crop memory UX.
+All original full-scope color/alpha/WB/tiles/100MP/end-to-end/Windows gates remain open.
+
+Local `1696ba7` saves mature LittleCMS metric wiring, doc 48 and local colour milestone result;
+it will be pushed with this crop batch; 360984e Full CI 38070520079 is successful.
+
 Current quality worktree adds real LittleCMS Lab/CIEDE2000 measurements and f64 XYZ RMSE/Y
 error, finite typed boundaries and actual five-profile/24-patch gates. Three mature metric
 boundary tests and all original chart tests pass without removing component thresholds.
@@ -11,8 +22,8 @@ This is reference-white-relative colorimetric evidence, not complete photographi
 IQ, absolute HDR appearance, physical RAW WB or final installed/latency qualification.
 
 `360984e58af1b1fd21b65d3730896b4806bc7421` ForwardMatrix + `157489b` owned Windows alias batch
-was pushed; Full CI 38070520079 remains running, secondary 38070524587 succeeded. Do not
-cancel that immutable-SHA Full run with another push; finish independent local quality work.
+was pushed; Full CI 38070520079 and secondary 38070524587 succeeded. Continue the original
+remaining scope; these component acceptances do not qualify the complete product.
 
 Current ForwardMatrix worktree corrects the demonstrated CC/ReferenceNeutral failure
 (.9213862 versus expected 4.607522 in a matrix coefficient). Resolver v6 handles the actual
@@ -20,7 +31,7 @@ baked-WB boundary; independent dual FM/CC interpolation and explicit malformed/m
 are covered. Actual DNG full/half sensor and 24-patch/shared Preview/Export tests pass; final
 Full local Rust (412 ordinary / 4 opt-in) and Web (202 tests) pass, reports 1791651991985 /
 1791651722084. Remote acceptance
-is pending for this worktree. Signatures/iterative-white/n>3/physical RAW WB,
+passed in Full CI 38070520079. Signatures/iterative-white/n>3/physical RAW WB,
 GPU residency/latency/alpha/gamut/monitor and the full original release objective remain active.
 
 `7caca53c29c2d639bfd4dec963a0d3898183fbad` AnalogBalance repair Full CI 38042422458 succeeded.

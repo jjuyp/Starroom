@@ -2,6 +2,41 @@
 mod fixture;
 
 #[test]
+fn actual_raw_region_copies_only_selected_samples_and_retains_profile_metadata() {
+    use starroom_imageio::{DecodedSourceImage, ImageIoError};
+    let fixture = fixture::controlled_fixture().unwrap();
+    let source = DecodedSourceImage::Raw(Box::new(starroom_raw::decode_raw(&fixture.0).unwrap()));
+    let DecodedSourceImage::Raw(original) = &source else {
+        unreachable!()
+    };
+    let original_pointer = original.rgb.as_ptr();
+    for [x, y, width, height] in [[1, 3, 7, 5], [63, 63, 1, 1], [0, 0, 64, 64]] {
+        let DecodedSourceImage::Raw(cropped) = source.crop(x, y, width, height).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!((cropped.width, cropped.height), (width, height));
+        assert_eq!(cropped.metadata, original.metadata);
+        assert_eq!(cropped.timings, original.timings);
+        assert_eq!(cropped.preview_half_size, original.preview_half_size);
+        for row in 0..height {
+            let start = (((y + row) * original.width + x) * 3) as usize;
+            let destination = (row * width * 3) as usize;
+            assert_eq!(
+                &cropped.rgb[destination..destination + width as usize * 3],
+                &original.rgb[start..start + width as usize * 3]
+            );
+        }
+    }
+    assert_eq!(original.rgb.as_ptr(), original_pointer);
+    let mut invalid = (*original).clone();
+    invalid.rgb.pop();
+    assert!(matches!(
+        DecodedSourceImage::Raw(invalid).crop(0, 0, 1, 1),
+        Err(ImageIoError::InvalidBufferLength)
+    ));
+}
+
+#[test]
 fn actual_libraw_forward_calibration_uses_reference_neutral_before_working_conversion() {
     use tiff::encoder::Rational;
     let source = fixture::controlled_fixture_with_dng_profile(

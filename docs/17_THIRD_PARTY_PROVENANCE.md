@@ -43,6 +43,13 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+RAW/encoded region-copy ownership changes reuse existing Native row extraction and metadata;
+no image algorithm is ported or replaced. The authored DNG test generator uses the existing
+tempfile 3.27.0 exclusive creation/TempPath cleanup provider (already used by Export) rather
+than timestamp-only names. Added references are test-only in imageio/pipeline; no new package,
+version, production dependency or license is introduced. Generator hash updates are in the RAW
+manifest; fixture pixel/tag data and covered LibRaw sources are unchanged.
+
 Native quality measurement uses the existing lcms2 6.1.1 / LittleCMS 2.19 safe public
 `CIEXYZExt::adapt_to_illuminant`, `to_lab` and `CIELabExt::cie2000_delta_e` APIs.
 Starroom owns finite validation, f64 XYZ RMSE/Y-error accumulation and test/report wiring;

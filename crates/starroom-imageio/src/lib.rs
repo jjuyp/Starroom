@@ -23,6 +23,8 @@ pub enum ImageIoError {
     InvalidBufferLength,
     #[error("source crop is empty or outside decoded image bounds")]
     InvalidCrop,
+    #[error("image crop allocation exceeded available memory ({samples} float samples)")]
+    CropAllocation { samples: usize },
     #[error("TIFF metadata encoder failed: {0}")]
     TiffMetadata(String),
     #[error("container metadata encoder failed: {0}")]
@@ -68,11 +70,12 @@ impl DecodedSourceImage {
         }
         match self {
             Self::Rendered(image) => {
-                let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-                for row in y..y + height {
-                    let start = (row as usize * image.width as usize + x as usize) * 4;
-                    rgba.extend_from_slice(&image.rgba[start..start + width as usize * 4]);
-                }
+                let rgba = crop_samples(
+                    &image.rgba,
+                    [image.width, image.height],
+                    [x, y, width, height],
+                    4,
+                )?;
                 Ok(Self::Rendered(DecodedRenderedImage {
                     width,
                     height,
@@ -83,19 +86,53 @@ impl DecodedSourceImage {
                 }))
             }
             Self::Raw(image) => {
-                let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-                for row in y..y + height {
-                    let start = (row as usize * image.width as usize + x as usize) * 3;
-                    rgb.extend_from_slice(&image.rgb[start..start + width as usize * 3]);
-                }
-                let mut cropped = (**image).clone();
-                cropped.width = width;
-                cropped.height = height;
-                cropped.rgb = rgb;
+                let rgb = crop_samples(
+                    &image.rgb,
+                    [image.width, image.height],
+                    [x, y, width, height],
+                    3,
+                )?;
+                // Do not clone the entire sensor-derived float frame just to replace its RGB Vec.
+                let cropped = DecodedRawImage {
+                    width,
+                    height,
+                    rgb,
+                    metadata: image.metadata.clone(),
+                    timings: image.timings,
+                    preview_half_size: image.preview_half_size,
+                };
                 Ok(Self::Raw(Box::new(cropped)))
             }
         }
     }
+}
+
+fn crop_samples(
+    source: &[f32],
+    dimensions: [u32; 2],
+    region: [u32; 4],
+    channels: usize,
+) -> Result<Vec<f32>, ImageIoError> {
+    let [source_width, source_height] = dimensions;
+    let [x, y, width, height] = region;
+    let sample_count = |w: u32, h: u32| {
+        (w as usize)
+            .checked_mul(h as usize)
+            .and_then(|n| n.checked_mul(channels))
+    };
+    if sample_count(source_width, source_height) != Some(source.len()) {
+        return Err(ImageIoError::InvalidBufferLength);
+    }
+    let samples = sample_count(width, height).ok_or(ImageIoError::InvalidBufferLength)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(samples)
+        .map_err(|_| ImageIoError::CropAllocation { samples })?;
+    for row in y..y + height {
+        let start = (row as usize * source_width as usize + x as usize) * channels;
+        output.extend_from_slice(&source[start..start + width as usize * channels]);
+    }
+    Ok(output)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

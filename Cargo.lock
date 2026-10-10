@@ -3871,6 +3871,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starroom-raw",
+ "tempfile",
  "thiserror 2.0.20",
  "tiff",
 ]
@@ -3931,6 +3932,7 @@ dependencies = [
  "starroom-project",
  "starroom-raw",
  "starroom-render",
+ "tempfile",
  "thiserror 2.0.20",
  "tiff",
 ]

@@ -2,22 +2,14 @@
 //! All samples are authored synthetic sensor data, not a camera quality/photographic fixture.
 use std::{
     error::Error,
-    fs,
     io::{Cursor, Write},
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tiff::{
     encoder::{Rational, SRational, TiffEncoder, colortype::Gray16},
     tags::Tag,
 };
 
-pub struct OwnedFixture(pub PathBuf);
-impl Drop for OwnedFixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
+pub struct OwnedFixture(pub tempfile::TempPath);
 
 pub fn controlled_fixture() -> Result<OwnedFixture, Box<dyn Error>> {
     controlled_fixture_with_dng_profile(None, false)
@@ -81,15 +73,11 @@ pub fn controlled_fixture_with_dng_profile(
         let sensor: Vec<_> = (0..4096).map(|index| levels[(index % 64) / 8]).collect();
         image.write_data(&sensor)?;
     }
-    let path = std::env::temp_dir().join(format!(
-        "starroom-owned-headroom-{}-{}.dng",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-    ));
-    let mut file = fs::File::create_new(&path)?;
-    let fixture = OwnedFixture(path);
+    let mut file = tempfile::Builder::new()
+        .prefix("starroom-owned-headroom-")
+        .suffix(".dng")
+        .tempfile()?;
     file.write_all(bytes.get_ref())?;
-    file.sync_all()?;
-    drop(file);
-    Ok(fixture)
+    file.as_file().sync_all()?;
+    Ok(OwnedFixture(file.into_temp_path()))
 }

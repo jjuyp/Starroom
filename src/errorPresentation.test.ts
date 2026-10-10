@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { presentError } from './errorPresentation'
 
 describe('typed production error presentation', () => {
+  it.each(['CropAllocation: 786432 float samples',
+    'RAW preview failed: image crop allocation exceeded available memory (786432 float samples)'])('classifies crop memory failure before RAW wrapping without losing detail: %s', (diagnostic) => {
+    expect(presentError(diagnostic, '預覽失敗')).toEqual({ category: 'Memory', diagnostic,
+      message: 'Starroom 沒有足夠的記憶體執行這項操作。' })
+  })
   it.each(['InvalidCurvePreview: malformed Native sample result', 'CurvePreviewUnavailable: Native runtime is required',
     'Command native_curve_preview not found'])('gives explicit curve guidance for %s', (diagnostic) => {
     expect(presentError(diagnostic, '曲線顯示失敗')).toEqual({ category: 'Color', diagnostic,

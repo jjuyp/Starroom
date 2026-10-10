@@ -1,5 +1,31 @@
 # Implementation Notes
 
+## 2026-10-11 — RAW region copy / buffer safety / fixture ownership
+
+Actual RAW crop first copied selected rows, then cloned the entire source DecodedRawImage
+before replacing its RGB Vec. The production boundary now constructs a region image from
+selected samples plus metadata/timing/half-size flags. Checked sample counts reject malformed
+buffers, and fallible reservation returns a typed allocation error. Encoded row extraction
+shares that checked boundary; no sample, color, codec precision or resize behavior changes.
+
+Actual authored sensor crop tests pass odd origins/edges/full frame, exact RGB/profile/metadata,
+unchanged original allocation and malformed lengths. Four parallel sensor tests reproduced a
+timestamp filename collision; fixture creation now uses existing tempfile 3.27.0/TempPath.
+The source hash and test-only dependency lock/license identity are updated; no new package/version.
+
+The MSVC Release real CC0 RAF crop benchmark (4952x3288 -> 512x512, eight alternating samples)
+measured median 49.2084 -> 2.5640ms, p95 57.6347 -> 3.1723ms and removed a 195,386,112-byte
+full clone. Observed private bytes at the diagnostic points were 422,961,152 / 230,346,752.
+Exact outputs/metadata and original file immutability pass. Doc 49 records scope/method limits:
+not total slider time, process lifetime peak, installed runtime or full 100MP acceptance.
+
+Shared RAW milestone passed (`test-timing-1791654096114.json`). Full local Rust passed format,
+warning-denied workspace Clippy, ordinary unit/integration and doc-test runners
+(`test-timing-1791654662784.json`); Full Web passed 204 tests/30 files, lint, TypeScript,
+actual build, Golden/RAW manifest and packaging config (`test-timing-1791654334479.json`).
+Crop allocation errors retain diagnostics and classify as Memory even under RAW wrapping.
+Four existing opt-in/private/heavy tests remain separately required; this is not Final acceptance.
+
 ## 2026-10-11 — Mature Native color-quality measurements
 
 The new finite typed quality boundary delegates XYZ adaptation/Lab/CIEDE2000 to existing
