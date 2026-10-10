@@ -2,6 +2,8 @@
 //! ICC parsing/execution is provided by LittleCMS. Published chromatic adaptation math lives here
 //! so the render graph can keep file, working and display transforms explicit.
 
+pub mod quality;
+
 use lcms2::{
     CIEXYZ, CIEXYZExt, CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent,
     PixelFormat, Profile, ToneCurve, Transform,

@@ -43,6 +43,12 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Native quality measurement uses the existing lcms2 6.1.1 / LittleCMS 2.19 safe public
+`CIEXYZExt::adapt_to_illuminant`, `to_lab` and `CIELabExt::cie2000_delta_e` APIs.
+Starroom owns finite validation, f64 XYZ RMSE/Y-error accumulation and test/report wiring;
+no CIEDE2000/Lab/CAT implementation is copied or newly invented. Engine/wrapper pins,
+licenses and notices remain unchanged. The retained BSD chart's bytes/hash do not change.
+
 Resolver v6 independently applies DNG 1.7.1 chapter 6's ForwardMatrix / ReferenceNeutral
 equations at the existing LibRaw baked-WB boundary, through the existing Matrix3 and Bradford
 providers. FM and CC interpolate independently before reference-neutral balance; no Adobe

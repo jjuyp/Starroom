@@ -1,5 +1,22 @@
 # Implementation Notes
 
+## 2026-10-11 — Mature Native color-quality measurements
+
+The new finite typed quality boundary delegates XYZ adaptation/Lab/CIEDE2000 to existing
+LittleCMS safe APIs and accumulates XYZ RMSE/Y error in f64. It introduces no alternative image
+engine or production pixel change. Identity/repeatability, independently expanded neutral
+lightness/symmetry and non-finite rejection pass. All five original Native ColorChecker
+tests retain their strict XYZ assertions and now execute/report perceptual/RMSE/Y gates over
+120 patches. Maximum observed CIEDE2000 is .0001126296, XYZ RMSE 2.43335e-7, Y error 1.78814e-7.
+Measurements/commands/scope limits are recorded in doc 48; this is reference-relative numerical
+camera-transform evidence, not photographed camera/18-category/HDR appearance/Final IQ.
+Dependency pins, fixture bytes and rendering/cache/output policies are unchanged.
+
+Local color milestone passes (`test-timing-1791652715045.json`): CMM 26 unit tests, original
+color/grading/look/reference tests, all shared/photographic/RAW pipeline tests, render 35 tests,
+Golden color subset, format and warning-denied workspace Clippy. This is the relevant local
+gate for added measurement/report code; previous Full results are not relabelled as this HEAD.
+
 ## 2026-10-11 — ForwardMatrix reference-neutral / calibration domain repair
 
 During local validation, simultaneous Windows safe builds reproduced a separate alias race:

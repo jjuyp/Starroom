@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Wire mature LittleCMS CIEDE2000 plus XYZ RMSE/Y-error into Native quality gates;
+  preserve original strict chart thresholds and extend full photographic/18-category
+  metrics without treating matrix or identity parity alone as full image-quality acceptance.
+
 - [x] Validate DNG AnalogBalance through real LibRaw metadata and no-ForwardMatrix camera
   transform; repair selected-IFD presence-bit promotion, retain CDDL notices and regression
   all RAW/shared paths. Full physical camera WB/Forward/signature/dual-white remain required.

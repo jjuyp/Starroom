@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use starroom_color_management::quality::compare_xyz_d65;
 use starroom_color_management::{D50, D65, Xyz, adapt_xyz};
 use starroom_raw::{
     CameraProfileInput, CameraProfileResolver, CameraProfileSource, CameraProfileStatus,
@@ -34,6 +35,43 @@ fn xy_y_to_xyz(value: [f32; 3]) -> Xyz {
     }
 }
 
+#[derive(Default)]
+struct QualitySummary {
+    delta_e: f64,
+    rmse: f64,
+    luminance: f64,
+}
+impl QualitySummary {
+    fn observe(&mut self, actual: [f32; 3], expected: Xyz, name: &str) {
+        let metrics = compare_xyz_d65(
+            Xyz {
+                x: actual[0],
+                y: actual[1],
+                z: actual[2],
+            },
+            expected,
+        )
+        .unwrap();
+        assert!(
+            metrics.delta_e_2000 < 0.01,
+            "{name} perceptual error: {metrics:?}"
+        );
+        assert!(
+            metrics.xyz_rmse < 2e-5 && metrics.luminance_error < 2e-5,
+            "{name}: {metrics:?}"
+        );
+        self.delta_e = self.delta_e.max(metrics.delta_e_2000);
+        self.rmse = self.rmse.max(metrics.xyz_rmse);
+        self.luminance = self.luminance.max(metrics.luminance_error);
+    }
+    fn report(&self, id: &str) {
+        eprintln!(
+            "COLORCHECKER_QUALITY profile={id} patches=24 max_delta_e_2000={} max_xyz_rmse={} max_luminance_error={}",
+            self.delta_e, self.rmse, self.luminance
+        );
+    }
+}
+
 #[test]
 fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
     let diagonal = [2.0, 4.0, 5.0];
@@ -63,6 +101,7 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
     assert_eq!(profile.source, CameraProfileSource::DngColorMatrix);
+    let mut quality = QualitySummary::default();
     for patch in fixture().patches {
         let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
         let input = [
@@ -71,6 +110,7 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
             xyz.z * diagonal[2] / neutral[2] / 4.0,
         ];
         let output = profile.camera_rgb_to_xyz_d65(input);
+        quality.observe(output, xyz, &patch.name);
         for (actual, expected) in output.into_iter().zip([xyz.x, xyz.y, xyz.z]) {
             assert!(
                 (actual - expected).abs() < 2.0e-5,
@@ -79,6 +119,7 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
             );
         }
     }
+    quality.report(&profile.id);
 }
 
 #[test]
@@ -122,6 +163,7 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
     assert!((profile.dual_illuminant_weight.unwrap() - 0.5).abs() < 1e-5);
+    let mut quality = QualitySummary::default();
     for patch in fixture().patches {
         let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
         let camera = [
@@ -129,6 +171,7 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
             xyz.y,
             xyz.z * diagonal[2] / neutral[2] / 5.0,
         ];
+        quality.observe(profile.camera_rgb_to_xyz_d65(camera), xyz, &patch.name);
         for (actual, expected) in profile
             .camera_rgb_to_xyz_d65(camera)
             .into_iter()
@@ -141,6 +184,7 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
             );
         }
     }
+    quality.report(&profile.id);
 }
 
 #[test]
@@ -164,9 +208,11 @@ fn colorchecker_analog_balance_preserves_d65_reference_camera_coordinates() {
         ],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    let mut quality = QualitySummary::default();
     for patch in fixture().patches {
         let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
         let camera = [xyz.x / D65.x, xyz.y, xyz.z / D65.z];
+        quality.observe(profile.camera_rgb_to_xyz_d65(camera), xyz, &patch.name);
         for (actual, expected) in profile
             .camera_rgb_to_xyz_d65(camera)
             .into_iter()
@@ -179,6 +225,7 @@ fn colorchecker_analog_balance_preserves_d65_reference_camera_coordinates() {
             );
         }
     }
+    quality.report(&profile.id);
 }
 
 #[test]
@@ -210,6 +257,7 @@ fn colorchecker_forward_profile_applies_calibration_in_baked_wb_domain() {
         ],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    let mut quality = QualitySummary::default();
     for patch in fixture().patches {
         let xyz = xy_y_to_xyz(patch.xy_y);
         // Independent inverse of the expanded camera->XYZ D50 2x2 calibrated block.
@@ -219,6 +267,7 @@ fn colorchecker_forward_profile_applies_calibration_in_baked_wb_domain() {
             xyz.z / D50.z,
         ];
         let expected = adapt_xyz(xyz, D50, D65);
+        quality.observe(profile.camera_rgb_to_xyz_d65(camera), expected, &patch.name);
         for (actual, expected) in profile
             .camera_rgb_to_xyz_d65(camera)
             .into_iter()
@@ -231,6 +280,7 @@ fn colorchecker_forward_profile_applies_calibration_in_baked_wb_domain() {
             );
         }
     }
+    quality.report(&profile.id);
 }
 
 #[test]
@@ -259,10 +309,12 @@ fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
 
     let fixture = fixture();
     assert_eq!(fixture.patches.len(), 24);
+    let mut quality = QualitySummary::default();
     for patch in fixture.patches {
         let d50 = xy_y_to_xyz(patch.xy_y);
         let expected = adapt_xyz(d50, D50, D65);
         let actual = profile.camera_rgb_to_xyz_d65([d50.x, d50.y, d50.z]);
+        quality.observe(actual, expected, &patch.name);
         assert!(
             actual.iter().all(|value| value.is_finite()),
             "{}",
@@ -272,4 +324,5 @@ fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
         assert!((actual[1] - expected.y).abs() < 1.0e-5, "{} Y", patch.name);
         assert!((actual[2] - expected.z).abs() < 1.0e-5, "{} Z", patch.name);
     }
+    quality.report(&profile.id);
 }

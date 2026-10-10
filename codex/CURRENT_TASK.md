@@ -2,6 +2,18 @@
 
 ## Current Milestone
 
+Current quality worktree adds real LittleCMS Lab/CIEDE2000 measurements and f64 XYZ RMSE/Y
+error, finite typed boundaries and actual five-profile/24-patch gates. Three mature metric
+boundary tests and all original chart tests pass without removing component thresholds.
+Colour milestone/shared/GPU/format/workspace-Clippy gate passed, report 1791652715045.
+Doc 48 records measured values; this worktree has not run Final/installed/100MP gates.
+This is reference-white-relative colorimetric evidence, not complete photographic/18-category
+IQ, absolute HDR appearance, physical RAW WB or final installed/latency qualification.
+
+`360984e58af1b1fd21b65d3730896b4806bc7421` ForwardMatrix + `157489b` owned Windows alias batch
+was pushed; Full CI 38070520079 remains running, secondary 38070524587 succeeded. Do not
+cancel that immutable-SHA Full run with another push; finish independent local quality work.
+
 Current ForwardMatrix worktree corrects the demonstrated CC/ReferenceNeutral failure
 (.9213862 versus expected 4.607522 in a matrix coefficient). Resolver v6 handles the actual
 baked-WB boundary; independent dual FM/CC interpolation and explicit malformed/mixed states
