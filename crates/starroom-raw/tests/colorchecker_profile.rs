@@ -81,6 +81,67 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
 }
 
 #[test]
+fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
+    // Independent midpoint oracle: mean(CC) = identity, mean(CM) = diag(3,5,6).
+    // Existing resolver uses its explicit midpoint fallback when LibRaw has no CCT oracle.
+    let diagonal = [3.0, 5.0, 6.0];
+    let neutral = [
+        diagonal[0] * D65.x / 5.0,
+        1.0,
+        diagonal[2] * D65.z / 5.0,
+        1.0,
+    ];
+    let mut dng = [DngMatrixSet::default(), DngMatrixSet::default()];
+    for (index, set) in dng.iter_mut().enumerate() {
+        set.parsed_fields = (1 << 1) | (1 << 2) | (1 << 3);
+        set.illuminant = if index == 0 { 17 } else { 21 };
+        let color = if index == 0 {
+            [2.0, 4.0, 5.0]
+        } else {
+            [4.0, 6.0, 7.0]
+        };
+        let calibration = if index == 0 {
+            [0.8, 1.1, 1.0]
+        } else {
+            [1.2, 0.9, 1.0]
+        };
+        for row in 0..3 {
+            set.color_matrix[row][row] = color[row];
+            set.calibration[row][row] = calibration[row];
+        }
+    }
+    let profile = CameraProfileResolver::resolve(&CameraProfileInput {
+        make: "Starroom ColorChecker Oracle".into(),
+        model: "Dual CC/CM camera".into(),
+        dng_version: 1,
+        libraw_cam_xyz: [[0.0; 3]; 4],
+        camera_neutral: neutral,
+        dng,
+    });
+    assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    assert!((profile.dual_illuminant_weight.unwrap() - 0.5).abs() < 1e-5);
+    for patch in fixture().patches {
+        let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
+        let camera = [
+            xyz.x * diagonal[0] / neutral[0] / 5.0,
+            xyz.y,
+            xyz.z * diagonal[2] / neutral[2] / 5.0,
+        ];
+        for (actual, expected) in profile
+            .camera_rgb_to_xyz_d65(camera)
+            .into_iter()
+            .zip([xyz.x, xyz.y, xyz.z])
+        {
+            assert!(
+                (actual - expected).abs() < 2e-5,
+                "{}: {actual} {expected}",
+                patch.name
+            );
+        }
+    }
+}
+
+#[test]
 fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
     let mut dng = DngMatrixSet {
         parsed_fields: 1 | (1 << 1),

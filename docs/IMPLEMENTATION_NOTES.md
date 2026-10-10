@@ -1,5 +1,34 @@
 # Implementation Notes
 
+## 2026-10-10 — Independent dual DNG calibration interpolation
+
+Actual production counterexample: interpolating endpoint CC*CM products gave inverse red
+0.31250003 instead of independent oracle 0.33333334 (original 1e-6 threshold). DNG chapter 6
+defines interpolated CameraCalibration and ColorMatrix separately. Candidates now retain
+original CM and effective CC; the dual no-ForwardMatrix path interpolates each, multiplies
+CC*CM, then inverts through the existing validated Matrix3 provider. Single/Forward/mixed paths
+are unchanged. Resolver identity advances to `starroom-camera-profile-v4-calibration-interpolation`,
+already bound by Native/thumbnail/export recipe keys. LibRaw decoder, ABI and source files are untouched.
+
+Three new unit regressions cover diagonal arithmetic, noncommuting order and singular explicit
+Generic status; a third 24-patch ColorChecker test uses unchanged BSD data and strict 2e-5
+threshold. This chart uses the existing midpoint fallback when LibRaw CCT metadata is absent,
+not proof of a complete iterative dual-white solver. 17 RAW units / 3 charts and six real licensed
+sensor fixtures pass. RAW/shared/photo milestone, format, workspace warning-denied Clippy,
+frontend lint/types/build pass in `.starroom-reports/test-timing-1791622744836.json`.
+
+Reference: [official DNG 1.7.1 chapter 6](https://helpx.adobe.com/content/dam/help/en/photoshop/pdf/DNG_Spec_1_7_1_0.pdf).
+Independent implementation of published equations using existing providers; no Adobe SDK/source
+or PDF is copied/bundled, and existing notices remain. AnalogBalance, calibration signatures,
+mixed Forward/Color, iterative white solving, >3-channel reduction and physical editable RAW WB
+remain open. No complete DNG/camera IQ or final production acceptance claim is warranted.
+
+Current local Full Rust format / warning-denied workspace Clippy / all 399 ordinary tests /
+doc-test runners pass (`.starroom-reports/test-timing-1791623250565.json`). The registered
+list is 403; four existing model/heavy-image/scale opt-in gates remain unaccepted by this run.
+This is a correctness repair, not a claimed performance optimization. Decoder/provider pins,
+original fixtures and chart tolerances are unchanged.
+
 ## 2026-10-10 — GPU diagnostics recovery and shared-output validity
 
 All production `GpuRenderer` statistics locks previously used `expect`. A poisoned diagnostics

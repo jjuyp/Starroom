@@ -43,6 +43,11 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Resolver v4 independently applies the same public DNG 1.7.1 chapter-6 CC/CM interpolation and
+product order through existing Matrix3/Bradford providers. No Adobe SDK/source/PDF is copied
+or bundled, no dependency/fixture license changes; retain DNG notices. Missing AnalogBalance,
+signatures, Forward/mixed and iterative dual-white features are not qualified by this repair.
+
 Prepared pixel-stage reuse retains existing LittleCMS input, LibRaw working RGB, Lensfun
 geometry/correction and shared WB kernels unchanged. Starroom's bounded Weak/Arc LRU and
 dependency projection are authored ownership/scheduling code, not new or copied imaging math.

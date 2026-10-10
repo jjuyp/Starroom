@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Fix demonstrated dual DNG CC/CM interpolation cross-term: interpolate independently,
+  multiply then invert; test noncommuting/singular cases and strict chart, advance resolver
+  identity. Complete DNG/RAW WB/perceptual/installed acceptance remains open.
+
 - [x] Remove panic-based GPU statistics/resource access, retain explicit recovery diagnostics
   and real device errors; fix shared Exposure/creative output-cache invalidation and prove
   exact resident HDR/alpha pixels. Whole release-path sweep and final installed gate remain open.

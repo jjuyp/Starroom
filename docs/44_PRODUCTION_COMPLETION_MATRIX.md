@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+DNG calibration interpolation (2026-10-10): independently interpolated CC and CM replace
+endpoint-product interpolation in the actual dual no-ForwardMatrix resolver. Confirmed inverse
+red counterexample .31250003 -> .33333334, noncommuting/singular cases and strict 24-patch
+midpoint oracle pass. Resolver v4 binds existing cache/export identities. AnalogBalance,
+signatures, mixed/Forward, iterative dual-white and physical RAW WB are still open; no full
+camera/DNG colour quality qualification is inferred from this component-level repair.
+
 GPU reliability follow-up (2026-10-10): production statistics/resource `expect` access removed,
 diagnostic recovery is counted and does not reset device/pixel state or hide real OOM. Explicit
 creative-output validity prevents alternating Exposure/creative kernels from reading stale

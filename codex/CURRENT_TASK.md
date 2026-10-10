@@ -2,6 +2,15 @@
 
 ## Current Milestone
 
+GPU diagnostics/output repair `db57fce` CI 38038939536 succeeded. Current CC/CM source-domain
+repair has Full local Rust success 399 ordinary tests / 4 opt-in, report
+`.starroom-reports/test-timing-1791623250565.json`; no complete RAW colour/Final claim is made.
+
+Current RAW colour repair proves and corrects independent dual DNG CC/CM interpolation
+(old red inverse .31250003 versus oracle .33333334). Resolver v4 binds existing cache/export
+identity. Three new unit cases and strict 24-patch chart pass; shared/actual RAW gates pass.
+AnalogBalance/signatures/Forward/iterative-white/physical-WB and every other phase remain open.
+
 Legacy-engine removal `7aa1ac7` targeted CI 38038084739 is successful. Current GPU reliability
 group's local milestone report is `.starroom-reports/test-timing-1791621747223.json`; all original
 full-scope colour/cache/tile/Windows requirements remain active, with no Final claim.

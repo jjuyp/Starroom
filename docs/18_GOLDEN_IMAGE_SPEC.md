@@ -1,5 +1,12 @@
 # Golden Image regression specification
 
+## Dual DNG calibration source-domain oracle (2026-10-10)
+
+The actual resolver's CC/CM midpoint now uses an independent 24-patch oracle with unchanged
+BabelColor data and 2e-5 threshold (`starroom-raw/tests/colorchecker_profile.rs`). Matrix/order
+and singular-status unit tests complement it. No new photographic fixture or full dual-white/
+camera IQ coverage is claimed; old expected chart data/tolerances are not regenerated.
+
 Status: M30 executable photographic corpus. The fixture manifest is `fixtures/golden/manifest.json`; CI validates its required cases and contracts with `scripts/validate-golden-manifest.mjs`. Schema v3 retains canonical multi-value tags and adds immutable assets with source page/file, author, upstream revision, license, camera, format, dimensions, bit depth, ICC/EXIF state, byte length and SHA-256.
 
 The supported tag registry is `raw`, `camera-color`, `tone`, `wb`, `curve`, `color`, `grading`, `detail`, `optics`, `geometry`, `mask`, `portrait`, `skin`, `ai`, `night`, `high-iso`, `neon`, `landscape`, and `hdr`. Select a union with `npm run golden:select -- --tags=color,portrait,skin`; add `--all-tags` to require the intersection. Omitting `--tags` selects the complete manifest. A selected `planned` case remains visible rather than being silently treated as an active photographic regression.
