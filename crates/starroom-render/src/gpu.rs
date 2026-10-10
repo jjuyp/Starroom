@@ -158,6 +158,8 @@ pub struct GpuStatus {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuResourceStats {
+    /// Statistics are non-authoritative. Recovery is observable without changing image state.
+    pub statistics_recovery_count: u64,
     /// Sum of live wgpu buffer sizes, not physical VRAM allocation or process peak memory.
     pub allocated_buffer_bytes: u64,
     pub source_upload_count: u64,
@@ -257,7 +259,7 @@ pub struct GpuRenderer {
 struct GpuBufferResources {
     capacity_bytes: u64,
     source_fingerprint: u64,
-    creative_fingerprint: u64,
+    creative_fingerprint: Option<u64>,
     source: wgpu::Buffer,
     output: wgpu::Buffer,
     staging: wgpu::Buffer,
@@ -494,7 +496,7 @@ impl GpuRenderer {
     }
 
     pub fn resource_stats(&self) -> GpuResourceStats {
-        let mut stats = *self.stats.lock().expect("GPU resource statistics");
+        let mut stats = *self.statistics();
         stats.allocated_buffer_bytes = self
             .resources
             .lock()
@@ -505,15 +507,31 @@ impl GpuRenderer {
     }
 
     pub fn reset_resource_stats(&self) {
-        let pipeline_create_count = self
-            .stats
-            .lock()
-            .expect("GPU resource statistics")
-            .pipeline_create_count;
-        *self.stats.lock().expect("GPU resource statistics") = GpuResourceStats {
-            pipeline_create_count,
+        let mut stats = self.statistics();
+        *stats = GpuResourceStats {
+            pipeline_create_count: stats.pipeline_create_count,
+            statistics_recovery_count: stats.statistics_recovery_count,
             ..Default::default()
         };
+    }
+
+    fn statistics(&self) -> std::sync::MutexGuard<'_, GpuResourceStats> {
+        match self.stats.lock() {
+            Ok(stats) => stats,
+            Err(poisoned) => {
+                let mut stats = poisoned.into_inner();
+                let recoveries = stats.statistics_recovery_count.saturating_add(1);
+                // Only discard diagnostic counters. Both pipelines, device failure flags and
+                // buffer/cache identities are independent and remain untouched.
+                *stats = GpuResourceStats {
+                    pipeline_create_count: 2,
+                    statistics_recovery_count: recoveries,
+                    ..Default::default()
+                };
+                self.stats.clear_poison();
+                stats
+            }
+        }
     }
 
     pub fn mark_device_lost(&mut self) {
@@ -676,7 +694,7 @@ impl GpuRenderer {
             *resources = Some(GpuBufferResources {
                 capacity_bytes: byte_len,
                 source_fingerprint: 0,
-                creative_fingerprint: 0,
+                creative_fingerprint: None,
                 source: storage(
                     "starroom-source-linear-rec2020",
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
@@ -703,22 +721,18 @@ impl GpuRenderer {
                 }),
             });
         } else {
-            self.stats
-                .lock()
-                .expect("GPU resource statistics")
-                .resource_reuse_count += 1;
+            self.statistics().resource_reuse_count += 1;
         }
-        let resources = resources.as_mut().expect("allocated GPU resources");
+        let resources = resources.as_mut().ok_or_else(|| {
+            GpuError::Validation("allocated GPU resources are unavailable".into())
+        })?;
         crate::profiling::record_gpu_buffer_bytes(resources.allocated_buffer_bytes());
         let fingerprint = pixel_fingerprint(pixels);
         if must_allocate || resources.source_fingerprint != fingerprint {
             self.queue
                 .write_buffer(&resources.source, 0, bytemuck::cast_slice(pixels));
             resources.source_fingerprint = fingerprint;
-            self.stats
-                .lock()
-                .expect("GPU resource statistics")
-                .source_upload_count += 1;
+            self.statistics().source_upload_count += 1;
         }
         let parameters = ExposureParameters {
             exposure_ev,
@@ -726,6 +740,9 @@ impl GpuRenderer {
             padding0: 0,
             padding1: 0,
         };
+        // This kernel shares output/uniform storage with creative processing. Its result must
+        // never satisfy a prior creative cache key, even for unchanged source pixels.
+        resources.creative_fingerprint = None;
         self.queue
             .write_buffer(&resources.parameters, 0, bytemuck::bytes_of(&parameters));
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -763,10 +780,7 @@ impl GpuRenderer {
         encoder.copy_buffer_to_buffer(&resources.output, 0, &resources.staging, 0, byte_len);
         let submission = self.queue.submit(Some(encoder.finish()));
         let result = self.readback_rgba(&resources.staging, byte_len, submission)?;
-        self.stats
-            .lock()
-            .expect("GPU resource statistics")
-            .final_readback_count += 1;
+        self.statistics().final_readback_count += 1;
         if !result.iter().flatten().all(|value| value.is_finite()) {
             return Err(GpuError::InvalidPixels);
         }
@@ -823,7 +837,7 @@ impl GpuRenderer {
             *resources = Some(GpuBufferResources {
                 capacity_bytes: byte_len,
                 source_fingerprint: 0,
-                creative_fingerprint: 0,
+                creative_fingerprint: None,
                 source: storage(
                     "starroom-source-linear-rec2020",
                     byte_len,
@@ -851,12 +865,11 @@ impl GpuRenderer {
                 ),
             });
         } else {
-            self.stats
-                .lock()
-                .expect("GPU resource statistics")
-                .resource_reuse_count += 1;
+            self.statistics().resource_reuse_count += 1;
         }
-        let resources = resources.as_mut().expect("allocated GPU resources");
+        let resources = resources.as_mut().ok_or_else(|| {
+            GpuError::Validation("allocated GPU resources are unavailable".into())
+        })?;
         crate::profiling::record_gpu_buffer_bytes(resources.allocated_buffer_bytes());
         let fingerprint = pixel_fingerprint(pixels);
         if must_allocate || resources.source_fingerprint != fingerprint {
@@ -864,7 +877,7 @@ impl GpuRenderer {
             self.queue
                 .write_buffer(&resources.source, 0, bytemuck::cast_slice(pixels));
             resources.source_fingerprint = fingerprint;
-            let mut stats = self.stats.lock().expect("GPU resource statistics");
+            let mut stats = self.statistics();
             stats.source_upload_count += 1;
             stats.source_texture_miss += 1;
             stats.gpu_stage_cache_miss += 1;
@@ -874,16 +887,17 @@ impl GpuRenderer {
                 0,
             );
         } else {
-            let mut stats = self.stats.lock().expect("GPU resource statistics");
+            let mut stats = self.statistics();
             stats.source_texture_hit += 1;
             stats.gpu_stage_cache_hit += 1;
             crate::profiling::record_gpu_cache_delta(1, 0, 0, 0);
         }
         let creative_fingerprint =
             creative_fingerprint(fingerprint, parameters, curve_luts, stage_identity);
-        let creative_hit = !must_allocate && resources.creative_fingerprint == creative_fingerprint;
+        let creative_hit =
+            !must_allocate && resources.creative_fingerprint == Some(creative_fingerprint);
         if creative_hit {
-            let mut stats = self.stats.lock().expect("GPU resource statistics");
+            let mut stats = self.statistics();
             stats.working_texture_hit += 1;
             stats.gpu_stage_cache_hit += 1;
             crate::profiling::record_gpu_cache_delta(0, 0, 1, 0);
@@ -892,8 +906,8 @@ impl GpuRenderer {
                 .write_buffer(&resources.parameters, 0, bytemuck::bytes_of(parameters));
             self.queue
                 .write_buffer(&resources.curve_lut, 0, bytemuck::cast_slice(curve_luts));
-            resources.creative_fingerprint = creative_fingerprint;
-            let mut stats = self.stats.lock().expect("GPU resource statistics");
+            resources.creative_fingerprint = Some(creative_fingerprint);
+            let mut stats = self.statistics();
             stats.working_texture_miss += 1;
             stats.gpu_stage_cache_miss += 1;
             crate::profiling::record_gpu_cache_delta(0, 0, 0, 1);
@@ -942,10 +956,7 @@ impl GpuRenderer {
             0,
             u64::try_from(readback_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
         );
-        self.stats
-            .lock()
-            .expect("GPU resource statistics")
-            .final_readback_count += 1;
+        self.statistics().final_readback_count += 1;
         if !result.iter().flatten().all(|value| value.is_finite()) {
             return Err(GpuError::InvalidPixels);
         }
@@ -1206,6 +1217,111 @@ mod tests {
         assert!(stats.source_texture_hit >= 2);
         assert_eq!(stats.working_texture_hit, 1);
         assert!(stats.gpu_stage_cache_hit >= 3);
+    }
+
+    #[test]
+    fn poisoned_statistics_recover_without_replacing_device_or_pixel_cache() {
+        let Ok(mut renderer) = GpuRenderer::try_new() else {
+            return;
+        };
+        let pixels = vec![[0.25, 0.5, 1.5, 0.75]; 128];
+        let mut parameters = GpuCreativeParameters {
+            values: [[0.0; 4]; 23],
+        };
+        parameters.values[18] = [128.0, 128.0, 1.0, 0.0];
+        let luts = [0.0; 8192];
+        assert_eq!(
+            renderer
+                .apply_creative(&pixels, &parameters, &luts, Some("unchanged"))
+                .unwrap(),
+            pixels
+        );
+        std::thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(|| {
+                        let mut stats = renderer.stats.lock().unwrap();
+                        stats.source_upload_count = 999;
+                        panic!("fault injection: interrupted diagnostics only");
+                    })
+                    .join()
+                    .is_err()
+            );
+        });
+        assert!(renderer.stats.is_poisoned());
+        assert_eq!(
+            renderer
+                .apply_creative(&pixels, &parameters, &luts, Some("unchanged"))
+                .unwrap(),
+            pixels
+        );
+        assert!(!renderer.stats.is_poisoned());
+        let stats = renderer.resource_stats();
+        assert_eq!(stats.statistics_recovery_count, 1);
+        assert_eq!(stats.pipeline_create_count, 2);
+        assert_eq!(
+            stats.source_upload_count, 0,
+            "real source buffer must remain resident"
+        );
+        assert_eq!(stats.working_texture_hit, 1);
+        renderer.reset_resource_stats();
+        assert_eq!(renderer.resource_stats().statistics_recovery_count, 1);
+        renderer.check_device().unwrap();
+        renderer.mark_out_of_memory();
+        assert!(
+            matches!(
+                renderer.apply_creative(&pixels, &parameters, &luts, Some("unchanged")),
+                Err(GpuError::OutOfMemory)
+            ),
+            "diagnostic recovery must never hide a real device failure"
+        );
+    }
+
+    #[test]
+    fn standalone_exposure_invalidates_shared_creative_output_but_not_source_upload() {
+        let Ok(renderer) = GpuRenderer::try_new() else {
+            return;
+        };
+        let pixels = vec![[0.25, 0.5, 1.5, 0.75]; 128];
+        let mut parameters = GpuCreativeParameters {
+            values: [[0.0; 4]; 23],
+        };
+        parameters.values[18] = [128.0, 128.0, 1.0, 0.0];
+        let luts = [0.0; 8192];
+        assert_eq!(
+            renderer
+                .apply_creative(&pixels, &parameters, &luts, Some("identity"))
+                .unwrap(),
+            pixels
+        );
+        let doubled = renderer.apply_exposure(&pixels, 1.0).unwrap();
+        assert_eq!(doubled, apply_exposure_reference(&pixels, 1.0).unwrap());
+        assert_ne!(doubled, pixels);
+        assert_eq!(
+            renderer
+                .apply_creative(&pixels, &parameters, &luts, Some("identity"))
+                .unwrap(),
+            pixels
+        );
+        assert_eq!(renderer.resource_stats().source_upload_count, 1);
+        assert_eq!(renderer.resource_stats().working_texture_hit, 0);
+    }
+
+    #[test]
+    fn production_gpu_operations_do_not_use_panic_based_lock_or_resource_access() {
+        let production = include_str!("gpu.rs").split("#[cfg(test)]").next().unwrap();
+        for marker in [
+            ".expect(",
+            ".unwrap()",
+            "panic!(",
+            "todo!(",
+            "unimplemented!(",
+        ] {
+            assert!(
+                !production.contains(marker),
+                "production GPU marker: {marker}"
+            );
+        }
     }
 
     #[test]

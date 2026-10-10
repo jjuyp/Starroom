@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Remove panic-based GPU statistics/resource access, retain explicit recovery diagnostics
+  and real device errors; fix shared Exposure/creative output-cache invalidation and prove
+  exact resident HDR/alpha pixels. Whole release-path sweep and final installed gate remain open.
+
 - [x] Delete the retired Browser creative engine; migrate all eight pixel assertions to actual
   Native Preview/Export, keep two UI intents and unchanged frozen reference/tolerances. Add
   recursive ownership/integrity checks and targeted gate wiring; full production acceptance remains open.

@@ -10,6 +10,12 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+GPU reliability follow-up (2026-10-10): production statistics/resource `expect` access removed,
+diagnostic recovery is counted and does not reset device/pixel state or hide real OOM. Explicit
+creative-output validity prevents alternating Exposure/creative kernels from reading stale
+results. Actual adapter fault-injection/HDR/alpha tests and module source guard pass. This is
+not whole-repository error/driver/hardware/installed qualification; those requirements remain open.
+
 Curve presentation (2026-10-07): production JS spline removed; real React curve geometry is
 returned by the same Native PreparedCurve used for pixels, with bounded requests and stale-reply
 rejection. Four-channel/preset/add/drag/delete/numeric UI checks use actual Rust command samples.

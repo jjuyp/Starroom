@@ -2,6 +2,16 @@
 
 ## Current Milestone
 
+Legacy-engine removal `7aa1ac7` targeted CI 38038084739 is successful. Current GPU reliability
+group's local milestone report is `.starroom-reports/test-timing-1791621747223.json`; all original
+full-scope colour/cache/tile/Windows requirements remain active, with no Final claim.
+
+Current GPU reliability group removes panic-based diagnostics access while preserving actual
+device/pixel state and exposes recovery counts. Shared Exposure/creative storage now invalidates
+creative result validity correctly. Three actual fault/cache/source regressions pass; no pixel
+math/dependency changed. Complete colour/RAW/alpha/gamut/monitor, downstream caches/tiles,
+direct presentation and same-SHA installed acceptance remain in the original full objective.
+
 Prepared source pixels `b123bc9` Full CI 38036815214 is successful, including exact-SHA Rust
 and Web jobs. The legacy-engine removal group passes the colour milestone report
 `.starroom-reports/test-timing-1791620612991.json`; no processing or frozen tolerance changes.

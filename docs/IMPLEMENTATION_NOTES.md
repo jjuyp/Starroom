@@ -1,5 +1,35 @@
 # Implementation Notes
 
+## 2026-10-10 — GPU diagnostics recovery and shared-output validity
+
+All production `GpuRenderer` statistics locks previously used `expect`. A poisoned diagnostics
+mutex could panic even though the device and pixel buffers were healthy. Statistics access now
+recovers only non-authoritative counters, clears that mutex poison, and exposes the lifetime
+`statisticsRecoveryCount`. Pipeline/device/buffer identities are not replaced; reset preserves
+the recovery count. Actual buffer sizes remain derived from live resources. Real OOM/device
+failure flags remain authoritative, typed and visible; recovery never masks them. Missing
+allocated resources now return typed Validation instead of a release-path panic. The GPU module
+has a source-sweep regression disallowing panic-based lock/resource access before its test section.
+
+A second real defect shared output/uniform buffers between standalone Exposure and fused
+creative operations without invalidating the previous creative result. The cache fingerprint
+now uses explicit `Option<u64>` validity, and Exposure invalidates it before writing those
+buffers. Identity creative -> Exposure +1 -> identity creative is tested against exact Native
+float pixels, including HDR and alpha, without another source upload. This is correct cache
+ownership, not a new algorithm, hash policy, precision reduction or output clamp.
+
+Three new regressions cover actual GPU poisoned-statistics recovery/resident source + real OOM
+classification, alternating kernels and release-source panic sweep. Actual adapter tests pass;
+GPU tests remain conditional on adapter availability in environments without one. Shared graph/
+photographic/RAW/ICC regression tolerances remain unchanged. This does not qualify physical
+driver failure, the entire repository panic audit, direct GPU presentation or final release.
+No dependency, upstream source/license, image recipe or original-photo changes. No performance
+speed claim is made for this reliability repair.
+
+Local GPU milestone passes: render 35/35, shared pipeline 73 plus 18 integration cases,
+Native frontend contract 45/45, Golden/RAW manifests, workspace warning-denied Clippy, format,
+frontend lint/types/build. Report `.starroom-reports/test-timing-1791621747223.json`.
+
 ## 2026-10-10 — Remove retired Browser creative engine, preserve tests natively
 
 Removed `src/imagePipeline.ts` and its separate Browser colour/tone/detail/canvas-processing
