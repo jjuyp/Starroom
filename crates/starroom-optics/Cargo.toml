@@ -1,0 +1,12 @@
+[package]
+name = "starroom-optics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+quick-xml = "=0.41.0"
+
+[build-dependencies]

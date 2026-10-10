@@ -47,6 +47,13 @@ Creative intermediates are not hard-clamped to 0..1. Use dedicated smooth gamut 
 ## Encoded-image WB
 JPEG/PNG/TIFF controls are relative, not physical Kelvin: Temperature -100..100, Tint -100..100. Do not label them Kelvin.
 
+Production relative controls use a prepared LittleCMS chromatic-adaptation matrix in linear
+working RGB, not per-pixel OKLab offsets. Temperature follows relative reciprocal-temperature
+displacement on the mature daylight locus; Tint follows its perpendicular CIE 1960 u/v direction.
+The D65 anchor is internal control mapping, not source Kelvin. Neutral and black are exact identities;
+global/local/GPU use the same Native matrix. Physical RAW camera WB remains an earlier camera/profile
+stage and must not be declared equivalent to this encoded/working-space relative correction.
+
 ## WB eyedropper
 Sample a small area, initially 9x9, using robust statistics. User selects a neutral gray/white region.
 
