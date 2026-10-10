@@ -36,11 +36,11 @@ use starroom_look::{
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
     GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters,
-    RenderSettings, SkinRetouchSettings, SourceRegion, ToneCurveSet, WhiteBalanceMode,
-    WhiteBalanceSample, WhiteBalanceSettings, prepare_source_for_ai_denoise,
+    RenderSettings, SkinRetouchSettings, SourcePreparationCache, SourceRegion, ToneCurveSet,
+    WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings, prepare_source_for_ai_denoise,
     render_source_export_to_srgb8, render_source_preview_to_srgb8,
-    render_source_preview_with_gpu_to_srgb8, resolve_source_lens_profile, sample_source_color_band,
-    sample_source_portrait_weights,
+    render_source_preview_with_preparation_cache_to_srgb8, resolve_source_lens_profile,
+    sample_source_color_band, sample_source_portrait_weights,
 };
 use starroom_portrait::{
     AiMaskError, AiMaskModelRegistry, AiMaskOnnxProvider, AiMaskProvider, AiMaskSemantic,
@@ -1499,6 +1499,7 @@ struct NativePreviewScheduler {
     cancellation_times: Mutex<BTreeMap<String, Instant>>,
     workers: PreviewWorkerPool,
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
+    prepared: SourcePreparationCache,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<GpuRenderer, String>>>,
 }
@@ -1764,6 +1765,7 @@ impl Default for NativePreviewScheduler {
             cancellation_times: Mutex::new(BTreeMap::new()),
             workers: PreviewWorkerPool::new(2),
             decoded: Mutex::new(VecDeque::new()),
+            prepared: SourcePreparationCache::default(),
             viewport_frames: Mutex::new(VecDeque::new()),
             gpu: Mutex::new(None),
         }
@@ -3950,8 +3952,12 @@ fn native_preview_inner(
                 .get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()))
                 .as_ref()
                 .map_err(Clone::clone)?;
-            let result =
-                render_source_preview_with_gpu_to_srgb8(&render_decoded, &settings, renderer);
+            let result = render_source_preview_with_preparation_cache_to_srgb8(
+                &render_decoded,
+                &settings,
+                Some(renderer),
+                &scheduler.prepared,
+            );
             let rendered = match result {
                 Ok(rendered) => rendered,
                 Err(error) => {
@@ -3973,15 +3979,20 @@ fn native_preview_inner(
         }) {
             Ok(result) => result,
             Err(error) => {
-                let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
+                let rendered = render_source_preview_with_preparation_cache_to_srgb8(&render_decoded, &settings, None, &scheduler.prepared)
                     .map_err(|fallback| format!("native GPU preview failed ({error}); CPU reference fallback also failed: {fallback}"))?;
                 // Binary contract explicitly marks the shared Native CPU graph, never Browser math.
                 (rendered, 0x0010)
             }
         }
     } else {
-        let rendered = render_source_preview_to_srgb8(&render_decoded, &settings)
-            .map_err(|error| format!("native CPU preview graph failed: {error}"))?;
+        let rendered = render_source_preview_with_preparation_cache_to_srgb8(
+            &render_decoded,
+            &settings,
+            None,
+            &scheduler.prepared,
+        )
+        .map_err(|error| format!("native CPU preview graph failed: {error}"))?;
         (rendered, 0x0010)
     };
     starroom_pipeline::cancellation::checkpoint().map_err(|error| error.to_string())?;
@@ -5714,6 +5725,51 @@ mod tests {
             preview_stage_identity("same-source", &settings).unwrap(),
             "Auto ignores picker rectangles"
         );
+    }
+
+    #[test]
+    fn actual_native_preview_reuses_prepared_pixels_across_exposure_requests() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let original = source_content_hash(&source).unwrap();
+        let scheduler = NativePreviewScheduler::default();
+        let portrait = NativePortraitRuntime::default();
+        let masks = NativeAiMaskRuntime::default();
+        let denoise = NativeAiDenoiseRuntime::default();
+        for (index, exposure) in [0.1, 0.2, 0.3].into_iter().enumerate() {
+            let mut edit: NativeEditSettings = serde_json::from_str(include_str!(
+                "../../fixtures/contracts/native-default-settings.json"
+            ))
+            .unwrap();
+            edit.exposure = exposure;
+            let response = native_preview_inner(
+                &scheduler,
+                &portrait,
+                &masks,
+                &denoise,
+                NativePreviewRequest {
+                    request_id: format!("prepared-pixels-{index}"),
+                    source_path: source.clone(),
+                    max_edge: 128,
+                    prefer_gpu: false,
+                    interaction_phase: PreviewInteractionPhase::Interactive,
+                    resolution_mode: PreviewResolutionMode::Fit,
+                    viewport: None,
+                    settings: edit,
+                },
+            )
+            .unwrap();
+            let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                tauri::ipc::IpcResponse::body(response).unwrap()
+            else {
+                panic!("binary photo frame expected")
+            };
+            assert_eq!(&frame[..4], b"SRP3");
+            assert!(frame.len() > 40);
+        }
+        assert_eq!(scheduler.prepared.stats().unwrap().builds, 1);
+        assert_eq!(scheduler.prepared.stats().unwrap().hits, 2);
+        assert_eq!(source_content_hash(&source).unwrap(), original);
     }
 
     #[test]

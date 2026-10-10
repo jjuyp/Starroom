@@ -2,6 +2,11 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Wire real bounded source-WB/input/lens/geometry pixels into Native preview reuse; move
+  visible picker correction after that boundary. Validate actual Native requests, photographic/
+  RAW/Lensfun parity, invalidation, weak ownership and measured timing. Complete downstream
+  caches, ROI/tiles, 100MP and final desktop latency remain open.
+
 - [x] Remove the production UI spline copy; curve-panel geometry now comes from the actual
   shared Native spline via bounded float metadata and strict latest-only IPC. Actual React /
   Rust-command operation checks pass. Legacy JS migration engine and complete Phase 23 remain open.

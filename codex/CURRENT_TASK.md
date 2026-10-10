@@ -2,6 +2,12 @@
 
 ## Current Milestone
 
+Curve presentation `3553f99` targeted CI 37495319669 passed. Current group implements actual
+bounded source-preparation pixel/map reuse in Native preview, not key-only caching. Source WB,
+input, optics and geometry are shared with fresh export; visible picker is downstream and never
+cached across rectangles. Real Native/portrait/RAW/Lensfun/ownership tests and doc 46 measurements
+pass. Complete downstream caches/ROI/tiles, color gaps and full same-SHA release remain open.
+
 LittleCMS reuse `1ad6921` Full CI 37489700399 passed. Current curve-presentation group removes
 the production JS spline copy and wires actual shared Native curve samples into the real panel.
 Native sampler/contract/latest tests and actual React/Rust-command operation checks pass.

@@ -2,16 +2,19 @@
 //! Uses the existing licensed portrait without modifying it; emits measurements, no image files.
 use starroom_imageio::decode_source_preview;
 use starroom_pipeline::{
-    RenderSettings, WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings,
-    render_source_export_to_srgb8, render_source_preview_with_gpu_to_srgb8,
+    RenderSettings, SourcePreparationCache, WhiteBalanceMode, WhiteBalanceSample,
+    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_with_gpu_to_srgb8,
+    render_source_preview_with_preparation_cache_to_srgb8,
 };
 use starroom_render::gpu::GpuRenderer;
-use std::{error::Error, path::Path, time::Instant};
+use std::{error::Error, path::Path, sync::Arc, time::Instant};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/golden/sources/astronaut-eileen-collins.png");
-    let source = decode_source_preview(path, 512)?;
+    let source = Arc::new(decode_source_preview(path, 512)?);
+    let use_prepared = std::env::args().any(|argument| argument == "--prepared");
+    let preparation = SourcePreparationCache::default();
     let gpu = GpuRenderer::try_new()?;
     let mut report = Vec::new();
     for control in [
@@ -51,7 +54,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let start = Instant::now();
             let (accelerated, profile) = starroom_render::profiling::capture(|| {
-                render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+                if use_prepared {
+                    render_source_preview_with_preparation_cache_to_srgb8(
+                        &source,
+                        &settings,
+                        Some(&gpu),
+                        &preparation,
+                    )
+                } else {
+                    render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+                }
             });
             let accelerated = accelerated?;
             last_profile = Some(profile);
@@ -89,6 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "adapter": gpu.status(), "measurements": report,
             "gpuResources": gpu.resource_stats(),
             "iccTransformCache": starroom_color_management::icc_transform_cache_stats()?,
+            "sourcePreparation": preparation.stats()?, "usesPreparationCache": use_prepared,
         })
     );
     Ok(())

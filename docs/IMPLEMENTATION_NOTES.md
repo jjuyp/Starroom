@@ -1,5 +1,38 @@
 # Implementation Notes
 
+## 2026-10-10 — Actual prepared source pixels in Native preview
+
+Decoded-tier reuse alone still reran input conversion/source WB/lens/geometry for creative
+sliders. A bounded `SourcePreparationCache` now retains the real immutable f32 stage image
+and semantic map. Native CPU/GPU preview call this production path, not an unused provider.
+Immutable decoded allocation identity plus exact actual upstream settings prevents stale
+pixel/profile/metadata, WB, optics, crop/rotate and region reuse; weak refs do not retain decoded
+buffers. Construction is outside the lock. Four entries / 128 MiB retained RGB capacities;
+oversized frames execute the original owned graph without a cached image clone. The working
+copy remains mutable for downstream operations; source/export image ownership is unchanged.
+
+Visible Gray Picker is factored AFTER reusable source/lens/geometry and remains the same shared
+measured-white CAT. Changed picker rectangles reuse upstream pixels but recompute correction.
+Other source WB modes invalidate preparation. Disabled optics and unused sample fields are
+projected away. Cold/warm/oversized paths share the identical processing order and kernels.
+Profiler adds backward-defaulted `cacheHits` to stage measurements; skips never manufacture
+time/execution counts, and RAW does not invent a camera transform at this boundary.
+
+Four new unit regressions, two actual licensed portrait/RAW/Lensfun integration regressions,
+one actual Native binary-preview regression and one profiler regression cover real reuse,
+identity/invalidation, picker/region/rotation, LRU/budget/weak ownership and original protection.
+CPU/export output remains exact and GPU tolerance stays <=1 RGB8 code. Dedicated same-binary
+before/after timings and limitations are in `46_SOURCE_PREPARATION_CACHE_BENCHMARK.md`.
+42 requests build 2 preparations and reuse 40; retained buffer capacities are 6,291,456 bytes.
+This is not end-to-end <100ms or full 100MP/Phase 9 acceptance. No dependency/source license change.
+
+Local Full Rust format, warning-denied workspace Clippy, all ordinary tests and doc-test runners
+passed in `.starroom-reports/test-timing-1791619349861.json`; the final RAW profiler clarification
+and added profiler regression also passed subsequent targeted render/pipeline/real-source tests
+and workspace Clippy. Web regression 203/203 (28 files) passed in
+`.starroom-reports/test-timing-1791619091313.json`; full Golden/RAW manifest validation passed.
+The four existing opt-in model/heavy-image/scale gates are not accepted by these ordinary runs.
+
 ## 2026-10-07 — Native spline owns curve-panel geometry
 
 `ToneCurveEditor` previously evaluated a second JS cubic spline from `previewPresentation.ts`.

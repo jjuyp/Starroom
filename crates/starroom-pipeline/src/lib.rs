@@ -3,9 +3,14 @@
 //! match this pipeline within documented tolerances before replacing the CPU reference.
 
 pub mod cancellation;
+mod source_preparation;
 use cancellation::checkpoint;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+pub use source_preparation::{
+    SourcePreparationCache, SourcePreparationCacheStats,
+    render_source_preview_with_preparation_cache_to_srgb8,
+};
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
     ColorBand, ColorMixer, CurvePoint, LinearRgb, PreparedCurve, ToneParameters,
@@ -436,6 +441,8 @@ impl Default for RenderSettings {
 
 #[derive(Debug, Error)]
 pub enum PipelineError {
+    #[error("source preparation cache is unavailable")]
+    PreparationCacheUnavailable,
     #[error("PreviewCancelled: request was superseded")]
     Cancelled,
     #[error("decoded RGBA buffer length does not match dimensions")]
@@ -1891,6 +1898,16 @@ fn apply_precreative_geometry_mapped(
     settings: &RenderSettings,
     optics_resolution: Option<&LensProfileResolution>,
 ) -> Result<(LinearImage, SemanticSamplingMap), PipelineError> {
+    let (mut image, map) = prepare_geometry_mapped(working, settings, optics_resolution)?;
+    apply_visible_white_balance(&mut image, settings)?;
+    Ok((image, map))
+}
+
+fn prepare_geometry_mapped(
+    working: LinearImage,
+    settings: &RenderSettings,
+    optics_resolution: Option<&LensProfileResolution>,
+) -> Result<(LinearImage, SemanticSamplingMap), PipelineError> {
     checkpoint()?;
     let working_bytes = (working.data.len() as u64).saturating_mul(F32_BYTES);
     let mut lens_mapping = None;
@@ -1940,7 +1957,7 @@ fn apply_precreative_geometry_mapped(
         geometry_parameters.crop_aspect_width,
         geometry_parameters.crop_aspect_height,
     );
-    let (mut image, inverse_geometry) = if geometry_parameters == GeometryParameters::default() {
+    let (image, inverse_geometry) = if geometry_parameters == GeometryParameters::default() {
         (
             profiling::measure(ProfileStage::Geometry, working_bytes, || {
                 optically_corrected
@@ -1972,7 +1989,26 @@ fn apply_precreative_geometry_mapped(
             inverse,
         )
     };
+    let semantic_map = SemanticSamplingMap {
+        inverse_geometry,
+        crop,
+        output_width: settings
+            .source_region
+            .map_or(image.width, |region| region.full_width as usize),
+        output_height: settings
+            .source_region
+            .map_or(image.height, |region| region.full_height as usize),
+        lens: lens_mapping,
+    };
+    Ok((image, semantic_map))
+}
+
+fn apply_visible_white_balance(
+    image: &mut LinearImage,
+    settings: &RenderSettings,
+) -> Result<(), PipelineError> {
     if settings.white_balance.mode == WhiteBalanceMode::NeutralPicker {
+        let working_bytes = (image.data.len() as u64).saturating_mul(F32_BYTES);
         profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
             let sample = settings
                 .white_balance
@@ -1992,18 +2028,7 @@ fn apply_precreative_geometry_mapped(
             Ok::<_, PipelineError>(())
         })?;
     }
-    let semantic_map = SemanticSamplingMap {
-        inverse_geometry,
-        crop,
-        output_width: settings
-            .source_region
-            .map_or(image.width, |region| region.full_width as usize),
-        output_height: settings
-            .source_region
-            .map_or(image.height, |region| region.full_height as usize),
-        lens: lens_mapping,
-    };
-    Ok((image, semantic_map))
+    Ok(())
 }
 
 fn render_prepared_working_graph(
@@ -2262,40 +2287,72 @@ fn render_shared_source_graph(
     output_icc: Option<&[u8]>,
     gpu: Option<&GpuRenderer>,
 ) -> Result<RenderedRgbF32, PipelineError> {
+    let prepared = prepare_render_source(decoded, settings, true)?;
+    render_prepared_source(prepared, settings, output_icc, gpu)
+}
+
+struct PreparedRenderSource {
+    image: LinearImage,
+    input: InputProfileSource,
+    camera_profile: Option<CameraProfileDescriptor>,
+    semantic_map: SemanticSamplingMap,
+}
+
+fn render_prepared_source(
+    prepared: PreparedRenderSource,
+    settings: &RenderSettings,
+    output_icc: Option<&[u8]>,
+    gpu: Option<&GpuRenderer>,
+) -> Result<RenderedRgbF32, PipelineError> {
+    render_prepared_working_graph(
+        prepared.image,
+        prepared.input,
+        prepared.camera_profile.as_ref(),
+        settings,
+        output_icc,
+        gpu,
+        prepared.semantic_map,
+    )
+}
+
+fn prepare_render_source(
+    decoded: &DecodedSourceImage,
+    settings: &RenderSettings,
+    visible_white_balance: bool,
+) -> Result<PreparedRenderSource, PipelineError> {
     let optics_resolution = if settings.optics.parameters.enabled {
         Some(resolve_source_lens_profile(decoded, &settings.optics)?)
     } else {
         None
     };
-    match decoded {
+    let (working, input, camera_profile) = match decoded {
         DecodedSourceImage::Rendered(image) => {
             let (working, input_source) = to_working_image(image, settings)?;
-            render_working_graph(
-                working,
-                input_source,
-                None,
-                settings,
-                optics_resolution.as_ref(),
-                output_icc,
-                gpu,
-            )
+            (working, input_source, None)
         }
         DecodedSourceImage::Raw(image) => {
             let input_source = match image.metadata.camera_profile.status {
                 CameraProfileStatus::Resolved => InputProfileSource::RawCameraMatrix,
                 CameraProfileStatus::Generic => InputProfileSource::RawGenericProfile,
             };
-            render_working_graph(
+            (
                 to_working_raw(image, settings)?,
                 input_source,
-                Some(&image.metadata.camera_profile),
-                settings,
-                optics_resolution.as_ref(),
-                output_icc,
-                gpu,
+                Some(image.metadata.camera_profile.clone()),
             )
         }
+    };
+    let (mut image, semantic_map) =
+        prepare_geometry_mapped(working, settings, optics_resolution.as_ref())?;
+    if visible_white_balance {
+        apply_visible_white_balance(&mut image, settings)?;
     }
+    Ok(PreparedRenderSource {
+        image,
+        input,
+        camera_profile,
+        semantic_map,
+    })
 }
 
 fn rendered_lens_identity(image: &DecodedRenderedImage) -> LensIdentity {

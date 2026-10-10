@@ -29,6 +29,8 @@ pub enum ProfileStage {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StageMeasurement {
+    #[serde(default)]
+    pub cache_hits: u32,
     pub cpu_nanoseconds: u64,
     pub gpu_nanoseconds: Option<u64>,
     pub peak_working_bytes: u64,
@@ -197,6 +199,16 @@ pub fn record_gpu(stage: ProfileStage, elapsed_nanoseconds: u64) {
     });
 }
 
+/// A real retained stage output was used; do not invent execution time for skipped work.
+pub fn record_stage_cache_hit(stage: ProfileStage) {
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            let entry = active.report.stages.entry(stage).or_default();
+            entry.cache_hits = entry.cache_hits.saturating_add(1);
+        }
+    });
+}
+
 pub fn record_gpu_buffer_bytes(bytes: u64) {
     ACTIVE.with(|active| {
         if let Some(active) = active.borrow_mut().as_mut() {
@@ -304,5 +316,15 @@ mod tests {
         assert!(
             profile.total_cpu_nanoseconds >= profile.stages[&ProfileStage::Tone].cpu_nanoseconds
         );
+    }
+
+    #[test]
+    fn retained_stage_output_does_not_fabricate_execution_or_elapsed_time() {
+        let (_, profile) = capture(|| record_stage_cache_hit(ProfileStage::Geometry));
+        let stage = &profile.stages[&ProfileStage::Geometry];
+        assert_eq!(stage.cache_hits, 1);
+        assert_eq!(stage.executions, 0);
+        assert_eq!(stage.cpu_nanoseconds, 0);
+        assert_eq!(stage.gpu_nanoseconds, None);
     }
 }

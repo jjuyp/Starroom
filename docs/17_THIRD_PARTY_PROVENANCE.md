@@ -43,6 +43,11 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Prepared pixel-stage reuse retains existing LittleCMS input, LibRaw working RGB, Lensfun
+geometry/correction and shared WB kernels unchanged. Starroom's bounded Weak/Arc LRU and
+dependency projection are authored ownership/scheduling code, not new or copied imaging math.
+No dependency, upstream revision, fixture license or notices change is introduced.
+
 ICC transform lifetime reuse uses the same pinned `lcms2` 6.1.1 / LittleCMS engine and public
 `Transform<..., GlobalContext, DisallowCache>` API. The safe wrapper's `src/transform.rs` exposes
 Send/Sync for the NO_CACHE transform mode already used by the Rayon adapter. Starroom adds
