@@ -2,6 +2,15 @@
 
 ## Current Milestone
 
+Current worktree repairs DNG AnalogBalance metadata/no-ForwardMatrix conversion. Actual
+synthetic sensor test revealed copied CM had zero public parsed-fields; selected-IFD promotion
+is now an explicitly documented CDDL-covered LibRaw modification (no custom parser/demosaic).
+Resolver v5 and RAW decode policy v3 change cache identity. Full local Rust/Web pass (reports
+1791625273478 / 1791625066923); remote acceptance is pending. All original
+production phases and complete Forward/signature/iterative-white/physical-WB remain open.
+
+Previous `db14077191943400f933922120459ae67f7da20a` Full CI 38040460978 is successful.
+
 GPU diagnostics/output repair `db57fce` CI 38038939536 succeeded. Current CC/CM source-domain
 repair has Full local Rust success 399 ordinary tests / 4 opt-in, report
 `.starroom-reports/test-timing-1791623250565.json`; no complete RAW colour/Final claim is made.

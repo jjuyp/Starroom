@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "policy": "GPL-3.0-or-later combined work; preserve file-level and notice obligations",
-  "cargoLockSha256": "4d26e0c5d223e5338719fadea1608c2c84255842be74a2397a3eb08ac0bd8a01",
+  "cargoLockSha256": "c878ca4435e71fa4f215e23aa85ba4aa3188076980a081e058449b958a82a9e7",
   "packageLockSha256": "c0e584e73ec8c6974102d2d1f26fec99d4820be7798c30be192d49a020de4e51",
   "rust": [
     {

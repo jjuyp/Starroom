@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Validate DNG AnalogBalance through real LibRaw metadata and no-ForwardMatrix camera
+  transform; repair selected-IFD presence-bit promotion, retain CDDL notices and regression
+  all RAW/shared paths. Full physical camera WB/Forward/signature/dual-white remain required.
+
 - [x] Fix demonstrated dual DNG CC/CM interpolation cross-term: interpolate independently,
   multiply then invert; test noncommuting/singular cases and strict chart, advance resolver
   identity. Complete DNG/RAW WB/perceptual/installed acceptance remains open.

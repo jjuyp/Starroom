@@ -13,8 +13,7 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
     [0.019_333_9, 0.119_192, 0.950_304_1],
 ]);
 
-pub const CAMERA_PROFILE_RESOLVER_VERSION: &str =
-    "starroom-camera-profile-v4-calibration-interpolation";
+pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v5-analog-balance";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +82,8 @@ pub struct CameraProfileInput {
     /// LibRaw XYZ-to-camera coefficients, camera channel rows and XYZ columns.
     pub libraw_cam_xyz: [[f32; 3]; 4],
     pub camera_neutral: [f32; 4],
+    /// Original DNG AnalogBalance; LibRaw cam_xyz already includes it, raw DNG CM/CC do not.
+    pub analog_balance: [f32; 4],
     pub dng: [DngMatrixSet; 2],
 }
 
@@ -145,6 +146,7 @@ impl CameraProfileResolver {
                 let transformed = interpolate_dng_candidates(&dng_candidates, input).and_then(
                     |(matrix, weight)| {
                         if none_forward {
+                            let matrix = unbalanced_camera_matrix(matrix, input.analog_balance)?;
                             balanced_color_matrix_to_xyz_d65(matrix, input.camera_neutral)
                                 .map(|matrix| (matrix, weight))
                         } else {
@@ -420,6 +422,21 @@ fn adapt_matrix(matrix: Matrix3, source_white: Xyz, destination_white: Xyz) -> M
     bradford_adaptation(source_white, destination_white).multiply(matrix)
 }
 
+/// DNG 1.7.1 chapter 6: XYZtoCamera = AB * CC * CM. The input matrix is
+/// inverse(CC * CM), so append inverse(AB) on the right, never gain pixels a second time.
+fn unbalanced_camera_matrix(matrix: Matrix3, analog: [f32; 4]) -> Option<Matrix3> {
+    if !analog[..3].iter().all(|v| v.is_finite() && *v > 0.0) {
+        return None;
+    }
+    let inverse_analog = Matrix3([
+        [1.0 / analog[0], 0.0, 0.0],
+        [0.0, 1.0 / analog[1], 0.0],
+        [0.0, 0.0, 1.0 / analog[2]],
+    ]);
+    let output = matrix.multiply(inverse_analog);
+    valid_matrix(output).then_some(output)
+}
+
 /// Adobe DNG 1.7.1 chapter 6: ColorMatrix inverts unbalanced camera coordinates, unlike
 /// ForwardMatrix's already white-balanced D50 coordinates. The LibRaw boundary has baked WB;
 /// undo that diagonal, find the measured neutral illuminant and adapt it, never assume D50.
@@ -527,8 +544,61 @@ mod tests {
             dng_version: 0,
             libraw_cam_xyz: [[0.0; 3]; 4],
             camera_neutral: [0.5, 1.0, 0.7, 1.0],
+            analog_balance: [1.0; 4],
             dng: [DngMatrixSet::default(), DngMatrixSet::default()],
         }
+    }
+
+    #[test]
+    fn analog_balance_is_left_of_noncommuting_calibration_not_a_second_pixel_gain() {
+        let color = Matrix3([[2.0, 0.1, 0.0], [0.2, 3.0, 0.1], [0.0, 0.3, 4.0]]);
+        let calibration = Matrix3([[1.0, 0.2, 0.0], [0.1, 1.0, 0.0], [0.0, 0.1, 1.0]]);
+        let analog = Matrix3([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.5]]);
+        let expected = analog
+            .multiply(calibration)
+            .multiply(color)
+            .inverse()
+            .unwrap();
+        let actual = unbalanced_camera_matrix(
+            calibration.multiply(color).inverse().unwrap(),
+            [2.0, 1.0, 0.5, 1.0],
+        )
+        .unwrap();
+        for (actual, expected) in actual.0.iter().flatten().zip(expected.0.iter().flatten()) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        let wrong = calibration
+            .multiply(analog)
+            .multiply(color)
+            .inverse()
+            .unwrap();
+        assert!((actual.0[0][1] - wrong.0[0][1]).abs() > 0.01);
+    }
+
+    #[test]
+    fn invalid_dng_analog_balance_is_explicit_generic_not_identity_substitution() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.dng[0].parsed_fields = DNG_COLOR_MATRIX;
+        for row in 0..3 {
+            value.dng[0].color_matrix[row][row] = 1.0;
+        }
+        for invalid in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            value.analog_balance[0] = invalid;
+            let profile = CameraProfileResolver::resolve(&value);
+            assert_eq!(profile.status, CameraProfileStatus::Generic);
+            assert_eq!(profile.source, CameraProfileSource::GenericLinearSrgb);
+        }
+    }
+
+    #[test]
+    fn libraw_camera_coefficients_do_not_receive_analog_balance_again() {
+        let mut value = input();
+        value.make = "Nikon".into();
+        value.libraw_cam_xyz = [[0.6, 0.2, 0.0], [0.2, 0.7, 0.1], [0.1, 0.1, 0.8], [0.0; 3]];
+        let original = CameraProfileResolver::resolve(&value);
+        value.analog_balance = [2.0, 1.0, 0.5, 1.0];
+        assert_eq!(original, CameraProfileResolver::resolve(&value));
     }
 
     #[test]

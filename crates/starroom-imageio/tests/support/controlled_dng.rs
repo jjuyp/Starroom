@@ -20,6 +20,12 @@ impl Drop for OwnedFixture {
 }
 
 pub fn controlled_fixture() -> Result<OwnedFixture, Box<dyn Error>> {
+    controlled_fixture_with_analog(None)
+}
+
+pub fn controlled_fixture_with_analog(
+    analog: Option<[Rational; 3]>,
+) -> Result<OwnedFixture, Box<dyn Error>> {
     let mut bytes = Cursor::new(Vec::new());
     {
         let mut encoder = TiffEncoder::new(&mut bytes)?;
@@ -45,6 +51,9 @@ pub fn controlled_fixture() -> Result<OwnedFixture, Box<dyn Error>> {
             .map(|n| SRational { n, d: 1 })
             .collect();
         dir.write_tag(Tag::Unknown(50721), matrix.as_slice())?;
+        if let Some(analog) = analog {
+            dir.write_tag(Tag::Unknown(50727), &analog[..])?;
+        }
         dir.write_tag(
             Tag::Unknown(50728),
             &[

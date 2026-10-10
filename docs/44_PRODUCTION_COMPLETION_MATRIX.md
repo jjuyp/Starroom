@@ -10,6 +10,14 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+DNG AnalogBalance follow-up (2026-10-10, worktree under validation): extract actual LibRaw
+analogbalance, retain backwards-compatible metadata and apply inverse(AB) after inverse(CC*CM)
+only in the no-ForwardMatrix source path; do not apply it again to LibRaw cam_xyz or pixels.
+An actual authored DNG exposed upstream copied CM/illuminant values with zero public flags.
+The covered selected-IFD presence-bit repair is recorded under CDDL. New source/ramp/metadata,
+noncommuting-order/invalid/LibRaw-double-application and 24-patch tests do not qualify all RAW
+color, signatures, Forward/mixed/iterative-white, alpha/gamut/monitor or Final acceptance.
+
 DNG calibration interpolation (2026-10-10): independently interpolated CC and CM replace
 endpoint-product interpolation in the actual dual no-ForwardMatrix resolver. Confirmed inverse
 red counterexample .31250003 -> .33333334, noncommuting/singular cases and strict 24-patch

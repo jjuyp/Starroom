@@ -58,6 +58,7 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
         dng_version: 1,
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: neutral,
+        analog_balance: [1.0; 4],
         dng: [dng, DngMatrixSet::default()],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
@@ -116,6 +117,7 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
         dng_version: 1,
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: neutral,
+        analog_balance: [1.0; 4],
         dng,
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
@@ -127,6 +129,44 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
             xyz.y,
             xyz.z * diagonal[2] / neutral[2] / 5.0,
         ];
+        for (actual, expected) in profile
+            .camera_rgb_to_xyz_d65(camera)
+            .into_iter()
+            .zip([xyz.x, xyz.y, xyz.z])
+        {
+            assert!(
+                (actual - expected).abs() < 2e-5,
+                "{}: {actual} {expected}",
+                patch.name
+            );
+        }
+    }
+}
+
+#[test]
+fn colorchecker_analog_balance_preserves_d65_reference_camera_coordinates() {
+    let analog = [2.0, 1.0, 0.5, 1.0];
+    let neutral = [2.0 * D65.x, 1.0, 0.5 * D65.z, 1.0];
+    let profile = CameraProfileResolver::resolve(&CameraProfileInput {
+        make: "Starroom ColorChecker Oracle".into(),
+        model: "Analog balance camera".into(),
+        dng_version: 1,
+        libraw_cam_xyz: [[0.0; 3]; 4],
+        camera_neutral: neutral,
+        analog_balance: analog,
+        dng: [
+            DngMatrixSet {
+                parsed_fields: 1 << 2,
+                color_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]],
+                ..Default::default()
+            },
+            Default::default(),
+        ],
+    });
+    assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    for patch in fixture().patches {
+        let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
+        let camera = [xyz.x / D65.x, xyz.y, xyz.z / D65.z];
         for (actual, expected) in profile
             .camera_rgb_to_xyz_d65(camera)
             .into_iter()
@@ -159,6 +199,7 @@ fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
         dng_version: 1,
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: [1.0; 4],
+        analog_balance: [1.0; 4],
         dng: [dng, DngMatrixSet::default()],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);

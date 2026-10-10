@@ -1419,3 +1419,40 @@ prevent focus-only phantom commands without altering acknowledged JSON or persis
   can be proved. Cross-source mask/face reuse is explicitly rejected with instructions to generate
   a mask or detect a face on the current photo; no arbitrary raster is silently substituted.
   No pixels, model weights or camera calibration are added to project/history JSON.
+## 2026-10-10 DNG AnalogBalance and actual metadata promotion
+
+The no-ForwardMatrix resolver previously inverted CC*CM while omitting DNG AnalogBalance.
+The C ABI now extracts the original four-channel gains; RawMetadata serializes them with
+identity default for older records. Resolver v5 appends inverse(AB) to inverse(CC*CM) before
+the existing baked-WB undo/measured-white adaptation. It never multiplies decoded sensor
+pixels again and does not alter LibRaw cam_xyz's already incorporated analog correction.
+Invalid/non-positive/non-finite analog metadata takes explicit Generic Profile status.
+
+The actual authored full/half sensor decode initially failed: public dng_color held CM and
+illuminant values but parsed_fields=0, causing a Generic profile. Upstream identify.cpp copies
+selected-IFD values without their presence bits. The narrow covered modification now promotes
+each actual bit alongside that selected copy, preserving the pre-populated Leica ForwardMatrix
+guard. No value-based presence inference, custom TIFF parser or demosaic was introduced.
+The pinned upstream commit remains unchanged; modification/hash/CDDL obligations are recorded
+in vendor STARROOM_MODIFICATIONS and provenance/NOTICE. No new external package/version is
+added; serde_json is an existing workspace package newly used by imageio tests only.
+
+Regressions include independent noncommuting AB*CC*CM order, no duplicate LibRaw correction,
+invalid explicit status, strict original 24-patch chart and actual sensor ramp against fixed
+double-precision Bradford/XYZ coefficients, immutable bytes and old/new metadata round-trip.
+Full/half generator presence and AnalogBalance are checked, not merely mocked input structs.
+The original headroom test/thresholds remain unchanged. Generator LF hash is updated in the
+RAW manifest. Complete signature validation, Forward/mixed conversion, iterative dual-white,
+physical editable RAW WB and every remaining production/release gate remain open.
+
+RAW decode policy advances to `starroom-libraw-v3-dng-metadata-analog-balance`; existing
+Native, thumbnail and Export identities bind that policy together with resolver v5. The
+targeted RAW gate now includes actual imageio sensor-headroom/analog metadata regressions.
+
+Local Full Rust passed format, warning-denied workspace Clippy, every ordinary unit/integration
+test and doc-test runner (`test-timing-1791625273478.json`). Full Web passed 198 tests/29 files,
+lint, TypeScript/build, all 11 manifest cases/5 immutable photos/6 CC0 RAWs and packaging config
+(`test-timing-1791625066923.json`). The six real sensor formats passed (51.07 seconds in Full);
+actual synthetic full/half sensor tests and strict four chart tests pass. License validator
+passes 561 Rust packages / 6 npm production packages / 269 retained notices after lock identity
+refresh. These are local component/integration gates, not installed/offline/100MP Final acceptance.

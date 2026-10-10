@@ -30,6 +30,7 @@ struct SrRawResult {
   uint32_t cblack[4];
   float camera_multipliers[4];
   float pre_multipliers[4];
+  float analog_balance[4];
   float cam_xyz[12];
   uint32_t dng_parsed_fields[2];
   uint16_t dng_illuminants[2];
@@ -120,6 +121,7 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
     result->cblack[index] = data.color.cblack[index];
     result->camera_multipliers[index] = data.color.cam_mul[index];
     result->pre_multipliers[index] = data.color.pre_mul[index];
+    result->analog_balance[index] = data.color.dng_levels.analogbalance[index];
     for (size_t xyz = 0; xyz < 3; ++xyz) {
       result->cam_xyz[index * 3 + xyz] = data.color.cam_xyz[index][xyz];
     }

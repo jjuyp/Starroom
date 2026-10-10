@@ -2,6 +2,89 @@
 mod fixture;
 
 #[test]
+fn actual_libraw_analog_balance_reaches_camera_transform_and_metadata_round_trip() {
+    use starroom_raw::{CameraProfileSource, CameraProfileStatus};
+    use tiff::encoder::Rational;
+    let fixture = fixture::controlled_fixture_with_analog(Some([
+        Rational { n: 2, d: 1 },
+        Rational { n: 1, d: 1 },
+        Rational { n: 1, d: 2 },
+    ]))
+    .unwrap();
+    let original = std::fs::read(&fixture.0).unwrap();
+    for decoded in [
+        starroom_raw::decode_raw(&fixture.0).unwrap(),
+        starroom_raw::decode_raw_preview(&fixture.0).unwrap(),
+    ] {
+        assert_eq!(decoded.metadata.analog_balance[..3], [2.0, 1.0, 0.5]);
+        assert_eq!(
+            decoded.metadata.dng_color[0].parsed_fields,
+            (1 << 1) | (1 << 2)
+        );
+        assert_eq!(decoded.metadata.dng_color[1].parsed_fields, 0);
+        assert_eq!(
+            decoded.metadata.camera_profile.status,
+            CameraProfileStatus::Resolved,
+            "metadata={:?}",
+            decoded.metadata
+        );
+        assert_eq!(
+            decoded.metadata.camera_profile.source,
+            CameraProfileSource::DngColorMatrix
+        );
+        // CM=identity, AB=(2,1,.5), neutral=(.5,1,.25). Thus source white is
+        // (.25,1,.5) and inverseAB * undoWB maps equal balanced RGB to that white.
+        // Independent double-precision Bradford oracle, not the production resolver output.
+        let expected_matrix = [
+            [0.530_089_44, 0.408_576_16, 0.011_804_4],
+            [0.158_061_76, 0.855_113, -0.013_174_78],
+            [0.013_055_22, -0.117_500_275, 1.193_275],
+        ];
+        for (actual, expected) in decoded
+            .metadata
+            .camera_profile
+            .camera_to_xyz_d65
+            .iter()
+            .flatten()
+            .zip(expected_matrix.iter().flatten())
+        {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        for (column, sensor) in [1024, 2048, 4096, 6144, 8192, 10240, 12288, 14336]
+            .into_iter()
+            .enumerate()
+        {
+            let x = (column * 8 + 4) * decoded.width as usize / 64;
+            let index = ((decoded.height as usize / 2) * decoded.width as usize + x) * 3;
+            let signal = sensor as f32 / 16383.0;
+            let camera = [signal * 2.0, signal, signal * 4.0];
+            let xyz = expected_matrix
+                .map(|row| row.into_iter().zip(camera).map(|(a, b)| a * b).sum::<f32>());
+            let expected = [
+                1.716_651_2 * xyz[0] - 0.355_670_78 * xyz[1] - 0.253_366_3 * xyz[2],
+                -0.666_684_3 * xyz[0] + 1.616_481_2 * xyz[1] + 0.015_768_546 * xyz[2],
+                0.017_639_857 * xyz[0] - 0.042_770_613 * xyz[1] + 0.942_103_1 * xyz[2],
+            ];
+            for (actual, expected) in decoded.rgb[index..index + 3].iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 4e-4,
+                    "sensor={sensor} actual={actual} expected={expected}"
+                );
+            }
+        }
+        assert!(decoded.rgb.iter().all(|v| v.is_finite()));
+        let bytes = serde_json::to_vec(&decoded.metadata).unwrap();
+        let restored: starroom_raw::RawMetadata = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(restored, decoded.metadata);
+        let mut legacy = serde_json::to_value(&decoded.metadata).unwrap();
+        legacy.as_object_mut().unwrap().remove("analogBalance");
+        let restored: starroom_raw::RawMetadata = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.analog_balance, [1.0; 4]);
+    }
+    assert_eq!(original, std::fs::read(&fixture.0).unwrap());
+}
+
+#[test]
 fn real_libraw_preserves_unsaturated_sensor_wb_headroom_and_declared_white_level() {
     let fixture = fixture::controlled_fixture().unwrap();
     let original = std::fs::read(&fixture.0).unwrap();

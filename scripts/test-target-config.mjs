@@ -56,6 +56,7 @@ export const targets = {
   raw: {
     rust: [
       ['test', '--locked', '-p', 'starroom-raw'],
+      ['test', '--locked', '-p', 'starroom-imageio', '--test', 'raw_headroom'],
       ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'raw_shared_graph'],
     ],
     web: [],

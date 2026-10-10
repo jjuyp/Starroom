@@ -1482,33 +1482,50 @@ void LibRaw::identify_process_dng_fields()
 			{
 				sidx = IFDCOLORINDEX(iifd, 0, LIBRAW_DNGFM_FORWARDMATRIX);
 				if (sidx >= 0)
+				{
 					COPYARR(imgdata.color.dng_color[0].forwardmatrix,
 						tiff_ifd[sidx].dng_color[0].forwardmatrix);
+					imgdata.color.dng_color[0].parsedfields |= LIBRAW_DNGFM_FORWARDMATRIX;
+				}
 			}
 			if (!(imgdata.color.dng_color[1].parsedfields &
 				LIBRAW_DNGFM_FORWARDMATRIX)) // Not set already (Leica makernotes)
 			{
 				sidx = IFDCOLORINDEX(iifd, 1, LIBRAW_DNGFM_FORWARDMATRIX);
 				if (sidx >= 0)
+				{
 					COPYARR(imgdata.color.dng_color[1].forwardmatrix,
 						tiff_ifd[sidx].dng_color[1].forwardmatrix);
+					imgdata.color.dng_color[1].parsedfields |= LIBRAW_DNGFM_FORWARDMATRIX;
+				}
 			}
 			for (int ss = 0; ss < 2; ss++)
 			{
+				// Starroom modification (2026-10-10), CDDL-1.0: promote presence bits
+				// alongside the selected IFD values. Do not infer presence from coefficients.
 				sidx = IFDCOLORINDEX(iifd, ss, LIBRAW_DNGFM_COLORMATRIX);
 				if (sidx >= 0)
+				{
 					COPYARR(imgdata.color.dng_color[ss].colormatrix,
 						tiff_ifd[sidx].dng_color[ss].colormatrix);
+					imgdata.color.dng_color[ss].parsedfields |= LIBRAW_DNGFM_COLORMATRIX;
+				}
 
 				sidx = IFDCOLORINDEX(iifd, ss, LIBRAW_DNGFM_CALIBRATION);
 				if (sidx >= 0)
+				{
 					COPYARR(imgdata.color.dng_color[ss].calibration,
 						tiff_ifd[sidx].dng_color[ss].calibration);
+					imgdata.color.dng_color[ss].parsedfields |= LIBRAW_DNGFM_CALIBRATION;
+				}
 
 				sidx = IFDCOLORINDEX(iifd, ss, LIBRAW_DNGFM_ILLUMINANT);
 				if (sidx >= 0)
+				{
 					imgdata.color.dng_color[ss].illuminant =
 					tiff_ifd[sidx].dng_color[ss].illuminant;
+					imgdata.color.dng_color[ss].parsedfields |= LIBRAW_DNGFM_ILLUMINANT;
+				}
 			}
 			// Levels
 			sidx = IFDLEVELINDEX(iifd, LIBRAW_DNGFM_ANALOGBALANCE);

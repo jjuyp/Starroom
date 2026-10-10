@@ -27,3 +27,8 @@ Third-party source, version, license and packaging records are maintained in
 `docs/17_THIRD_PARTY_PROVENANCE.md`. The selected LibRaw CDDL-1.0 license and
 source are retained under `vendor/libraw-0.22.2`; the retained
 colour-science BSD-3-Clause notice accompanies its test fixture.
+
+Starroom modifies LibRaw 0.22.2 `src/metadata/identify.cpp` (2026-10-10) to promote
+DNG matrix/illuminant presence flags alongside the selected IFD values. That
+covered modification remains available under CDDL-1.0 in the corresponding source.
+See `vendor/libraw-0.22.2/STARROOM_MODIFICATIONS.md`; no demosaic algorithm is changed.

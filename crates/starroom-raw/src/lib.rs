@@ -18,7 +18,7 @@ use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
 use thiserror::Error;
 
 pub const LIBRAW_PINNED_VERSION: &str = "0.22.2";
-pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v2-sensor-white-wb-headroom";
+pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v3-dng-metadata-analog-balance";
 pub const LIBRAW_TAG_OBJECT: &str = "24fa7e5463cbf8b8615dbd2b16c933a294d52400";
 pub const LIBRAW_COMMIT: &str = "b93f6e45c194f5df9b02a43b1af9a54b4f41f33f";
 
@@ -122,6 +122,9 @@ pub struct RawMetadata {
     pub as_shot_kelvin: Option<f32>,
     pub camera_neutral: [f32; 4],
     pub pre_multipliers: [f32; 4],
+    /// DNG analog gains already represented in sensor camera coordinates, not extra pixel gains.
+    #[serde(default = "identity_analog_balance")]
+    pub analog_balance: [f32; 4],
     /// LibRaw maximum-WB normalization restored after its 16-bit demosaic boundary, in f32.
     #[serde(default = "identity_headroom_scale")]
     pub wb_headroom_scale: f32,
@@ -143,6 +146,10 @@ pub struct RawDecodeTimings {
 
 fn identity_headroom_scale() -> f32 {
     1.0
+}
+
+fn identity_analog_balance() -> [f32; 4] {
+    [1.0; 4]
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -175,6 +182,7 @@ struct BridgeResult {
     cblack: [u32; 4],
     camera_multipliers: [f32; 4],
     pre_multipliers: [f32; 4],
+    analog_balance: [f32; 4],
     cam_xyz: [f32; 12],
     dng_parsed_fields: [u32; 2],
     dng_illuminants: [u16; 2],
@@ -366,6 +374,7 @@ fn decode_inner(
         dng_version: bridge.dng_version,
         libraw_cam_xyz: bridge_cam_xyz(&bridge),
         camera_neutral: neutral,
+        analog_balance: bridge.analog_balance,
         dng: dng_color.clone(),
     };
     let as_shot_kelvin = estimated_as_shot_kelvin(&profile_input);
@@ -429,6 +438,7 @@ fn decode_inner(
             as_shot_kelvin,
             camera_neutral: neutral,
             pre_multipliers: bridge.pre_multipliers,
+            analog_balance: bridge.analog_balance,
             wb_headroom_scale: bridge.wb_headroom_scale,
             dng_color,
             camera_profile,
