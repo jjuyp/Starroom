@@ -2,6 +2,16 @@
 
 ## Current Milestone
 
+Prepared source pixels `b123bc9` Full CI 38036815214 is successful, including exact-SHA Rust
+and Web jobs. The legacy-engine removal group passes the colour milestone report
+`.starroom-reports/test-timing-1791620612991.json`; no processing or frozen tolerance changes.
+
+Current independent group retires `src/imagePipeline.ts` without dropping pixel requirements:
+eight original assertions execute against actual Rust Preview/Export and two UI intents remain.
+Frozen migration JSON/tolerances are unchanged and hash-verified; Node checks stay test-only.
+Frontend 198 and Native intent/migration gates pass. Doc 47 maps every assertion. Final installed
+single-engine/feature-flag sweep and all other original production phases remain active.
+
 Curve presentation `3553f99` targeted CI 37495319669 passed. Current group implements actual
 bounded source-preparation pixel/map reuse in Native preview, not key-only caching. Source WB,
 input, optics and geometry are shared with fresh export; visible picker is downstream and never

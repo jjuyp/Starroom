@@ -1,5 +1,26 @@
 # Implementation Notes
 
+## 2026-10-10 — Remove retired Browser creative engine, preserve tests natively
+
+Removed `src/imagePipeline.ts` and its separate Browser colour/tone/detail/canvas-processing
+functions, with no production import or alternate engine left. Eight original pixel-behavior
+assertions are migrated unchanged to real Rust Preview/Export integration tests; all eight pass.
+Two UI-only assertions remain frontend tests. Frozen reference JSON and migration tolerances
+are byte-identical (canonical LF SHA in doc 47); the existing Rust migration comparison passes.
+Frontend checks now validate historical data rather than execute a retired engine. Recursive
+source ownership and hash checks are isolated in Node test tooling, so production React did not
+gain Node runtime/types. Relevant targeted gates invoke the Native pixel cases explicitly.
+
+Full frontend 198/198 (29 files), lint, TypeScript/build and infrastructure validation pass.
+The count change moves eight image tests to Rust and adds integrity/ownership cases, not lower
+coverage. Targeted Rust warning-denied Clippy and nine Native intent/migration tests pass.
+The colour milestone/shared photographic/RAW regressions also pass (local report
+`.starroom-reports/test-timing-1791620612991.json`); detailed mapping is in
+`47_NATIVE_ENGINE_MIGRATION_COVERAGE.md`. This source-only cleanup has no runtime pixel-math
+change or claimed performance benefit: the old engine was already tree-shaken from production.
+No dependency, license, fixture/tolerance or original-photo changes. Final product acceptance
+and the other colour/cache/tile/Windows gates remain open.
+
 ## 2026-10-10 — Actual prepared source pixels in Native preview
 
 Decoded-tier reuse alone still reran input conversion/source WB/lens/geometry for creative

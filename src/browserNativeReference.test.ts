@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import reference from '../tests/fixtures/m1c/browser-native-reference.json'
-import { defaultAdjustments } from './editorState'
-import { processImageData, type ToneCurvePoint } from './imagePipeline'
 
-describe('frozen Browser reference for Native CPU migration', () => {
+describe('frozen Browser data for actual Rust migration regression', () => {
+  it('preserves the historical corpus and tolerances without executing an old engine', () => {
+    expect(reference.contractVersion).toBe(1)
+    expect(reference.cases.map(fixture => fixture.name)).toEqual(['neutral', 'exposure', 'white-balance', 'tone', 'curve'])
+  })
   for (const fixture of reference.cases) {
-    it(`keeps ${fixture.name} Browser reference explicit`, () => {
-      const rgba = fixture.sourceRgb8.flatMap((value, index) => index % 3 === 2 ? [value, 255] : [value])
-      const source = { data: new Uint8ClampedArray(rgba), width: fixture.sourceRgb8.length / 3, height: 1 } as ImageData
-      const curve = fixture.curve.map((point, index) => ({ id: `${fixture.name}-${index}`, ...point })) as ToneCurvePoint[]
-      const output = processImageData(source, { ...defaultAdjustments, ...fixture.adjustments }, curve)
-      const rgb = Array.from(output.data).filter((_, index) => index % 4 !== 3)
-      expect(rgb).toEqual(fixture.browserRgb8)
+    it(`keeps ${fixture.name} frozen reference complete for Native comparison`, () => {
+      expect(fixture.sourceRgb8.length % 3).toBe(0)
+      expect(fixture.browserRgb8).toHaveLength(fixture.sourceRgb8.length)
+      expect([...fixture.sourceRgb8, ...fixture.browserRgb8].every(value => Number.isInteger(value) && value >= 0 && value <= 255)).toBe(true)
+      expect(fixture.curve.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true)
+      expect(fixture.maxChannelDelta).toBeGreaterThanOrEqual(0)
+      expect(fixture.maxMeanDelta).toBeGreaterThanOrEqual(0)
     })
   }
 })

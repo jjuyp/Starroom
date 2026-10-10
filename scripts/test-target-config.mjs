@@ -26,28 +26,31 @@ export const targets = {
     golden: ['raw', 'color', 'detail', 'portrait', 'mask', 'hdr'],
   },
   color: {
-    rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look']],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/whiteBalanceClipboard.test.ts', 'src/editControls.test.ts'],
+    rust: [['test', '--locked', '-p', 'starroom-color', '-p', 'starroom-color-management', '-p', 'starroom-grading', '-p', 'starroom-reference', '-p', 'starroom-look'],
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'legacy_browser_intents']],
+    web: ['src/nativePipelineOwnership.test.ts', 'src/nativeRender.test.ts', 'src/whiteBalanceClipboard.test.ts', 'src/editControls.test.ts', 'scripts/tests/nativeImageEngineOwnership.test.ts'],
     golden: ['color', 'camera-color'],
   },
   tone: {
     rust: [
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'legacy_browser_intents'],
       ['test', '--locked', '-p', 'starroom-color', 'tone'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'shadow'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'preview_and_export'],
     ],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts'],
+    web: ['src/nativePipelineOwnership.test.ts', 'src/nativeRender.test.ts'],
     golden: ['tone', 'portrait', 'night', 'hdr'],
   },
   curve: {
     rust: [
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'legacy_browser_intents'],
       ['test', '--locked', '-p', 'starroom-desktop', 'native_curve_preview'],
       ['test', '--locked', '-p', 'starroom-color', 'curve'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'curve'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'portrait_and_gradient'],
       ['test', '--locked', '-p', 'starroom-project', 'adjustment_state'],
     ],
-    web: ['src/imagePipeline.test.ts', 'src/nativeRender.test.ts', 'src/editorState.test.ts', 'src/nativeCurvePreview.test.ts'],
+    web: ['src/nativePipelineOwnership.test.ts', 'src/nativeRender.test.ts', 'src/editorState.test.ts', 'src/nativeCurvePreview.test.ts'],
     golden: ['curve', 'portrait'],
   },
   raw: {
@@ -59,8 +62,9 @@ export const targets = {
     golden: ['raw', 'camera-color'],
   },
   detail: {
-    rust: [['test', '--locked', '-p', 'starroom-detail', '-p', 'starroom-heal', '-p', 'starroom-portrait', '-p', 'starroom-ai-denoise', '-p', 'starroom-look']],
-    web: ['src/imagePipeline.test.ts'],
+    rust: [['test', '--locked', '-p', 'starroom-detail', '-p', 'starroom-heal', '-p', 'starroom-portrait', '-p', 'starroom-ai-denoise', '-p', 'starroom-look'],
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'legacy_browser_intents']],
+    web: ['src/nativePipelineOwnership.test.ts'],
     golden: ['detail', 'high-iso'],
   },
   optics: {

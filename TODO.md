@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Delete the retired Browser creative engine; migrate all eight pixel assertions to actual
+  Native Preview/Export, keep two UI intents and unchanged frozen reference/tolerances. Add
+  recursive ownership/integrity checks and targeted gate wiring; full production acceptance remains open.
+
 - [x] Wire real bounded source-WB/input/lens/geometry pixels into Native preview reuse; move
   visible picker correction after that boundary. Validate actual Native requests, photographic/
   RAW/Lensfun parity, invalidation, weak ownership and measured timing. Complete downstream
