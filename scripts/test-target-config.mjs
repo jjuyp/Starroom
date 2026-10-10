@@ -58,6 +58,7 @@ export const targets = {
       ['test', '--locked', '-p', 'starroom-raw'],
       ['test', '--locked', '-p', 'starroom-imageio', '--test', 'raw_headroom'],
       ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'raw_shared_graph'],
+      ['test', '--locked', '-p', 'starroom-pipeline', '--test', 'raw_forward_graph'],
     ],
     web: [],
     golden: ['raw', 'camera-color'],

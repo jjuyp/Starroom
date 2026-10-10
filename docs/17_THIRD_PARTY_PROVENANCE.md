@@ -43,6 +43,14 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Resolver v6 independently applies DNG 1.7.1 chapter 6's ForwardMatrix / ReferenceNeutral
+equations at the existing LibRaw baked-WB boundary, through the existing Matrix3 and Bradford
+providers. FM and CC interpolate independently before reference-neutral balance; no Adobe
+SDK/PDF/source is copied or bundled. The original project-authored CFA generator adds a
+forward/calibration variant using existing TIFF 0.11.3 (also test-only in pipeline). Upstream
+pins and licenses do not change. Signatures, iterative-white, n>3 and full photographic quality
+qualification remain required; the existing DNG patent/covered-source notices remain in place.
+
 Resolver v4 independently applies the same public DNG 1.7.1 chapter-6 CC/CM interpolation and
 product order through existing Matrix3/Bradford providers. No Adobe SDK/source/PDF is copied
 or bundled, no dependency/fixture license changes; retain DNG notices. Missing AnalogBalance,

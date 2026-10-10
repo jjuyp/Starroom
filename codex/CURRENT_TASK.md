@@ -2,11 +2,22 @@
 
 ## Current Milestone
 
-Current worktree repairs DNG AnalogBalance metadata/no-ForwardMatrix conversion. Actual
+Current ForwardMatrix worktree corrects the demonstrated CC/ReferenceNeutral failure
+(.9213862 versus expected 4.607522 in a matrix coefficient). Resolver v6 handles the actual
+baked-WB boundary; independent dual FM/CC interpolation and explicit malformed/mixed states
+are covered. Actual DNG full/half sensor and 24-patch/shared Preview/Export tests pass; final
+Full local Rust (412 ordinary / 4 opt-in) and Web (202 tests) pass, reports 1791651991985 /
+1791651722084. Remote acceptance
+is pending for this worktree. Signatures/iterative-white/n>3/physical RAW WB,
+GPU residency/latency/alpha/gamut/monitor and the full original release objective remain active.
+
+`7caca53c29c2d639bfd4dec963a0d3898183fbad` AnalogBalance repair Full CI 38042422458 succeeded.
+
+Accepted `7caca53` repairs DNG AnalogBalance metadata/no-ForwardMatrix conversion. Actual
 synthetic sensor test revealed copied CM had zero public parsed-fields; selected-IFD promotion
 is now an explicitly documented CDDL-covered LibRaw modification (no custom parser/demosaic).
 Resolver v5 and RAW decode policy v3 change cache identity. Full local Rust/Web pass (reports
-1791625273478 / 1791625066923); remote acceptance is pending. All original
+1791625273478 / 1791625066923), with Full CI 38042422458 successful. All original
 production phases and complete Forward/signature/iterative-white/physical-WB remain open.
 
 Previous `db14077191943400f933922120459ae67f7da20a` Full CI 38040460978 is successful.

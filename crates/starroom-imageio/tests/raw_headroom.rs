@@ -2,14 +2,94 @@
 mod fixture;
 
 #[test]
+fn actual_libraw_forward_calibration_uses_reference_neutral_before_working_conversion() {
+    use tiff::encoder::Rational;
+    let source = fixture::controlled_fixture_with_dng_profile(
+        Some([
+            Rational { n: 2, d: 1 },
+            Rational { n: 1, d: 1 },
+            Rational { n: 1, d: 2 },
+        ]),
+        true,
+    )
+    .unwrap();
+    let original = std::fs::read(&source.0).unwrap();
+    // Independently expanded DNG equation plus double-precision Bradford D50->D65.
+    let expected_matrix: [[f64; 3]; 3] = [
+        [4.607521323749922, -3.7091746365417504, 0.05212331496888902],
+        [
+            -0.1622826511018206,
+            1.1449469863345783,
+            0.017335692145308813,
+        ],
+        [
+            0.059815830180290123,
+            -0.06844077790763342,
+            1.0974548964377184,
+        ],
+    ];
+    for decoded in [
+        starroom_raw::decode_raw(&source.0).unwrap(),
+        starroom_raw::decode_raw_preview(&source.0).unwrap(),
+    ] {
+        assert_eq!(decoded.metadata.dng_color[0].parsed_fields, 15);
+        assert_eq!(
+            decoded.metadata.camera_profile.source,
+            starroom_raw::CameraProfileSource::DngForwardMatrix
+        );
+        assert_eq!(
+            decoded.metadata.camera_profile.status,
+            starroom_raw::CameraProfileStatus::Resolved
+        );
+        for (actual, expected) in decoded
+            .metadata
+            .camera_profile
+            .camera_to_xyz_d65
+            .iter()
+            .flatten()
+            .zip(expected_matrix.iter().flatten())
+        {
+            assert!((f64::from(*actual) - expected).abs() < 2e-5);
+        }
+        for (column, sensor) in [1024, 2048, 4096, 6144, 8192, 10240, 12288, 14336]
+            .into_iter()
+            .enumerate()
+        {
+            let x = (column * 8 + 4) * decoded.width as usize / 64;
+            let index = ((decoded.height as usize / 2) * decoded.width as usize + x) * 3;
+            let signal = f64::from(sensor) / 16383.0;
+            let camera = [signal * 2.0, signal, signal * 4.0];
+            let xyz = expected_matrix
+                .map(|row| row.into_iter().zip(camera).map(|(a, b)| a * b).sum::<f64>());
+            let expected = [
+                1.716_651_2 * xyz[0] - 0.355_670_78 * xyz[1] - 0.253_366_3 * xyz[2],
+                -0.666_684_3 * xyz[0] + 1.616_481_2 * xyz[1] + 0.015_768_546 * xyz[2],
+                0.017_639_857 * xyz[0] - 0.042_770_613 * xyz[1] + 0.942_103_1 * xyz[2],
+            ];
+            for (actual, expected) in decoded.rgb[index..index + 3].iter().zip(expected) {
+                assert!(
+                    (f64::from(*actual) - expected).abs() < 4e-4,
+                    "sensor={sensor} actual={actual} expected={expected}"
+                );
+            }
+        }
+        assert!(decoded.rgb.iter().all(|v| v.is_finite()));
+    }
+    assert_eq!(original, std::fs::read(&source.0).unwrap());
+}
+
+#[test]
 fn actual_libraw_analog_balance_reaches_camera_transform_and_metadata_round_trip() {
     use starroom_raw::{CameraProfileSource, CameraProfileStatus};
     use tiff::encoder::Rational;
-    let fixture = fixture::controlled_fixture_with_analog(Some([
-        Rational { n: 2, d: 1 },
-        Rational { n: 1, d: 1 },
-        Rational { n: 1, d: 2 },
-    ]))
+    let fixture = fixture::controlled_fixture_with_dng_profile(
+        Some([
+            Rational { n: 2, d: 1 },
+            Rational { n: 1, d: 1 },
+            Rational { n: 1, d: 2 },
+        ]),
+        false,
+    )
     .unwrap();
     let original = std::fs::read(&fixture.0).unwrap();
     for decoded in [

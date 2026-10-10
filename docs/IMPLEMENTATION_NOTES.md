@@ -1,5 +1,51 @@
 # Implementation Notes
 
+## 2026-10-11 — ForwardMatrix reference-neutral / calibration domain repair
+
+During local validation, simultaneous Windows safe builds reproduced a separate alias race:
+both checked R: free, one failed SUBST, then its unconditional finally removed the other
+builder's live alias. The tool now claims through SUBST itself and cleans only a successful
+owned claim. Four isolated tests cover occupied/all-failed/throw/nested ownership; real Windows
+nested claims acquired R:/S: independently and released S:/R:, and the actual Unicode-path
+TypeScript/Vite build passed. This is alias ownership, not a claim that concurrent builders
+may safely write the same dist directory. Product/installer validation remains single-build.
+The helper repair is isolated in local commit `157489b` and will be pushed with this batch.
+
+The real resolver had applied FM directly to LibRaw's already WB-scaled camera RGB, discarding
+CameraCalibration and ReferenceNeutral. A retained independent noncommuting oracle failed
+with .9213862 versus expected 4.607522 for one camera-to-XYZ coefficient. Resolver v6 now uses
+the public DNG chapter-6 FM/reference-neutral/inverse(AB*CC) transform and undoes baked WB once
+before D50->D65. Existing Matrix3/Bradford providers supply all matrix/adaptation operations.
+Dual FM and CC interpolate independently before reference-neutral construction, not endpoint
+final matrices. Existing mired/midpoint white estimation remains unchanged and unqualified as
+a complete iterative DNG white solver. Mixed endpoint domains and malformed declared endpoints
+are explicit Generic Profile states rather than invalid matrix blends, endpoint omission or
+silent replacement with a known-maker LibRaw transform. Invalid reference neutrals stay finite.
+
+Original matrix/chart tests and thresholds are retained. New tests cover single noncommuting
+calibration, dual FM/CC order, invalid reference neutral, malformed endpoint and mixed domains,
+a strict 24-patch calibrated chart, plus actual full/half LibRaw sensor pixels against independent
+double-precision coefficients. The authored DNG generator uses the existing TIFF codec to encode
+ForwardMatrix/CameraCalibration/AnalogBalance; actual public presence bits must all be present.
+Its updated LF source hash is in the RAW manifest. A new real sensor/shared graph regression
+requires exact Preview/Export equality at three EVs and material pixel difference from a CM-only
+source, with original bytes unchanged. The RAW targeted gate includes these files explicitly.
+TIFF 0.11.3 is newly referenced by pipeline tests only; no external package/version/license change.
+
+No new GPU/preview engine, source mutation, image-quality downgrade or intermediate clamping
+is introduced. Complete signatures, iterative-white, n>3/ReductionMatrix, physical RAW WB,
+photographic quality, alpha/gamut/monitor/residency/latency and final Windows acceptance remain
+open in the original full completion matrix. Component tests are not Final qualification.
+
+Full local Rust passed format, warning-denied workspace Clippy, every ordinary unit/integration
+test and doc-test runner (`test-timing-1791651991985.json`). Full Web passed 202 tests/30 files,
+lint, TypeScript, actual Unicode-path build, Golden/RAW manifests and packaging configuration
+(`test-timing-1791651722084.json`). The six public RAW sensor formats passed in 54.89 seconds.
+Raw unit tests are 25; chart tests 5; imageio sensor tests 3; pipeline adds the actual forward
+sensor graph test. Four existing opt-in/private/heavy tests remain separately required, not
+implied by ordinary Full success. Licenses validate 561 Rust / 6 npm production packages and
+269 retained notices. No installed/100MP/offline/complete-photographic/latency claim is made.
+
 ## 2026-10-10 — Independent dual DNG calibration interpolation
 
 Actual production counterexample: interpolating endpoint CC*CM products gave inverse red

@@ -182,6 +182,58 @@ fn colorchecker_analog_balance_preserves_d65_reference_camera_coordinates() {
 }
 
 #[test]
+fn colorchecker_forward_profile_applies_calibration_in_baked_wb_domain() {
+    let profile = CameraProfileResolver::resolve(&CameraProfileInput {
+        make: "Starroom ColorChecker Oracle".into(),
+        model: "Forward calibrated camera".into(),
+        dng_version: 1,
+        libraw_cam_xyz: [[0.0; 3]; 4],
+        camera_neutral: [0.5, 1.0, 0.25, 1.0],
+        analog_balance: [2.0, 1.0, 0.5, 1.0],
+        dng: [
+            DngMatrixSet {
+                parsed_fields: 1 | (1 << 3),
+                calibration: [
+                    [1.0, 0.2, 0.0, 0.0],
+                    [0.1, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0; 4],
+                ],
+                forward_matrix: [
+                    [D50.x, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, D50.z, 0.0],
+                ],
+                ..Default::default()
+            },
+            Default::default(),
+        ],
+    });
+    assert_eq!(profile.status, CameraProfileStatus::Resolved);
+    for patch in fixture().patches {
+        let xyz = xy_y_to_xyz(patch.xy_y);
+        // Independent inverse of the expanded camera->XYZ D50 2x2 calibrated block.
+        let camera = [
+            (40.0 * xyz.x / D50.x + 156.0 * xyz.y) / 196.0,
+            (xyz.x / D50.x + 195.0 * xyz.y) / 196.0,
+            xyz.z / D50.z,
+        ];
+        let expected = adapt_xyz(xyz, D50, D65);
+        for (actual, expected) in profile
+            .camera_rgb_to_xyz_d65(camera)
+            .into_iter()
+            .zip([expected.x, expected.y, expected.z])
+        {
+            assert!(
+                (actual - expected).abs() < 2e-5,
+                "{}: {actual} {expected}",
+                patch.name
+            );
+        }
+    }
+}
+
+#[test]
 fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
     let mut dng = DngMatrixSet {
         parsed_fields: 1 | (1 << 1),

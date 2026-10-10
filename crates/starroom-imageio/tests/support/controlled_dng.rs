@@ -20,11 +20,12 @@ impl Drop for OwnedFixture {
 }
 
 pub fn controlled_fixture() -> Result<OwnedFixture, Box<dyn Error>> {
-    controlled_fixture_with_analog(None)
+    controlled_fixture_with_dng_profile(None, false)
 }
 
-pub fn controlled_fixture_with_analog(
+pub fn controlled_fixture_with_dng_profile(
     analog: Option<[Rational; 3]>,
+    forward_and_calibration: bool,
 ) -> Result<OwnedFixture, Box<dyn Error>> {
     let mut bytes = Cursor::new(Vec::new());
     {
@@ -51,6 +52,18 @@ pub fn controlled_fixture_with_analog(
             .map(|n| SRational { n, d: 1 })
             .collect();
         dir.write_tag(Tag::Unknown(50721), matrix.as_slice())?;
+        if forward_and_calibration {
+            let forward: Vec<_> = [96422, 0, 0, 0, 100000, 0, 0, 0, 82521]
+                .into_iter()
+                .map(|n| SRational { n, d: 100000 })
+                .collect();
+            let calibration: Vec<_> = [10, 2, 0, 1, 10, 0, 0, 0, 10]
+                .into_iter()
+                .map(|n| SRational { n, d: 10 })
+                .collect();
+            dir.write_tag(Tag::Unknown(50964), forward.as_slice())?;
+            dir.write_tag(Tag::Unknown(50723), calibration.as_slice())?;
+        }
         if let Some(analog) = analog {
             dir.write_tag(Tag::Unknown(50727), &analog[..])?;
         }

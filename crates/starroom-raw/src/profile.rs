@@ -13,7 +13,8 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
     [0.019_333_9, 0.119_192, 0.950_304_1],
 ]);
 
-pub const CAMERA_PROFILE_RESOLVER_VERSION: &str = "starroom-camera-profile-v5-analog-balance";
+pub const CAMERA_PROFILE_RESOLVER_VERSION: &str =
+    "starroom-camera-profile-v6-forward-reference-neutral";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,9 +132,17 @@ impl CameraProfileResolver {
         let family = camera_family(&input.make);
         let dng_candidates: Vec<CandidateMatrix> =
             input.dng.iter().filter_map(dng_candidate).collect();
+        let declared_matrices = input
+            .dng
+            .iter()
+            .filter(|set| set.parsed_fields & (DNG_FORWARD_MATRIX | DNG_COLOR_MATRIX) != 0)
+            .count();
 
         let (status, source, matrix, illuminants, weight, resolved_family) =
-            if input.dng_version != 0 && !dng_candidates.is_empty() {
+            if input.dng_version != 0 && declared_matrices != dng_candidates.len() {
+                // A declared malformed endpoint must not silently become a single other endpoint.
+                generic_profile_tuple()
+            } else if input.dng_version != 0 && !dng_candidates.is_empty() {
                 let all_forward = dng_candidates.iter().all(|item| item.used_forward);
                 let none_forward = dng_candidates.iter().all(|item| !item.used_forward);
                 let source = if all_forward {
@@ -248,6 +257,7 @@ fn camera_family(make: &str) -> CameraFamily {
 }
 
 fn dng_candidate(set: &DngMatrixSet) -> Option<CandidateMatrix> {
+    let camera_calibration = dng_camera_calibration(set)?;
     let illuminant_code = if set.parsed_fields & DNG_ILLUMINANT != 0 {
         set.illuminant
     } else {
@@ -279,22 +289,35 @@ fn dng_candidate(set: &DngMatrixSet) -> Option<CandidateMatrix> {
             return Some(CandidateMatrix {
                 matrix,
                 color_matrix: None,
-                calibration: Matrix3::IDENTITY,
+                calibration: camera_calibration,
                 used_forward: true,
                 illuminant,
             });
         }
+        return None;
     }
     if set.parsed_fields & DNG_COLOR_MATRIX == 0 {
         return None;
     }
-    let mut color = Matrix3([
+    let original_color = Matrix3([
         set.color_matrix[0],
         set.color_matrix[1],
         set.color_matrix[2],
     ]);
-    let original_color = color;
-    let mut camera_calibration = Matrix3::IDENTITY;
+    let color = camera_calibration.multiply(original_color);
+    color
+        .inverse()
+        .filter(|matrix| valid_matrix(*matrix))
+        .map(|matrix| CandidateMatrix {
+            matrix,
+            color_matrix: Some(original_color),
+            calibration: camera_calibration,
+            used_forward: false,
+            illuminant,
+        })
+}
+
+fn dng_camera_calibration(set: &DngMatrixSet) -> Option<Matrix3> {
     if set.parsed_fields & DNG_CALIBRATION != 0 {
         let calibration = Matrix3([
             [
@@ -313,21 +336,10 @@ fn dng_candidate(set: &DngMatrixSet) -> Option<CandidateMatrix> {
                 set.calibration[2][2],
             ],
         ]);
-        if valid_matrix(calibration) {
-            camera_calibration = calibration;
-            color = calibration.multiply(color);
-        }
+        valid_matrix(calibration).then_some(calibration)
+    } else {
+        Some(Matrix3::IDENTITY)
     }
-    color
-        .inverse()
-        .filter(|matrix| valid_matrix(*matrix))
-        .map(|matrix| CandidateMatrix {
-            matrix,
-            color_matrix: Some(original_color),
-            calibration: camera_calibration,
-            used_forward: false,
-            illuminant,
-        })
 }
 
 fn interpolate_dng_candidates(
@@ -335,7 +347,13 @@ fn interpolate_dng_candidates(
     input: &CameraProfileInput,
 ) -> Option<(Matrix3, Option<f32>)> {
     if candidates.len() == 1 {
-        return Some((candidates[0].matrix, None));
+        let first = candidates[0];
+        let matrix = if first.used_forward {
+            balanced_forward_matrix_to_xyz_d50(first.matrix, first.calibration, input)?
+        } else {
+            first.matrix
+        };
+        return Some((matrix, None));
     }
     let first = candidates[0];
     let second = candidates[1];
@@ -364,8 +382,15 @@ fn interpolate_dng_candidates(
         let color = lerp_matrix(first.color_matrix?, second.color_matrix?, weight);
         let calibration = lerp_matrix(first.calibration, second.calibration, weight);
         calibration.multiply(color).inverse()?
+    } else if first.used_forward && second.used_forward {
+        balanced_forward_matrix_to_xyz_d50(
+            lerp_matrix(first.matrix, second.matrix, weight),
+            lerp_matrix(first.calibration, second.calibration, weight),
+            input,
+        )?
     } else {
-        lerp_matrix(first.matrix, second.matrix, weight)
+        // Mixed endpoint methods have different input domains; never interpolate their matrices.
+        return None;
     };
     valid_matrix(matrix).then_some((matrix, Some(weight)))
 }
@@ -420,6 +445,57 @@ fn libraw_camera_to_xyz(cam_xyz: [[f32; 3]; 4]) -> Option<Matrix3> {
 
 fn adapt_matrix(matrix: Matrix3, source_white: Xyz, destination_white: Xyz) -> Matrix3 {
     bradford_adaptation(source_white, destination_white).multiply(matrix)
+}
+
+/// DNG chapter 6 ForwardMatrix formula in the actual LibRaw baked-WB camera boundary.
+/// ReferenceNeutral = inverse(AB*CC)*CameraNeutral; D = inverse(diagonal(ReferenceNeutral)).
+/// Undo baked WB exactly once on the right. No intermediate RGB clipping or pixel gains.
+fn balanced_forward_matrix_to_xyz_d50(
+    forward: Matrix3,
+    calibration: Matrix3,
+    input: &CameraProfileInput,
+) -> Option<Matrix3> {
+    let analog = input.analog_balance;
+    let neutral = input.camera_neutral;
+    if !analog[..3]
+        .iter()
+        .chain(neutral[..3].iter())
+        .all(|v| v.is_finite() && *v > 0.0)
+    {
+        return None;
+    }
+    let analog = Matrix3([
+        [analog[0], 0.0, 0.0],
+        [0.0, analog[1], 0.0],
+        [0.0, 0.0, analog[2]],
+    ]);
+    let inverse_camera = analog.multiply(calibration).inverse()?;
+    let reference = inverse_camera.multiply_vec(Xyz {
+        x: neutral[0],
+        y: neutral[1],
+        z: neutral[2],
+    });
+    if ![reference.x, reference.y, reference.z]
+        .iter()
+        .all(|v| v.is_finite() && *v > 1e-8)
+    {
+        return None;
+    }
+    let balance = Matrix3([
+        [1.0 / reference.x, 0.0, 0.0],
+        [0.0, 1.0 / reference.y, 0.0],
+        [0.0, 0.0, 1.0 / reference.z],
+    ]);
+    let undo_wb = Matrix3([
+        [neutral[0], 0.0, 0.0],
+        [0.0, neutral[1], 0.0],
+        [0.0, 0.0, neutral[2]],
+    ]);
+    let output = forward
+        .multiply(balance)
+        .multiply(inverse_camera)
+        .multiply(undo_wb);
+    valid_matrix(output).then_some(output)
 }
 
 /// DNG 1.7.1 chapter 6: XYZtoCamera = AB * CC * CM. The input matrix is
@@ -645,6 +721,162 @@ mod tests {
         assert_eq!(profile.status, CameraProfileStatus::Generic);
         assert_eq!(profile.source, CameraProfileSource::GenericLinearSrgb);
         assert!(profile.id.starts_with("generic-linear-srgb:"));
+    }
+
+    #[test]
+    fn forward_profile_uses_reference_neutral_and_noncommuting_calibration() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.camera_neutral = [0.5, 1.0, 0.25, 1.0];
+        value.analog_balance = [2.0, 1.0, 0.5, 1.0];
+        value.dng[0].parsed_fields = DNG_FORWARD_MATRIX | DNG_CALIBRATION;
+        value.dng[0].forward_matrix = [
+            [D50.x, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, D50.z, 0.0],
+        ];
+        value.dng[0].calibration = [
+            [1.0, 0.2, 0.0, 0.0],
+            [0.1, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0; 4],
+        ];
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.source, CameraProfileSource::DngForwardMatrix);
+        // Independently expanded FM * D * inverse(AB * CC) * undoWB.
+        let d50_matrix = Matrix3([
+            [4.8211, -3.85688, 0.0],
+            [-0.025_641_026, 1.025_641, 0.0],
+            [0.0, 0.0, D50.z],
+        ]);
+        let expected = bradford_adaptation(D50, D65).multiply(d50_matrix);
+        for (actual, expected) in profile
+            .camera_to_xyz_d65
+            .iter()
+            .flatten()
+            .zip(expected.0.iter().flatten())
+        {
+            assert!(
+                (actual - expected).abs() < 2e-5,
+                "actual={actual} expected={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_forward_and_color_endpoints_are_explicit_generic_not_domain_blend() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.dng[0].parsed_fields = DNG_FORWARD_MATRIX;
+        value.dng[0].forward_matrix = [
+            [D50.x, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, D50.z, 0.0],
+        ];
+        value.dng[1].parsed_fields = DNG_COLOR_MATRIX;
+        for row in 0..3 {
+            value.dng[1].color_matrix[row][row] = 1.0;
+        }
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.status, CameraProfileStatus::Generic);
+        assert_eq!(profile.source, CameraProfileSource::GenericLinearSrgb);
+    }
+
+    #[test]
+    fn forward_invalid_reference_neutral_does_not_produce_nan_or_resolved_profile() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.dng[0].parsed_fields = DNG_FORWARD_MATRIX | DNG_CALIBRATION;
+        value.dng[0].forward_matrix = [
+            [D50.x, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, D50.z, 0.0],
+        ];
+        value.dng[0].calibration = [
+            [1.0, 2.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0; 4],
+        ];
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.status, CameraProfileStatus::Generic);
+        assert!(
+            profile
+                .camera_to_xyz_d65
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite())
+        );
+    }
+
+    #[test]
+    fn dual_forward_interpolates_forward_and_calibration_before_reference_balance() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.camera_neutral = [0.5, 1.0, 0.25, 1.0];
+        value.analog_balance = [2.0, 1.0, 0.5, 1.0];
+        for (index, set) in value.dng.iter_mut().enumerate() {
+            set.parsed_fields = DNG_FORWARD_MATRIX | DNG_CALIBRATION | DNG_ILLUMINANT;
+            set.illuminant = if index == 0 { 17 } else { 21 };
+            let cross = index as f32;
+            set.calibration = [
+                [1.0, 0.4 * cross, 0.0, 0.0],
+                [0.2 * cross, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0; 4],
+            ];
+            set.forward_matrix = [
+                [D50.x * (1.0 - 0.2 * cross), D50.x * 0.2 * cross, 0.0, 0.0],
+                [0.2 * cross, 1.0 - 0.2 * cross, 0.0, 0.0],
+                [0.0, 0.0, D50.z, 0.0],
+            ];
+        }
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.status, CameraProfileStatus::Resolved);
+        assert!((profile.dual_illuminant_weight.unwrap() - 0.5).abs() < 1e-6);
+        let expected = bradford_adaptation(D50, D65).multiply(Matrix3([
+            [D50.x * 877.0 / 195.0, -D50.x * 682.0 / 195.0, 0.0],
+            [31.0 / 65.0, 34.0 / 65.0, 0.0],
+            [0.0, 0.0, D50.z],
+        ]));
+        for (actual, expected) in profile
+            .camera_to_xyz_d65
+            .iter()
+            .flatten()
+            .zip(expected.0.iter().flatten())
+        {
+            assert!(
+                (actual - expected).abs() < 2e-5,
+                "actual={actual} expected={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_declared_dng_endpoint_never_silently_uses_other_or_libraw_profile() {
+        let mut value = input();
+        value.make = "Nikon".into();
+        value.dng_version = 1;
+        value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        for set in &mut value.dng {
+            set.parsed_fields = DNG_FORWARD_MATRIX;
+            set.forward_matrix = [
+                [D50.x, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, D50.z, 0.0],
+            ];
+        }
+        value.dng[0].forward_matrix[0][0] = f32::NAN;
+        assert_eq!(
+            CameraProfileResolver::resolve(&value).status,
+            CameraProfileStatus::Generic
+        );
+        value.dng[0].forward_matrix[0][0] = D50.x;
+        value.dng[0].parsed_fields |= DNG_CALIBRATION;
+        assert_eq!(
+            CameraProfileResolver::resolve(&value).status,
+            CameraProfileStatus::Generic
+        );
     }
 
     #[test]

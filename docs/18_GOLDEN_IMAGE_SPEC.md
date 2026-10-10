@@ -83,6 +83,13 @@ Bradford/XYZ-to-Rec.2020 sensor-ramp oracle and leave source bytes unchanged. Th
 ColorChecker data adds a strict AnalogBalance camera-coordinate oracle. This does not add
 photographic scene coverage or complete ForwardMatrix/dual-white/signature acceptance.
 
+A ForwardMatrix + non-diagonal CameraCalibration variant now asserts the actual LibRaw
+presence flags, full/half sensor pixels against independent double-precision D50->D65/Rec.2020
+coefficients, original-byte immutability and exact Native Preview/Export parity for three EVs.
+The existing 24-patch chart also checks the calibrated baked-WB domain. This is controlled
+equation/domain validation, not additional real-camera/lighting/skin IQ coverage. All original
+photographic/18-category/perceptual metric gates remain required.
+
 - M21 selects `ai,detail,high-iso,portrait,skin,night,hdr`. Active Rust fixtures additionally cover flat luminance/chroma noise, colored texture, portrait-like skin protection, scene-linear values above 1.0, portrait/landscape/small/large tile plans, overlap seams, cancellation and missing/hash/runtime/tensor/OOM typed failures. The private NAFNet file is never required by CI; a deterministic inferencer double validates domain/tiling/residual semantics, while an explicitly provisioned local model may run the same provider contract.
 - M22 selects `color,tone,curve,portrait,skin,night,hdr`. Every analysis asserts deterministic quantiles, finite OKLab covariance/eight-band statistics, monotonic fitted curve, bounded existing adjustment parameters, identity neutrality, underexposure direction, mixed-color direction and reduced skin impact when protection is enabled.
 - M23 selects `color,curve,detail,portrait,night,hdr`. Schema round-trip rejects unknown versions and forbidden/non-portable state by construction. Amount endpoints, A/B blend, circular hue, sampled curves, deterministic grain and vignette HDR finiteness are numerical regressions. The pipeline test requires identical Native Preview and Export bytes for the same source identity/settings, including normalized A70/B30 Look output composed through an adjustment Layer and radial Mask.

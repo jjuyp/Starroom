@@ -10,7 +10,15 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
-DNG AnalogBalance follow-up (2026-10-10, worktree under validation): extract actual LibRaw
+ForwardMatrix follow-up (2026-10-11, under validation): actual LibRaw baked-WB input now uses
+FM * reference-neutral diagonal * inverse(AB*CC) * undoWB before D50->D65, not direct FM.
+The independent .9213862 vs 4.607522 coefficient counterexample is corrected. FM/CC interpolate
+separately; malformed/mixed endpoint domains produce explicit Generic status rather than
+discarded endpoints or blended incompatible matrices. Authored full/half sensor and strict
+chart/shared tests do not qualify signatures, iterative-white, n>3, physical camera WB,
+photographic IQ or final installed/resident/latency acceptance.
+
+DNG AnalogBalance follow-up (2026-10-10, `7caca53` Full CI 38042422458 successful): extract actual LibRaw
 analogbalance, retain backwards-compatible metadata and apply inverse(AB) after inverse(CC*CM)
 only in the no-ForwardMatrix source path; do not apply it again to LibRaw cam_xyz or pixels.
 An actual authored DNG exposed upstream copied CM/illuminant values with zero public flags.
