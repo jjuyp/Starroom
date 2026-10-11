@@ -126,7 +126,10 @@ enum LibRaw_dngfields_marks
   LIBRAW_DNGFM_LINEARRESPONSELIMIT = 1 << 14,
   LIBRAW_DNGFM_USERCROP = 1 << 15,
   LIBRAW_DNGFM_OPCODE1 = 1 << 16,
-  LIBRAW_DNGFM_OPCODE3 = 1 << 17
+  LIBRAW_DNGFM_OPCODE3 = 1 << 17,
+  // Starroom covered modification: selected-IFD DNG calibration signature metadata.
+  LIBRAW_DNGFM_CAMERA_SIGNATURE = 1 << 18,
+  LIBRAW_DNGFM_PROFILE_SIGNATURE = 1 << 19
 };
 
 enum LibRaw_As_Shot_WB_Applied_codes

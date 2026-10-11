@@ -14,7 +14,7 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
 ]);
 
 pub const CAMERA_PROFILE_RESOLVER_VERSION: &str =
-    "starroom-camera-profile-v6-forward-reference-neutral";
+    "starroom-camera-profile-v7-calibration-signatures";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,6 +85,7 @@ pub struct CameraProfileInput {
     pub camera_neutral: [f32; 4],
     /// Original DNG AnalogBalance; LibRaw cam_xyz already includes it, raw DNG CM/CC do not.
     pub analog_balance: [f32; 4],
+    pub calibration_signatures_match: bool,
     pub dng: [DngMatrixSet; 2],
 }
 
@@ -103,6 +104,8 @@ pub struct CameraProfileDescriptor {
     pub camera_to_xyz_d65: [[f32; 3]; 3],
     pub calibration_illuminants: Vec<CalibrationIlluminant>,
     pub dual_illuminant_weight: Option<f32>,
+    #[serde(default = "default_signatures_match")]
+    pub calibration_signatures_match: bool,
 }
 
 impl CameraProfileDescriptor {
@@ -130,8 +133,13 @@ pub struct CameraProfileResolver;
 impl CameraProfileResolver {
     pub fn resolve(input: &CameraProfileInput) -> CameraProfileDescriptor {
         let family = camera_family(&input.make);
-        let dng_candidates: Vec<CandidateMatrix> =
-            input.dng.iter().filter_map(dng_candidate).collect();
+        let dng_candidates: Vec<CandidateMatrix> = input
+            .dng
+            .iter()
+            .filter_map(|set| {
+                dng_candidate_with_signatures(set, input.calibration_signatures_match)
+            })
+            .collect();
         let declared_matrices = input
             .dng
             .iter()
@@ -217,6 +225,7 @@ impl CameraProfileResolver {
             camera_to_xyz_d65: matrix.0,
             calibration_illuminants: illuminants,
             dual_illuminant_weight: weight,
+            calibration_signatures_match: input.calibration_signatures_match,
         };
         descriptor.hash = profile_hash(&descriptor);
         descriptor
@@ -256,8 +265,24 @@ fn camera_family(make: &str) -> CameraFamily {
     }
 }
 
+#[cfg(test)]
 fn dng_candidate(set: &DngMatrixSet) -> Option<CandidateMatrix> {
-    let camera_calibration = dng_camera_calibration(set)?;
+    dng_candidate_with_signatures(set, true)
+}
+
+fn default_signatures_match() -> bool {
+    true
+}
+
+fn dng_candidate_with_signatures(
+    set: &DngMatrixSet,
+    signatures_match: bool,
+) -> Option<CandidateMatrix> {
+    let camera_calibration = if signatures_match {
+        dng_camera_calibration(set)?
+    } else {
+        Matrix3::IDENTITY
+    };
     let illuminant_code = if set.parsed_fields & DNG_ILLUMINANT != 0 {
         set.illuminant
     } else {
@@ -588,6 +613,7 @@ fn profile_hash(descriptor: &CameraProfileDescriptor) -> String {
         descriptor.camera_to_xyz_d65,
         &descriptor.calibration_illuminants,
         descriptor.dual_illuminant_weight,
+        descriptor.calibration_signatures_match,
     ))
     .expect("camera profile fingerprint fields are serializable");
     format!("{:x}", Sha256::digest(bytes))
@@ -621,6 +647,7 @@ mod tests {
             libraw_cam_xyz: [[0.0; 3]; 4],
             camera_neutral: [0.5, 1.0, 0.7, 1.0],
             analog_balance: [1.0; 4],
+            calibration_signatures_match: true,
             dng: [DngMatrixSet::default(), DngMatrixSet::default()],
         }
     }
@@ -877,6 +904,56 @@ mod tests {
             CameraProfileResolver::resolve(&value).status,
             CameraProfileStatus::Generic
         );
+    }
+
+    #[test]
+    fn signature_mismatch_ignores_calibration_in_both_matrix_domains() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.dng[0].parsed_fields = DNG_COLOR_MATRIX | DNG_CALIBRATION;
+        value.dng[0].color_matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        value.dng[0].calibration = [
+            [1.0, 0.2, 0.0, 0.0],
+            [0.1, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0; 4],
+        ];
+        for forward in [false, true] {
+            if forward {
+                value.dng[0].parsed_fields |= DNG_FORWARD_MATRIX;
+                value.dng[0].forward_matrix = [
+                    [D50.x, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, D50.z, 0.0],
+                ];
+            }
+            value.calibration_signatures_match = true;
+            let matching = CameraProfileResolver::resolve(&value);
+            value.calibration_signatures_match = false;
+            let mismatched = CameraProfileResolver::resolve(&value);
+            let mut identity = value.clone();
+            identity.calibration_signatures_match = true;
+            identity.dng[0].parsed_fields &= !DNG_CALIBRATION;
+            let identity = CameraProfileResolver::resolve(&identity);
+            assert_eq!(mismatched.status, CameraProfileStatus::Resolved);
+            assert_eq!(mismatched.camera_to_xyz_d65, identity.camera_to_xyz_d65);
+            assert_ne!(matching.camera_to_xyz_d65, mismatched.camera_to_xyz_d65);
+            assert_ne!(matching.hash, mismatched.hash);
+            assert!(!mismatched.calibration_signatures_match);
+        }
+    }
+
+    #[test]
+    fn signature_policy_is_saved_with_profile_and_legacy_default_is_compatible() {
+        let profile = CameraProfileResolver::resolve(&input());
+        let mut encoded = serde_json::to_value(&profile).unwrap();
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .remove("calibrationSignaturesMatch");
+        let restored: CameraProfileDescriptor = serde_json::from_value(encoded).unwrap();
+        assert!(restored.calibration_signatures_match);
+        assert_eq!(restored, profile);
     }
 
     #[test]

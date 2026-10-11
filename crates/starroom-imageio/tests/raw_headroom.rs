@@ -2,6 +2,83 @@
 mod fixture;
 
 #[test]
+fn actual_dng_signature_bytes_control_calibration_without_truncation_or_normalization() {
+    let long = "camera-".repeat(100);
+    let mut changed = long.clone();
+    changed.push('x');
+    let cases: Vec<([Option<&[u8]>; 2], bool)> = vec![
+        ([None, None], true),
+        ([Some(b"same"), Some(b"same")], true),
+        ([Some(b"camera"), Some(b"profile")], false),
+        ([Some(b"camera"), None], false),
+        ([Some("校正".as_bytes()), Some("校正".as_bytes())], true),
+        ([Some("é".as_bytes()), Some("e\u{301}".as_bytes())], false),
+        ([Some(long.as_bytes()), Some(long.as_bytes())], true),
+        ([Some(long.as_bytes()), Some(changed.as_bytes())], false),
+    ];
+    let mut matching_matrix = None;
+    let mut mismatched_matrix = None;
+    for (signatures, expected) in cases {
+        let source =
+            fixture::controlled_fixture_with_signatures(None, true, Some(signatures)).unwrap();
+        let original = std::fs::read(&source.0).unwrap();
+        for decoded in [
+            starroom_raw::decode_raw(&source.0).unwrap(),
+            starroom_raw::decode_raw_preview(&source.0).unwrap(),
+        ] {
+            assert_eq!(decoded.metadata.calibration_signatures_match, expected);
+            assert_eq!(
+                decoded.metadata.camera_profile.calibration_signatures_match,
+                expected
+            );
+            assert_eq!(
+                decoded.metadata.camera_profile.status,
+                starroom_raw::CameraProfileStatus::Resolved
+            );
+            let saved = if expected {
+                &mut matching_matrix
+            } else {
+                &mut mismatched_matrix
+            };
+            let matrix = decoded.metadata.camera_profile.camera_to_xyz_d65;
+            if let Some(expected) = saved {
+                assert_eq!(*expected, matrix);
+            } else {
+                *saved = Some(matrix);
+            }
+            assert!(decoded.rgb.iter().all(|v| v.is_finite()));
+        }
+        assert_eq!(original, std::fs::read(&source.0).unwrap());
+    }
+    assert_ne!(matching_matrix, mismatched_matrix);
+}
+
+#[test]
+fn malformed_or_excessive_dng_signature_metadata_returns_typed_errors() {
+    let malformed = fixture::controlled_fixture_with_signatures(
+        None,
+        true,
+        Some([Some(b"prefix\0hidden"), Some(b"prefix")]),
+    )
+    .unwrap();
+    assert!(matches!(
+        starroom_raw::decode_raw(&malformed.0),
+        Err(starroom_raw::RawDecodeError::InvalidData { .. })
+    ));
+    let excessive = vec![b'x'; 4 * 1024 * 1024];
+    let source = fixture::controlled_fixture_with_signatures(
+        None,
+        true,
+        Some([Some(&excessive), Some(b"other")]),
+    )
+    .unwrap();
+    assert!(matches!(
+        starroom_raw::decode_raw(&source.0),
+        Err(starroom_raw::RawDecodeError::MemoryLimit { code: -100012, .. })
+    ));
+}
+
+#[test]
 fn actual_raw_region_copies_only_selected_samples_and_retains_profile_metadata() {
     use starroom_imageio::{DecodedSourceImage, ImageIoError};
     let fixture = fixture::controlled_fixture().unwrap();

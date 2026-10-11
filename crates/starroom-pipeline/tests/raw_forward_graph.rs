@@ -9,6 +9,48 @@ use starroom_pipeline::{
 use tiff::encoder::Rational;
 
 #[test]
+fn real_primary_profile_signature_policy_reaches_native_preview_and_export_pixels() {
+    let matching = fixture::controlled_fixture_with_signatures(
+        None,
+        true,
+        Some([Some(b"camera"), Some(b"camera")]),
+    )
+    .unwrap();
+    let mismatching = fixture::controlled_fixture_with_signatures(
+        None,
+        true,
+        Some([Some(b"camera"), Some(b"different-profile")]),
+    )
+    .unwrap();
+    let matched = decode_source(&matching.0).unwrap();
+    let mismatched = decode_source(&mismatching.0).unwrap();
+    for exposure in [-2.0, 0.0, 1.0] {
+        let settings = RenderSettings {
+            tone: ToneParameters {
+                exposure_ev: exposure,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let matched_preview = render_source_preview_to_srgb8(&matched, &settings).unwrap();
+        let mismatched_preview = render_source_preview_to_srgb8(&mismatched, &settings).unwrap();
+        assert_eq!(
+            matched_preview,
+            render_source_export_to_srgb8(&matched, &settings).unwrap()
+        );
+        assert_eq!(
+            mismatched_preview,
+            render_source_export_to_srgb8(&mismatched, &settings).unwrap()
+        );
+        assert_ne!(matched_preview.data, mismatched_preview.data);
+        assert_ne!(
+            matched_preview.color.camera_profile_hash,
+            mismatched_preview.color.camera_profile_hash
+        );
+    }
+}
+
+#[test]
 fn real_forward_dng_sensor_uses_shared_native_preview_export_graph() {
     let baseline = fixture::controlled_fixture().unwrap();
     let baseline = decode_source(&baseline.0).unwrap();

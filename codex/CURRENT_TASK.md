@@ -2,13 +2,25 @@
 
 ## Current Milestone
 
+Current worktree implements exact primary DNG calibration signature matching in the existing
+LibRaw metadata parser/arena and both coefficient paths, then the narrow Native resolver.
+Actual full/half tests cover UTF-8, absence/one-missing, long prefixes, no normalization and
+typed malformed/4MiB resource errors. Resolver v7 / decode policy v4 and saved match flag bind
+identity; no pixels/signature strings in IPC. Covered-source changes/hashes/notices recorded.
+Full local Rust/Web passed reports 1791693497319 / 1791693124895; remote acceptance pending.
+All original extra-profile/iterative-white/n>3/physical-WB,
+alpha/gamut/monitor/residency/latency/Windows/100MP/Final gates remain open.
+
+Prior `6c5b42646c20389ab4557b1687c01188bab17cb5` Full CI 38073649004 is successful. Local
+`89f9607` memory-policy repair is not yet pushed; it will be batched after current acceptance.
+
 Current worktree adds real LibRaw sensor memory-limit entry point and typed upstream OOM/
 resource-limit errors through the same existing decoder; default calls retain upstream policy.
 An actual Nikon D1 1MB-limit test returns -100012, preserves bytes and then decodes normally
 without half-size/thumbnail substitution. Memory UX test passes. Scope is LibRaw sensor budget,
 not all Rust/codec/application allocations. RAW milestone passed 1791655984674, including
 all source/shared/GPU/format/workspace-Clippy/lint/build gates; Memory UX has 23 tests.
-Current 6c5b426 Full CI 38073649004 remains running; preserve it before the next push.
+Prior 6c5b426 Full CI 38073649004 is successful; the current ABI/source changes need their own CI.
 
 Current worktree removes demonstrated full-RGB RAW clone from region extraction; exact real
 DNG row/profile/metadata tests and MSVC release real RAF benchmark pass (49.2084ms -> 2.5640ms

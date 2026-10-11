@@ -267,6 +267,8 @@ typedef unsigned long long UINT64;
     float baseline_exposure;
     float LinearResponseLimit;
 	libraw_dng_rawopcode_t rawopcodes[3];
+    // Starroom: exact UTF-8 signature bytes, owned by the existing LibRaw memory manager.
+    libraw_dng_rawopcode_t calibration_signatures[2];
   } libraw_dng_levels_t;
 
   typedef struct

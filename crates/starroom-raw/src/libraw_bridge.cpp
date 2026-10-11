@@ -31,6 +31,7 @@ struct SrRawResult {
   float camera_multipliers[4];
   float pre_multipliers[4];
   float analog_balance[4];
+  uint32_t calibration_signatures_match;
   float cam_xyz[12];
   uint32_t dng_parsed_fields[2];
   uint16_t dng_illuminants[2];
@@ -120,6 +121,10 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
   result->dng_version = data.idata.dng_version;
   result->black = data.color.black;
   result->maximum = data.color.maximum;
+  const auto &camera_signature = data.color.dng_levels.calibration_signatures[0];
+  const auto &profile_signature = data.color.dng_levels.calibration_signatures[1];
+  result->calibration_signatures_match = camera_signature.len == profile_signature.len &&
+      (camera_signature.len == 0 || std::memcmp(camera_signature.data, profile_signature.data, camera_signature.len) == 0);
   for (size_t index = 0; index < 4; ++index) {
     result->cblack[index] = data.color.cblack[index];
     result->camera_multipliers[index] = data.color.cam_mul[index];

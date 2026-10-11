@@ -38,6 +38,7 @@ fn main() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: [1.0; 4],
         analog_balance: [1.0; 4],
+        calibration_signatures_match: true,
         dng: [dng, DngMatrixSet::default()],
     };
     let profile = CameraProfileResolver::resolve(&input);

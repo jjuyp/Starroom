@@ -97,6 +97,7 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: neutral,
         analog_balance: [1.0; 4],
+        calibration_signatures_match: true,
         dng: [dng, DngMatrixSet::default()],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
@@ -159,6 +160,7 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: neutral,
         analog_balance: [1.0; 4],
+        calibration_signatures_match: true,
         dng,
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
@@ -198,6 +200,7 @@ fn colorchecker_analog_balance_preserves_d65_reference_camera_coordinates() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: neutral,
         analog_balance: analog,
+        calibration_signatures_match: true,
         dng: [
             DngMatrixSet {
                 parsed_fields: 1 << 2,
@@ -237,6 +240,7 @@ fn colorchecker_forward_profile_applies_calibration_in_baked_wb_domain() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: [0.5, 1.0, 0.25, 1.0],
         analog_balance: [2.0, 1.0, 0.5, 1.0],
+        calibration_signatures_match: true,
         dng: [
             DngMatrixSet {
                 parsed_fields: 1 | (1 << 3),
@@ -302,6 +306,7 @@ fn colorchecker_d50_forward_profile_matches_bradford_d65_reference() {
         libraw_cam_xyz: [[0.0; 3]; 4],
         camera_neutral: [1.0; 4],
         analog_balance: [1.0; 4],
+        calibration_signatures_match: true,
         dng: [dng, DngMatrixSet::default()],
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);

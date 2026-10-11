@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+DNG signature policy (2026-10-11, under validation): actual selected-primary UTF-8 ASCII/BYTE
+identifiers compare exactly through existing LibRaw parser/arena/IFD ownership. CC is omitted
+on mismatch in both mature coefficient and Native CM/FM paths, with saved policy/profile hash
+and resolver v7/decode v4 identity. Full/half/malformed/resource/long-prefix and actual shared
+preview/export regressions do not qualify extra-profile/iterative-white/n>3/physical-WB or the
+remaining complete color/alpha/gamut/monitor/residency/latency/Windows/100MP gates.
+
 ForwardMatrix follow-up (2026-10-11, under validation): actual LibRaw baked-WB input now uses
 FM * reference-neutral diagonal * inverse(AB*CC) * undoWB before D50->D65, not direct FM.
 The independent .9213862 vs 4.607522 coefficient counterexample is corrected. FM/CC interpolate

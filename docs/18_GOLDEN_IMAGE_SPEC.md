@@ -99,6 +99,13 @@ the metric boundary. These compare reference-white-relative XYZ, not absolute HD
 or actual photographed camera calibration. This adds 120 measured profile comparisons but
 does not satisfy all 18 photographic categories or the Final IQ/installed gates by itself.
 
+Authored DNG signature variants now test the actual mature metadata decoder, full/half sensor
+paths, missing/equal/different/one-missing UTF-8 byte identifiers, 700-byte common prefixes and
+exact Unicode byte matching (no canonical normalization). Match result is serialized with
+legacy default and included in camera-profile identity. CC is ignored on mismatch in both CM
+and FM domains. Malformed and over-resource-policy metadata fail explicitly. These strengthen
+the same controlled fixture, not additional real-camera/18-category IQ coverage.
+
 - M21 selects `ai,detail,high-iso,portrait,skin,night,hdr`. Active Rust fixtures additionally cover flat luminance/chroma noise, colored texture, portrait-like skin protection, scene-linear values above 1.0, portrait/landscape/small/large tile plans, overlap seams, cancellation and missing/hash/runtime/tensor/OOM typed failures. The private NAFNet file is never required by CI; a deterministic inferencer double validates domain/tiling/residual semantics, while an explicitly provisioned local model may run the same provider contract.
 - M22 selects `color,tone,curve,portrait,skin,night,hdr`. Every analysis asserts deterministic quantiles, finite OKLab covariance/eight-band statistics, monotonic fitted curve, bounded existing adjustment parameters, identity neutrality, underexposure direction, mixed-color direction and reduced skin impact when protection is enabled.
 - M23 selects `color,curve,detail,portrait,night,hdr`. Schema round-trip rejects unknown versions and forbidden/non-portable state by construction. Amount endpoints, A/B blend, circular hue, sampled curves, deterministic grain and vignette HDR finiteness are numerical regressions. The pipeline test requires identical Native Preview and Export bytes for the same source identity/settings, including normalized A70/B30 Look output composed through an adjustment Layer and radial Mask.

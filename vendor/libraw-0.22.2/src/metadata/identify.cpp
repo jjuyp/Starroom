@@ -1351,6 +1351,19 @@ void LibRaw::identify_process_dng_fields()
 		if (iifd < (int)tiff_nifds && iifd >= 0)
 		{
 			int sidx;
+			// Starroom: promote exact signature metadata before any camera-matrix construction.
+			for (int signature = 0; signature < 2; ++signature)
+			{
+				unsigned bit = signature == 0 ? LIBRAW_DNGFM_CAMERA_SIGNATURE : LIBRAW_DNGFM_PROFILE_SIGNATURE;
+				sidx = IFDLEVELINDEX(iifd, bit);
+				if (sidx >= 0)
+					COPYARR(imgdata.color.dng_levels.calibration_signatures[signature],
+						tiff_ifd[sidx].dng_levels.calibration_signatures[signature]);
+			}
+			const auto &camera_signature = imgdata.color.dng_levels.calibration_signatures[0];
+			const auto &profile_signature = imgdata.color.dng_levels.calibration_signatures[1];
+			bool signatures_match = camera_signature.len == profile_signature.len &&
+				(camera_signature.len == 0 || memcmp(camera_signature.data, profile_signature.data, camera_signature.len) == 0);
 			// Per field, not per structure
 			if (!(imgdata.rawparams.options & LIBRAW_RAWOPTIONS_DONT_CHECK_DNG_ILLUMINANT))
 			{
@@ -1407,7 +1420,7 @@ void LibRaw::identify_process_dng_fields()
 						FORCC for (int j = 0; j < 3; j++) cm[c][j] =
 							tiff_ifd[sidx].dng_color[colidx].colormatrix[c][j];
 
-						if (calidx[colidx] == sidx)
+						if (calidx[colidx] == sidx && signatures_match)
 						{
 							for (int i = 0; i < colors && i < 4; i++)
 								FORCC

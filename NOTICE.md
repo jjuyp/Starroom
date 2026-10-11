@@ -32,3 +32,8 @@ Starroom modifies LibRaw 0.22.2 `src/metadata/identify.cpp` (2026-10-10) to prom
 DNG matrix/illuminant presence flags alongside the selected IFD values. That
 covered modification remains available under CDDL-1.0 in the corresponding source.
 See `vendor/libraw-0.22.2/STARROOM_MODIFICATIONS.md`; no demosaic algorithm is changed.
+
+The 2026-10-11 covered modification additionally extends the existing DNG metadata
+parser/types and selected-IFD coefficient paths with exact calibration signature
+matching. All changed covered sources remain available under CDDL-1.0 with retained
+copyrights and explicit source/hash records in STARROOM_MODIFICATIONS.md.

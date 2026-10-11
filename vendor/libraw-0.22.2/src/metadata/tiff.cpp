@@ -1478,6 +1478,34 @@ int LibRaw::parse_tiff_ifd(INT64 base)
     }
     break;
 
+    // Starroom covered modification: use this mature parser/arena, not a second TIFF reader.
+    case 0xc6f3: /* 50931, CameraCalibrationSignature */
+    case 0xc6f4: /* 50932, ProfileCalibrationSignature */
+      {
+        if (type != 2 && type != 1) // DNG specifies ASCII or BYTE, containing UTF-8.
+          throw LIBRAW_EXCEPTION_IO_CORRUPT;
+        // Explicit metadata resource limit; never silently truncate signatures to equal prefixes.
+        if (len > 4 * 1024 * 1024)
+          throw LIBRAW_EXCEPTION_TOOBIG;
+        unsigned slot = tag == 0xc6f3 ? 0 : 1;
+        auto &signature = tiff_ifd[ifd].dng_levels.calibration_signatures[slot];
+        signature.len = 0;
+        signature.data = nullptr;
+        if (len)
+        {
+          unsigned char *data = static_cast<unsigned char *>(calloc(len, 1));
+          if (fread(data, 1, len, ifp) != len || data[len - 1] != 0)
+            throw LIBRAW_EXCEPTION_IO_CORRUPT;
+          for (unsigned index = 0; index + 1 < len; ++index)
+            if (data[index] == 0)
+              throw LIBRAW_EXCEPTION_IO_CORRUPT;
+          signature.data = data;
+          signature.len = len - 1;
+        }
+        tiff_ifd[ifd].dng_levels.parsedfields |= slot == 0
+            ? LIBRAW_DNGFM_CAMERA_SIGNATURE : LIBRAW_DNGFM_PROFILE_SIGNATURE;
+      }
+      break;
     case 0xc623: /* 50723, CameraCalibration1 */
     case 0xc624: /* 50724, CameraCalibration2 */
     {
@@ -1752,6 +1780,14 @@ int LibRaw::parse_tiff_ifd(INT64 base)
 	}
     free(buf);
   }
+  // Starroom: the single-IFD coefficient path obeys the same exact signature rule.
+  const auto &camera_sig_levels = tiff_ifd[(tiff_ifd[ifd].dng_levels.parsedfields & LIBRAW_DNGFM_CAMERA_SIGNATURE) ? ifd : 0].dng_levels;
+  const auto &profile_sig_levels = tiff_ifd[(tiff_ifd[ifd].dng_levels.parsedfields & LIBRAW_DNGFM_PROFILE_SIGNATURE) ? ifd : 0].dng_levels;
+  const auto &camera_sig = camera_sig_levels.calibration_signatures[0];
+  const auto &profile_sig = profile_sig_levels.calibration_signatures[1];
+  if (camera_sig.len != profile_sig.len || (camera_sig.len && memcmp(camera_sig.data, profile_sig.data, camera_sig.len) != 0))
+    for (i = 0; i < colors && i < 4; i++)
+      FORCC cc[i][c] = i == c;
   for (i = 0; i < colors && i < 4; i++)
     FORCC cc[i][c] *= ab[i];
   if (use_cm)

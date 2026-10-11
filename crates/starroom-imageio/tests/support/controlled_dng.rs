@@ -19,6 +19,14 @@ pub fn controlled_fixture_with_dng_profile(
     analog: Option<[Rational; 3]>,
     forward_and_calibration: bool,
 ) -> Result<OwnedFixture, Box<dyn Error>> {
+    controlled_fixture_with_signatures(analog, forward_and_calibration, None)
+}
+
+pub fn controlled_fixture_with_signatures(
+    analog: Option<[Rational; 3]>,
+    forward_and_calibration: bool,
+    signatures: Option<[Option<&[u8]>; 2]>,
+) -> Result<OwnedFixture, Box<dyn Error>> {
     let mut bytes = Cursor::new(Vec::new());
     {
         let mut encoder = TiffEncoder::new(&mut bytes)?;
@@ -44,6 +52,15 @@ pub fn controlled_fixture_with_dng_profile(
             .map(|n| SRational { n, d: 1 })
             .collect();
         dir.write_tag(Tag::Unknown(50721), matrix.as_slice())?;
+        if let Some(signatures) = signatures {
+            for (index, signature) in signatures.into_iter().enumerate() {
+                if let Some(signature) = signature {
+                    let mut bytes = signature.to_vec();
+                    bytes.push(0);
+                    dir.write_tag(Tag::Unknown(50931 + index as u16), bytes.as_slice())?;
+                }
+            }
+        }
         if forward_and_calibration {
             let forward: Vec<_> = [96422, 0, 0, 0, 100000, 0, 0, 0, 82521]
                 .into_iter()

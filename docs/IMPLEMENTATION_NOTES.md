@@ -1,5 +1,38 @@
 # Implementation Notes
 
+## 2026-10-11 — Selected-primary DNG calibration signature policy
+
+CameraCalibration previously applied regardless of the selected profile's calibration signature.
+The existing LibRaw TIFF/DNG parser now retains exact UTF-8 ASCII/BYTE tag bytes in its tracked
+memory manager. Selected IFD/root fallback metadata is promoted before coefficient construction;
+single-IFD and selected dual paths omit CC when signatures differ. The narrow C ABI transports
+only the match result, not potentially large identifiers or borrowed context pointers.
+The actual Native resolver uses identity CC on mismatch in CM and FM paths. Missing/missing
+default-empty signatures match; different lengths/long prefixes and Unicode normalization forms
+do not. Embedded NUL, malformed termination/type/short read fail; >4MiB identifier policy fails
+with the actual mature resource-limit error instead of truncating identifiers.
+
+Saved metadata/descriptor match flags have a compatible legacy default; resolver v7, decode
+policy v4 and the profile hash bind that policy into existing Native/thumbnail/export identity.
+Actual full/half sensor regressions cover missing/equal/different/one-missing, UTF-8, 700-byte
+prefixes and malformed/resource inputs. Native shared preview/export pixels and profile hashes
+are checked at three EVs for matching and mismatching real authored sensor files. Original XYZ/
+perceptual/chart/headroom thresholds remain unchanged. Four covered LibRaw sources are modified
+under the selected CDDL path; corresponding source hashes/copyright/license records and notices
+are retained. No Adobe SDK/source or second TIFF decoder is introduced.
+
+Coverage is selected primary DNG metadata, not complete ExtraCameraProfiles selection,
+iterative-white/n>3/ReductionMatrix/physical camera WB, full photographic IQ, alpha/gamut/
+monitor/residency/latency/100MP/Windows/Final acceptance. Those original requirements remain open.
+
+Full local Rust passed format, warning-denied workspace Clippy, all ordinary unit/integration
+and doc-test runners (`test-timing-1791693497319.json`). Raw unit tests are 28; source tests 3,
+chart tests 5, authored imageio tests 6 and actual forward/signature graph tests 2. Full Web
+passed 205 tests/30 files, lint, TypeScript, real Unicode-path build, Golden/RAW manifests and
+packaging configuration (`test-timing-1791693124895.json`). Covered-source hashes and fixture
+generator hash agree with the recorded sources. Four existing opt-in/private/heavy tests remain
+separate requirements; no installed/complete-photographic/100MP/end-to-end/Final claim is made.
+
 ## 2026-10-11 — Real LibRaw resource-limit errors
 
 The pinned upstream `LIBRAW_UNSUFFICIENT_MEMORY` (-100007) and `LIBRAW_TOO_BIG` (-100012)
