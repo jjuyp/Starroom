@@ -15,5 +15,6 @@ thiserror.workspace = true
 tiff = "=0.11.3"
 
 [dev-dependencies]
+starroom-color-management = { path = "../starroom-color-management" }
 serde_json.workspace = true
 tempfile = "=3.27.0"

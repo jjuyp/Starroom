@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Complete Full acceptance for primary DNG CameraNeutral inverse-white iteration
+  (v8 resolver/v6 decode); targeted actual full/half/shared, chart and finite gates pass.
+  Extra profiles/n>3, physical RAW controls and full photographic IQ remain required.
+
 - [ ] Validate real selected-primary DNG calibration signature metadata/CC policy, exact
   UTF-8 matching and typed malformed/resource errors; bind profile/cache identities and
   finish shared/Full acceptance. Extra profiles, iterative-white/n>3/physical WB remain open.

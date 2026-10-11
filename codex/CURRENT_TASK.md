@@ -1,5 +1,12 @@
 # Current Task
 
+Current worktree completes primary-DNG CameraNeutral inverse-white iteration with the existing
+Native Robertson provider. Resolver v8/decode v6, explicit non-convergence/unknown illuminants,
+original fixed-weight matrix thresholds, independent 4200K neutral and actual full/half/shared
+three-EV tests pass RAW milestone 1791695941265. Full local Rust/Web pass reports
+1791699838178 / 1791699550246 (205 frontend tests); remote Full acceptance is next.
+Physical RAW editing, extras/n>3 and all original production/latency/Windows gates remain open.
+
 ## Current Milestone
 
 Current worktree ports the pinned BSD Colour Developers Robertson provider into Native f64

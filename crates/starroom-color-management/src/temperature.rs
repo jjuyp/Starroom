@@ -105,11 +105,7 @@ pub fn uv_to_temperature(uv: [f64; 2]) -> Result<CorrelatedTemperature, ColorMan
         kelvin: 1e6 / mix(a[0], b[0], f),
         delta_uv,
     };
-    if !result.kelvin.is_finite()
-        || result.kelvin < 1e6 / 600.0
-        || !delta_uv.is_finite()
-        || delta_uv.abs() > 0.05
-    {
+    if !result.kelvin.is_finite() || result.kelvin < 1e6 / 600.0 || !delta_uv.is_finite() {
         return Err(ColorManagementError::InvalidWhitePoint);
     }
     Ok(result)

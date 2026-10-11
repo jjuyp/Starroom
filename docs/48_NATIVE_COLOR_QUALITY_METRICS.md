@@ -13,7 +13,17 @@ unchanged BSD-licensed BabelColor average 24-patch numerical fixture. Original p
 Three metric boundary tests prove exact identity/repeatability, an independently expanded
 achromatic lightness case/symmetry, and typed non-finite rejection.
 
-Observed maximum per 24-patch case (single-threaded actual test command):
+Historical v7 maximum per 24-patch case (single-threaded actual test command):
+
+The dual midpoint row predates v8 CameraNeutral-driven inverse-white solving. It is retained
+as historical evidence, not a current v8 result. The v8 chart uses physically consistent
+source-white/camera-neutral coordinates and unchanged strict thresholds.
+
+Current v8 replay on 2026-10-11: all five tests/120 comparisons pass. The four non-dual
+rows reproduce the values below; the dual 2000K white/CameraNeutral case measures maximum
+CIEDE2000 0.0000478541744, XYZ RMSE 0.000000217645390 and Y error 0.000000119209290.
+This is a different physically consistent authored domain, not a photographic quality
+improvement inferred by comparing the old and new chart numbers.
 
 | Authored profile/domain oracle | CIEDE2000 | XYZ RMSE | Absolute Y error |
 |---|---:|---:|---:|
@@ -28,7 +38,9 @@ All five cases/120 patch comparisons passed. Zero means equality to that authore
 reference, not perfect real-camera color reproduction. The existing actual full/half DNG sensor
 and shared graph tests remain separate checks; none of these rows is a photographed camera chart.
 
-No dependency, lockfile, image-processing stage, output quantization or fixture bytes changed.
-Engine/wrapper source is already recorded in provenance. Complete 18-category photographic
+The original metric-only batch changed no dependency or processing stage. The v8 replay follows
+the separately recorded camera-domain repair and test-only lock identity update; output
+quantization and BabelColor fixture bytes are unchanged. Source is recorded in provenance.
+Complete 18-category photographic
 metrics, clipping/continuity/precision, real RAW lighting/skin/ISO IQ, displayed-preview parity,
 monitor/output/gamut/alpha, physical WB, latency and same-SHA Windows release gates remain open.

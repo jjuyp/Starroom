@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+Primary DNG inverse-white follow-up (2026-10-11, under Full validation): CameraNeutral drives
+inverse AB/CC/CM and bounded independent CC/CM interpolation with the mature Robertson CCT
+provider, rather than an unverified midpoint. Resolver v8/decode v6 bind identity. Actual
+full/half sensor and three-EV shared tests, independent 4200K/tint/AB/signature vector and
+strict physical-source-white chart pass targeted gates. Extra profiles/n>3, physical editable
+RAW WB, photographic IQ and every full latency/residency/Windows gate remain unverified.
+
 DNG signature policy (2026-10-11, under validation): actual selected-primary UTF-8 ASCII/BYTE
 identifiers compare exactly through existing LibRaw parser/arena/IFD ownership. CC is omitted
 on mismatch in both mature coefficient and Native CM/FM paths, with saved policy/profile hash

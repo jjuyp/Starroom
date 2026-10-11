@@ -1,5 +1,16 @@
 # Golden Image regression specification
 
+## Primary DNG inverse-white oracle (2026-10-11)
+
+CameraNeutral now drives a bounded CC/CM inverse-white/CCT iteration instead of an assumed
+dual-profile midpoint. Independent 4200K/Delta-uv=.004 vectors cover AnalogBalance/signatures;
+the authored sensor fixture adds actual dual-profile full/half decoding and three-EV shared
+Preview/Export parity with immutable source bytes. The numerical dual chart now has consistent
+2000K source white and camera-neutral coordinates; original BabelColor data and XYZ/Delta-E/
+RMSE/Y thresholds remain unchanged. Fixed-midpoint algebra counterexamples still exercise
+the production interpolation kernel explicitly at .5. These are domain oracles, not new
+photographic scene coverage or acceptance of physical RAW sliders/extra profiles/n>3.
+
 ## Dual DNG calibration source-domain oracle (2026-10-10)
 
 The actual resolver's CC/CM midpoint now uses an independent 24-patch oracle with unchanged

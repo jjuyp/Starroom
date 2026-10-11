@@ -1625,3 +1625,24 @@ lint, TypeScript/build, all 11 manifest cases/5 immutable photos/6 CC0 RAWs and 
 actual synthetic full/half sensor tests and strict four chart tests pass. License validator
 passes 561 Rust packages / 6 npm production packages / 269 retained notices after lock identity
 refresh. These are local component/integration gates, not installed/offline/100MP Final acceptance.
+## 2026-10-11 DNG inverse-white iteration
+
+The primary dual-DNG resolver now derives source white from real CameraNeutral through
+inverse(AnalogBalance * CameraCalibration * ColorMatrix), independently interpolating CC/CM
+and iterating Robertson CCT/inverse-temperature weight with a bounded 64-step convergence gate.
+Invalid, singular, unknown-illuminant and non-convergent inputs do not silently choose midpoint.
+Resolver v8 / decode policy v6 bind existing profile/cache identity. Single-profile white uses
+the same original camera domain. Mature Robertson inverse reports intermediate off-locus
+Delta-uv; the forward target-white finite/temperature/Delta-uv limits remain unchanged.
+
+Fixed-weight cross-term/noncommuting regression matrices and thresholds are retained through
+the actual shared interpolation kernel. The old dual chart's forced midpoint conflicted with
+its provided CameraNeutral: it now uses independently authored 2000K source white, consistent
+camera neutral and small profile variations. Original chart bytes and strict XYZ/Delta-E/RMSE/Y
+thresholds are unchanged. A separate 4200K/Delta-uv=.004 test covers AB and signature policy;
+real authored dual-DNG full/half LibRaw and three-EV Native Preview/Export tests preserve bytes.
+
+RAW milestone passed report 1791695941265, including warning-denied workspace Clippy. Full
+local Rust/workspace/doc tests and Web pass reports 1791699838178 / 1791699550246;
+Web has 205 passing tests. Remote acceptance remains pending. This does not qualify extra profiles/n>3,
+physical RAW controls, complete photographic IQ, installed latency or Final release.

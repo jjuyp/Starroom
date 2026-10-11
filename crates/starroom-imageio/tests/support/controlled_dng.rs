@@ -12,7 +12,17 @@ use tiff::{
 pub struct OwnedFixture(pub tempfile::TempPath);
 
 pub fn controlled_fixture() -> Result<OwnedFixture, Box<dyn Error>> {
-    controlled_fixture_with_dng_profile(None, false)
+    controlled_fixture_with_dual_neutral(None)
+}
+
+pub fn controlled_fixture_with_dual_neutral(
+    neutral: Option<[Rational; 3]>,
+) -> Result<OwnedFixture, Box<dyn Error>> {
+    if neutral.is_some() {
+        build_controlled_fixture(None, false, None, neutral)
+    } else {
+        controlled_fixture_with_dng_profile(None, false)
+    }
 }
 
 pub fn controlled_fixture_with_dng_profile(
@@ -27,6 +37,16 @@ pub fn controlled_fixture_with_signatures(
     forward_and_calibration: bool,
     signatures: Option<[Option<&[u8]>; 2]>,
 ) -> Result<OwnedFixture, Box<dyn Error>> {
+    build_controlled_fixture(analog, forward_and_calibration, signatures, None)
+}
+
+fn build_controlled_fixture(
+    analog: Option<[Rational; 3]>,
+    forward_and_calibration: bool,
+    signatures: Option<[Option<&[u8]>; 2]>,
+    dual_neutral: Option<[Rational; 3]>,
+) -> Result<OwnedFixture, Box<dyn Error>> {
+    let is_dual = dual_neutral.is_some();
     let mut bytes = Cursor::new(Vec::new());
     {
         let mut encoder = TiffEncoder::new(&mut bytes)?;
@@ -52,6 +72,14 @@ pub fn controlled_fixture_with_signatures(
             .map(|n| SRational { n, d: 1 })
             .collect();
         dir.write_tag(Tag::Unknown(50721), matrix.as_slice())?;
+        if dual_neutral.is_some() {
+            let second: Vec<_> = [101, 0, 0, 0, 100, 0, 0, 0, 99]
+                .into_iter()
+                .map(|n| SRational { n, d: 100 })
+                .collect();
+            dir.write_tag(Tag::Unknown(50722), second.as_slice())?;
+            dir.write_tag(Tag::Unknown(50779), 21u16)?;
+        }
         if let Some(signatures) = signatures {
             for (index, signature) in signatures.into_iter().enumerate() {
                 if let Some(signature) = signature {
@@ -78,13 +106,13 @@ pub fn controlled_fixture_with_signatures(
         }
         dir.write_tag(
             Tag::Unknown(50728),
-            &[
+            &dual_neutral.unwrap_or([
                 Rational { n: 1, d: 2 },
                 Rational { n: 1, d: 1 },
                 Rational { n: 1, d: 4 },
-            ][..],
+            ])[..],
         )?;
-        dir.write_tag(Tag::Unknown(50778), 21u16)?;
+        dir.write_tag(Tag::Unknown(50778), if is_dual { 17u16 } else { 21u16 })?;
         dir.write_tag(Tag::Unknown(50829), &[0u32, 0, 64, 64][..])?;
         let levels = [1024u16, 2048, 4096, 6144, 8192, 10240, 12288, 14336];
         let sensor: Vec<_> = (0..4096).map(|index| levels[(index % 64) / 8]).collect();

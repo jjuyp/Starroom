@@ -43,6 +43,12 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Primary DNG inverse-white iteration reuses that pinned Robertson provider and the existing
+Native matrix/LibRaw metadata boundary. The public DNG camera-neutral equations are independently
+implemented; no additional upstream code, package or SDK is copied. Resolver v8/decode policy
+v6 record this domain change. The imageio test adds a path reference to the already inventoried
+color-management crate, not a new external dependency. Runtime BSD notice obligations persist.
+
 Native correlated-temperature support now directly ports the scalar Robertson (1968) provider
 from Colour Developers' `colour/temperature/robertson1968.py`, v0.4.7, blob
 `380b8bf8327098e8532eedd219084e8386547530`, BSD-3-Clause / Copyright 2013 Colour Developers.

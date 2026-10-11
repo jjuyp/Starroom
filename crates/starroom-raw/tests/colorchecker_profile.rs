@@ -125,13 +125,20 @@ fn colorchecker_color_matrix_undoes_baked_wb_and_preserves_d65_chart_colors() {
 
 #[test]
 fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
-    // Independent midpoint oracle: mean(CC) = identity, mean(CM) = diag(3,5,6).
-    // Existing resolver uses its explicit midpoint fallback when LibRaw has no CCT oracle.
-    let diagonal = [3.0, 5.0, 6.0];
+    // Physical warm camera-neutral oracle: below A, the selected weight is exactly zero.
+    // Independent CC0*CM0 = diag(1.6,4.4,5); fixed-midpoint cross-term oracles stay in unit tests.
+    let diagonal = [1.6, 4.4, 5.0];
+    let source_white = starroom_color_management::temperature::temperature_to_xyz(
+        starroom_color_management::temperature::CorrelatedTemperature {
+            kelvin: 2000.0,
+            delta_uv: 0.0,
+        },
+    )
+    .unwrap();
     let neutral = [
-        diagonal[0] * D65.x / 5.0,
+        diagonal[0] * source_white.x / 4.4,
         1.0,
-        diagonal[2] * D65.z / 5.0,
+        diagonal[2] * source_white.z / 4.4,
         1.0,
     ];
     let mut dng = [DngMatrixSet::default(), DngMatrixSet::default()];
@@ -141,12 +148,12 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
         let color = if index == 0 {
             [2.0, 4.0, 5.0]
         } else {
-            [4.0, 6.0, 7.0]
+            [2.01, 4.02, 5.025]
         };
         let calibration = if index == 0 {
             [0.8, 1.1, 1.0]
         } else {
-            [1.2, 0.9, 1.0]
+            [0.804, 1.0945, 1.005]
         };
         for row in 0..3 {
             set.color_matrix[row][row] = color[row];
@@ -164,14 +171,15 @@ fn colorchecker_dual_calibration_uses_independent_interpolated_matrices() {
         dng,
     });
     assert_eq!(profile.status, CameraProfileStatus::Resolved);
-    assert!((profile.dual_illuminant_weight.unwrap() - 0.5).abs() < 1e-5);
+    assert_eq!(profile.dual_illuminant_weight, Some(0.0));
     let mut quality = QualitySummary::default();
     for patch in fixture().patches {
         let xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, D65);
+        let source_xyz = adapt_xyz(xy_y_to_xyz(patch.xy_y), D50, source_white);
         let camera = [
-            xyz.x * diagonal[0] / neutral[0] / 5.0,
-            xyz.y,
-            xyz.z * diagonal[2] / neutral[2] / 5.0,
+            source_xyz.x * diagonal[0] / neutral[0] / 4.4,
+            source_xyz.y,
+            source_xyz.z * diagonal[2] / neutral[2] / 4.4,
         ];
         quality.observe(profile.camera_rgb_to_xyz_d65(camera), xyz, &patch.name);
         for (actual, expected) in profile

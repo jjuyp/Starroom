@@ -14,7 +14,7 @@ const GENERIC_SRGB_TO_XYZ_D65: Matrix3 = Matrix3([
 ]);
 
 pub const CAMERA_PROFILE_RESOLVER_VERSION: &str =
-    "starroom-camera-profile-v7-calibration-signatures";
+    "starroom-camera-profile-v8-neutral-white-iteration";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -382,6 +382,15 @@ fn interpolate_dng_candidates(
     }
     let first = candidates[0];
     let second = candidates[1];
+    let known_color_matrices = input
+        .dng
+        .iter()
+        .filter(|set| set.parsed_fields & DNG_COLOR_MATRIX != 0)
+        .count();
+    if known_color_matrices == 2 {
+        let (_, weight) = dng_white_from_neutral(input)?;
+        return interpolate_dng_at_weight(candidates, input, weight?);
+    }
     let target_kelvin = estimated_as_shot_kelvin(input).or_else(|| {
         match (first.illuminant.kelvin, second.illuminant.kelvin) {
             (Some(a), Some(b)) => Some(2.0 / (1.0 / a + 1.0 / b)),
@@ -401,6 +410,16 @@ fn interpolate_dng_candidates(
         }
         _ => 0.5,
     };
+    interpolate_dng_at_weight(candidates, input, weight)
+}
+
+fn interpolate_dng_at_weight(
+    candidates: &[CandidateMatrix],
+    input: &CameraProfileInput,
+    weight: f32,
+) -> Option<(Matrix3, Option<f32>)> {
+    let first = candidates[0];
+    let second = candidates[1];
     let matrix = if !first.used_forward && !second.used_forward {
         // DNG chapter 6 defines interpolated CC and CM separately. Interpolating endpoint
         // products introduces an extra cross-term and is not equivalent to CC * CM.
@@ -420,8 +439,99 @@ fn interpolate_dng_candidates(
     valid_matrix(matrix).then_some((matrix, Some(weight)))
 }
 
+fn dng_white_from_neutral(input: &CameraProfileInput) -> Option<(Xyz, Option<f32>)> {
+    let sets: Vec<_> = input
+        .dng
+        .iter()
+        .filter(|set| set.parsed_fields & DNG_COLOR_MATRIX != 0)
+        .collect();
+    if sets.is_empty()
+        || !input.camera_neutral[..3]
+            .iter()
+            .all(|v| v.is_finite() && *v > 0.0)
+    {
+        return None;
+    }
+    let color = |set: &DngMatrixSet| {
+        Matrix3([
+            set.color_matrix[0],
+            set.color_matrix[1],
+            set.color_matrix[2],
+        ])
+    };
+    let calibration = |set: &DngMatrixSet| {
+        if input.calibration_signatures_match {
+            dng_camera_calibration(set)
+        } else {
+            Some(Matrix3::IDENTITY)
+        }
+    };
+    let first_cc = calibration(sets[0])?;
+    let neutral = Xyz {
+        x: input.camera_neutral[0],
+        y: input.camera_neutral[1],
+        z: input.camera_neutral[2],
+    };
+    let white_for = |cc: Matrix3, cm: Matrix3| {
+        let inverse = unbalanced_camera_matrix(cc.multiply(cm).inverse()?, input.analog_balance)?;
+        let white = inverse.multiply_vec(neutral);
+        if ![white.x, white.y, white.z]
+            .into_iter()
+            .all(|v| v.is_finite() && v > 0.0)
+        {
+            return None;
+        }
+        Some(Xyz {
+            x: white.x / white.y,
+            y: 1.0,
+            z: white.z / white.y,
+        })
+    };
+    if sets.len() == 1 {
+        return white_for(first_cc, color(sets[0])).map(|white| (white, None));
+    }
+    let first_k = illuminant_kelvin(sets[0].illuminant)?;
+    let second_k = illuminant_kelvin(sets[1].illuminant)?;
+    if (first_k - second_k).abs() < 1.0 {
+        return None;
+    }
+    let second_cc = calibration(sets[1])?;
+    let mut weight = 0.5;
+    for _ in 0..64 {
+        let white = white_for(
+            lerp_matrix(first_cc, second_cc, weight),
+            lerp_matrix(color(sets[0]), color(sets[1]), weight),
+        )?;
+        let temperature = starroom_color_management::temperature::xyz_to_temperature(white).ok()?;
+        let target = 1e6 / temperature.kelvin as f32;
+        let next = ((target - 1e6 / first_k) / (1e6 / second_k - 1e6 / first_k)).clamp(0.0, 1.0);
+        if (next - weight).abs() < 1e-6 {
+            let white = white_for(
+                lerp_matrix(first_cc, second_cc, next),
+                lerp_matrix(color(sets[0]), color(sets[1]), next),
+            )?;
+            return Some((white, Some(next)));
+        }
+        weight = next;
+    }
+    None // No convergence is not permission to silently choose the midpoint or another profile.
+}
+
 /// Estimates correlated color temperature from real RAW camera-neutral metadata.
 pub fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
+    if input.dng_version != 0 {
+        let sets: Vec<_> = input
+            .dng
+            .iter()
+            .filter(|set| set.parsed_fields & DNG_COLOR_MATRIX != 0)
+            .collect();
+        if !sets.is_empty() {
+            let (white, _) = dng_white_from_neutral(input)?;
+            return starroom_color_management::temperature::xyz_to_temperature(white)
+                .ok()
+                .map(|value| value.kelvin as f32);
+        }
+    }
     if input.dng_version == 0 {
         // CameraNeutral is unbalanced camera data. Do not use the D65-row-normalized
         // matrix prepared for the already baked-WB pixel boundary to estimate its illuminant.
@@ -980,6 +1090,77 @@ mod tests {
     }
 
     #[test]
+    fn dual_dng_white_iteration_recovers_independent_camera_neutral_without_libraw_guess() {
+        use starroom_color_management::temperature::{CorrelatedTemperature, temperature_to_xyz};
+        for signatures_match in [false, true] {
+            let mut value = input();
+            value.dng_version = 1;
+            value.calibration_signatures_match = signatures_match;
+            value.analog_balance = [2.0, 1.0, 0.5, 1.0];
+            let kelvin = 4200.0;
+            let white = temperature_to_xyz(CorrelatedTemperature {
+                kelvin,
+                delta_uv: 0.004,
+            })
+            .unwrap();
+            let expected = ((1e6 / kelvin as f32 - 1e6 / 2856.0) / (1e6 / 6504.0 - 1e6 / 2856.0))
+                .clamp(0.0, 1.0);
+            for (index, set) in value.dng.iter_mut().enumerate() {
+                set.parsed_fields = DNG_COLOR_MATRIX | DNG_CALIBRATION | DNG_ILLUMINANT;
+                set.illuminant = if index == 0 { 17 } else { 21 };
+                for row in 0..3 {
+                    set.color_matrix[row][row] =
+                        [2.0, 4.0, 5.0][row] * (1.0 + index as f32 * 0.005);
+                    set.calibration[row][row] = 1.0 + index as f32 * 0.005;
+                }
+            }
+            let scale = (1.0 + expected * 0.005)
+                * if signatures_match {
+                    1.0 + expected * 0.005
+                } else {
+                    1.0
+                };
+            let channels = [
+                white.x * 4.0 * scale,
+                white.y * 4.0 * scale,
+                white.z * 2.5 * scale,
+            ];
+            value.camera_neutral = [
+                channels[0] / channels[1],
+                1.0,
+                channels[2] / channels[1],
+                1.0,
+            ];
+            let (actual, weight) = dng_white_from_neutral(&value).unwrap();
+            assert!((weight.unwrap() - expected).abs() < 1e-4);
+            assert!((actual.x - white.x).abs() < 2e-5 && (actual.z - white.z).abs() < 2e-5);
+            assert!((estimated_as_shot_kelvin(&value).unwrap() - kelvin as f32).abs() < 2.0);
+            assert_eq!(
+                CameraProfileResolver::resolve(&value).status,
+                CameraProfileStatus::Resolved
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_dual_illuminant_does_not_silently_choose_midpoint_or_libraw_profile() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.make = "Nikon".into();
+        value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        value.camera_neutral = [D65.x, 1.0, D65.z, 1.0];
+        for (index, set) in value.dng.iter_mut().enumerate() {
+            set.parsed_fields = DNG_COLOR_MATRIX | DNG_ILLUMINANT;
+            set.illuminant = if index == 0 { 0 } else { 21 };
+            set.color_matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        }
+        let profile = CameraProfileResolver::resolve(&value);
+        assert_eq!(profile.status, CameraProfileStatus::Generic);
+        assert_eq!(profile.source, CameraProfileSource::GenericLinearSrgb);
+        assert_eq!(profile.dual_illuminant_weight, None);
+    }
+
+    #[test]
     fn dng_forward_matrix_is_adapted_from_d50_to_d65() {
         let mut value = input();
         value.dng_version = 1;
@@ -1072,7 +1253,7 @@ mod tests {
             }
         }
         let candidates: Vec<_> = value.dng.iter().filter_map(dng_candidate).collect();
-        let (matrix, weight) = interpolate_dng_candidates(&candidates, &value).unwrap();
+        let (matrix, weight) = interpolate_dng_at_weight(&candidates, &value, 0.5).unwrap();
         assert!((weight.unwrap() - 0.5).abs() < 1.0e-5);
         for (row, expected) in [1.0 / 3.0, 1.0 / 5.0, 1.0 / 6.0].into_iter().enumerate() {
             assert!((matrix.0[row][row] - expected).abs() < 1.0e-6);
@@ -1103,7 +1284,7 @@ mod tests {
             }
         }
         let candidates: Vec<_> = value.dng.iter().filter_map(dng_candidate).collect();
-        let (actual, weight) = interpolate_dng_candidates(&candidates, &value).unwrap();
+        let (actual, weight) = interpolate_dng_at_weight(&candidates, &value, 0.5).unwrap();
         assert!((weight.unwrap() - 0.5).abs() < 1e-5);
         // Independent arithmetic oracle: average(CC)=[1,1,1], average(CM)=[3,5,6].
         for (row, expected) in [1.0 / 3.0, 1.0 / 5.0, 1.0 / 6.0].into_iter().enumerate() {
@@ -1139,7 +1320,9 @@ mod tests {
             }
         }
         let candidates: Vec<_> = value.dng.iter().filter_map(dng_candidate).collect();
-        let actual = interpolate_dng_candidates(&candidates, &value).unwrap().0;
+        let actual = interpolate_dng_at_weight(&candidates, &value, 0.5)
+            .unwrap()
+            .0;
         // Independently multiplied midpoint rows; reversing multiplication gives other values.
         let expected = Matrix3([
             [2.505, 0.225, 0.1025],
@@ -1197,6 +1380,8 @@ mod tests {
     fn dual_color_matrices_and_camera_calibration_are_supported() {
         let mut value = input();
         value.dng_version = 1;
+        // Physically consistent near-D65 neutral in the second calibrated camera domain.
+        value.camera_neutral = [D65.x * 1.1 * 1.01, 1.0, D65.z * 0.9 * 0.99, 1.0];
         for (index, illuminant) in [17, 21].into_iter().enumerate() {
             value.dng[index].parsed_fields = DNG_COLOR_MATRIX | DNG_CALIBRATION | DNG_ILLUMINANT;
             value.dng[index].illuminant = illuminant;

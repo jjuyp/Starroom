@@ -3870,6 +3870,7 @@ dependencies = [
  "kamadak-exif",
  "serde",
  "serde_json",
+ "starroom-color-management",
  "starroom-raw",
  "tempfile",
  "thiserror 2.0.20",

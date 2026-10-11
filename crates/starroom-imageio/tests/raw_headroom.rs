@@ -2,6 +2,53 @@
 mod fixture;
 
 #[test]
+fn actual_dual_dng_sensor_neutral_resolves_white_and_weight_instead_of_libraw_guess() {
+    use starroom_color_management::temperature::{CorrelatedTemperature, temperature_to_xyz};
+    use tiff::encoder::Rational;
+    let kelvin = 4200.0;
+    let white = temperature_to_xyz(CorrelatedTemperature {
+        kelvin,
+        delta_uv: 0.004,
+    })
+    .unwrap();
+    let weight =
+        ((1e6 / kelvin as f32 - 1e6 / 2856.0) / (1e6 / 6504.0 - 1e6 / 2856.0)).clamp(0.0, 1.0);
+    let channels = [
+        white.x * (1.0 + 0.01 * weight),
+        1.0,
+        white.z * (1.0 - 0.01 * weight),
+    ];
+    let neutral = channels.map(|value| Rational {
+        n: (value * 10000000.0).round() as u32,
+        d: 10000000,
+    });
+    let source = fixture::controlled_fixture_with_dual_neutral(Some(neutral)).unwrap();
+    let original = std::fs::read(&source.0).unwrap();
+    for decoded in [
+        starroom_raw::decode_raw(&source.0).unwrap(),
+        starroom_raw::decode_raw_preview(&source.0).unwrap(),
+    ] {
+        assert_eq!(
+            decoded.metadata.camera_profile.source,
+            starroom_raw::CameraProfileSource::DngColorMatrix
+        );
+        assert!(
+            (decoded
+                .metadata
+                .camera_profile
+                .dual_illuminant_weight
+                .unwrap()
+                - weight)
+                .abs()
+                < 2e-4
+        );
+        assert!((decoded.metadata.as_shot_kelvin.unwrap() - kelvin as f32).abs() < 2.0);
+        assert!(decoded.rgb.iter().all(|v| v.is_finite()));
+    }
+    assert_eq!(original, std::fs::read(&source.0).unwrap());
+}
+
+#[test]
 fn actual_dng_signature_bytes_control_calibration_without_truncation_or_normalization() {
     let long = "camera-".repeat(100);
     let mut changed = long.clone();
