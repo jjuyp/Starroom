@@ -1,5 +1,27 @@
 # Implementation Notes
 
+## 2026-10-11 — Physical RAW white, Native backend in progress
+
+An explicit serialized Kelvin/Delta-uv target now uses original calibration retained by decode
+policy v7. Target camera neutral is calculated in the unbalanced camera domain, target CC/CM/FM
+resolved with the same provider, and baked source gains undone exactly once before target gains
+and D65 working conversion. It enters shared source preparation before optics/geometry/creative
+processing; no second decode, 8-bit step or source mutation. None retains legacy Relative recipes.
+Missing/invalid/Generic/non-three-channel inputs and encoded-image target requests are explicit
+errors. Target profile hash, source preparation, GPU stage and precreative AI identities include
+the physical intent. Real white-balance work is inside the profiler, not an empty timed no-op.
+
+Independent DNG/non-DNG Bradford oracles cover HDR/negative/black and temperature/tint; actual
+authored sensor test proves changed pixels, serialized state, three cache rebuilds, Preview/Export
+equality, distinct profile identities and unchanged source bytes. Legacy missing metadata still
+renders unchanged without physical intent. RAW milestone/shared/photographic/GPU/format/workspace
+Clippy passed report 1791701059038; final profiling-only change passes actual sensor test and
+targeted Clippy. Native GPU stage-identity test passes. No new external dependency/source copy.
+
+This is backend implementation, not complete UI acceptance: dedicated UI intent, undo/copy/paste,
+project restoration, complete camera/Forward/dual quality and measured latency still need validation.
+No Final release or installer claim follows from these component gates.
+
 ## 2026-10-11 — Mature Native correlated-temperature foundation
 
 The pinned Colour Developers Robertson (1968) scalar table/algorithm is ported under BSD-3-Clause

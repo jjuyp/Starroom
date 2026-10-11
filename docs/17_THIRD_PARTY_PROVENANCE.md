@@ -43,6 +43,12 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Opt-in physical RAW white reuses pinned LibRaw metadata, Native Robertson and existing Bradford/
+matrix providers, with independently implemented public DNG chapter-6 target-neutral equations.
+No SDK code or new dependency is copied. Decode policy v7 retains original calibration for
+rebalancing; all existing covered-source and BSD notice obligations remain unchanged. Native
+source/target/working transforms share Preview/Export. UI and full product qualification remain open.
+
 Primary DNG inverse-white iteration reuses that pinned Robertson provider and the existing
 Native matrix/LibRaw metadata boundary. The public DNG camera-neutral equations are independently
 implemented; no additional upstream code, package or SDK is copied. Resolver v8/decode policy

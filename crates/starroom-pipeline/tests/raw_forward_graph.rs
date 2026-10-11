@@ -9,6 +9,61 @@ use starroom_pipeline::{
 use tiff::encoder::Rational;
 
 #[test]
+fn physical_raw_white_balance_renders_real_sensor_and_invalidates_preparation_cache() {
+    use starroom_pipeline::{
+        CameraWhiteBalanceTarget, SourcePreparationCache,
+        render_source_preview_with_preparation_cache_to_srgb8,
+    };
+    use std::sync::Arc;
+    let file = fixture::controlled_fixture().unwrap();
+    let original_bytes = std::fs::read(&file.0).unwrap();
+    let source = Arc::new(decode_source(&file.0).unwrap());
+    let cache = SourcePreparationCache::default();
+    let mut settings = RenderSettings::default();
+    let original = render_source_preview_to_srgb8(&source, &settings).unwrap();
+    let mut hashes = Vec::new();
+    let mut outputs = Vec::new();
+    for (kelvin, delta_uv) in [(2856.0, -0.01), (4200.0, 0.0), (6504.0, 0.01)] {
+        settings.raw_white_balance = Some(CameraWhiteBalanceTarget { kelvin, delta_uv });
+        let restored: RenderSettings =
+            serde_json::from_slice(&serde_json::to_vec(&settings).unwrap()).unwrap();
+        assert_eq!(restored.raw_white_balance, settings.raw_white_balance);
+        let preview =
+            render_source_preview_with_preparation_cache_to_srgb8(&source, &restored, None, &cache)
+                .unwrap();
+        let export = render_source_export_to_srgb8(&source, &restored).unwrap();
+        assert_eq!(preview, export);
+        assert_ne!(preview.data, original.data);
+        hashes.push(preview.color.camera_profile_hash);
+        outputs.push(preview.data);
+    }
+    assert_ne!(outputs[0], outputs[1]);
+    assert_ne!(outputs[1], outputs[2]);
+    assert_ne!(hashes[0], hashes[1]);
+    assert_eq!(cache.stats().unwrap().builds, 3);
+    settings.raw_white_balance = Some(CameraWhiteBalanceTarget {
+        kelvin: 0.0,
+        delta_uv: 0.0,
+    });
+    assert!(render_source_preview_to_srgb8(&source, &settings).is_err());
+    assert_eq!(std::fs::read(&file.0).unwrap(), original_bytes);
+    let mut legacy = (*source).clone();
+    if let starroom_imageio::DecodedSourceImage::Raw(raw) = &mut legacy {
+        raw.metadata.camera_profile_input = None;
+    }
+    settings.raw_white_balance = Some(CameraWhiteBalanceTarget {
+        kelvin: 4200.0,
+        delta_uv: 0.0,
+    });
+    assert!(render_source_preview_to_srgb8(&legacy, &settings).is_err());
+    settings.raw_white_balance = None;
+    assert_eq!(
+        render_source_preview_to_srgb8(&legacy, &settings).unwrap(),
+        original
+    );
+}
+
+#[test]
 fn real_primary_profile_signature_policy_reaches_native_preview_and_export_pixels() {
     let matching = fixture::controlled_fixture_with_signatures(
         None,

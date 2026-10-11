@@ -44,8 +44,11 @@ use starroom_project::{
     PortraitSourceCrop,
 };
 pub use starroom_raw::CAMERA_PROFILE_RESOLVER_VERSION;
-pub use starroom_raw::RAW_DECODE_POLICY_VERSION;
-use starroom_raw::{CameraProfileDescriptor, CameraProfileStatus, DecodedRawImage};
+use starroom_raw::{
+    CameraProfileDescriptor, CameraProfileStatus, CameraWhiteBalanceError, DecodedRawImage,
+    camera_white_balance_transform,
+};
+pub use starroom_raw::{CameraWhiteBalanceTarget, RAW_DECODE_POLICY_VERSION};
 use starroom_render::profiling::{self, ProfileStage};
 use starroom_render::{
     GpuStageCacheKeys,
@@ -345,6 +348,9 @@ pub struct RenderSettings {
     pub tone: ToneParameters,
     pub relative_color: RelativeColorParameters,
     pub white_balance: WhiteBalanceSettings,
+    /// Explicit physical RAW intent. None preserves legacy Relative processing unchanged.
+    #[serde(default)]
+    pub raw_white_balance: Option<CameraWhiteBalanceTarget>,
     pub curve: Vec<CurvePoint>,
     #[serde(default)]
     pub curves: ToneCurveSet,
@@ -411,6 +417,7 @@ impl Default for RenderSettings {
             tone: ToneParameters::default(),
             relative_color: RelativeColorParameters::default(),
             white_balance: WhiteBalanceSettings::default(),
+            raw_white_balance: None,
             curve: Vec::new(),
             curves: ToneCurveSet::default(),
             color_mixer: ColorMixer::default(),
@@ -441,6 +448,8 @@ impl Default for RenderSettings {
 
 #[derive(Debug, Error)]
 pub enum PipelineError {
+    #[error(transparent)]
+    CameraWhiteBalance(#[from] CameraWhiteBalanceError),
     #[error("source preparation cache is unavailable")]
     PreparationCacheUnavailable,
     #[error("PreviewCancelled: request was superseded")]
@@ -1766,6 +1775,9 @@ fn to_working_image(
     decoded: &DecodedRenderedImage,
     settings: &RenderSettings,
 ) -> Result<(LinearImage, InputProfileSource), PipelineError> {
+    if settings.raw_white_balance.is_some() {
+        return Err(CameraWhiteBalanceError("physical white balance requires RAW input").into());
+    }
     checkpoint()?;
     let expected = decoded.width as usize * decoded.height as usize * 4;
     if decoded.rgba.len() != expected {
@@ -1813,23 +1825,60 @@ fn to_working_raw(
     if decoded.rgb.len() != expected {
         return Err(PipelineError::InvalidDecodedBuffer);
     }
-    let mut pixels: Vec<[f32; 3]> = decoded
-        .rgb
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
-        .collect();
-    let working_bytes = (pixels.len() as u64).saturating_mul(3 * F32_BYTES);
-    profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
-        apply_white_balance(
-            &mut pixels,
-            decoded.width,
-            decoded.height,
-            SourceKind::Raw,
-            source_white_balance(settings.white_balance),
+    if settings.raw_white_balance.is_some() && decoded.metadata.colors != 3 {
+        return Err(CameraWhiteBalanceError(
+            "physical rebalancing requires a three-channel camera profile",
         )
-    })?;
+        .into());
+    }
+    let working_bytes = (decoded.rgb.len() as u64).saturating_mul(F32_BYTES);
+    let pixels = profiling::measure(
+        ProfileStage::WhiteBalance,
+        working_bytes,
+        || -> Result<Vec<[f32; 3]>, PipelineError> {
+            let physical = settings
+                .raw_white_balance
+                .map(|target| {
+                    let input = decoded.metadata.camera_profile_input.as_ref().ok_or(
+                        CameraWhiteBalanceError("original camera calibration is missing"),
+                    )?;
+                    camera_white_balance_transform(input, &decoded.metadata.camera_profile, target)
+                })
+                .transpose()?;
+            let mut pixels: Vec<[f32; 3]> = decoded
+                .rgb
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|pixel| {
+                    if let Some((matrix, _)) = &physical {
+                        let xyz = starroom_color_management::rec2020_linear_to_xyz_d65(LinearRgb {
+                            r: pixel[0],
+                            g: pixel[1],
+                            b: pixel[2],
+                        });
+                        let rgb = starroom_color_management::xyz_d65_to_rec2020_linear(
+                            matrix.multiply_vec(xyz),
+                        );
+                        [rgb.r, rgb.g, rgb.b]
+                    } else {
+                        [pixel[0], pixel[1], pixel[2]]
+                    }
+                })
+                .collect();
+            if pixels.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(CameraWhiteBalanceError("non-finite camera transform output").into());
+            }
+            apply_white_balance(
+                &mut pixels,
+                decoded.width,
+                decoded.height,
+                SourceKind::Raw,
+                source_white_balance(settings.white_balance),
+            )?;
+            Ok(pixels)
+        },
+    )?;
     let data = pixels.into_iter().flatten().collect();
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
@@ -2327,6 +2376,11 @@ fn prepare_render_source(
     };
     let (working, input, camera_profile) = match decoded {
         DecodedSourceImage::Rendered(image) => {
+            if settings.raw_white_balance.is_some() {
+                return Err(
+                    CameraWhiteBalanceError("physical white balance requires RAW input").into(),
+                );
+            }
             let (working, input_source) = to_working_image(image, settings)?;
             (working, input_source, None)
         }
@@ -2338,7 +2392,18 @@ fn prepare_render_source(
             (
                 to_working_raw(image, settings)?,
                 input_source,
-                Some(image.metadata.camera_profile.clone()),
+                Some(if let Some(target) = settings.raw_white_balance {
+                    camera_white_balance_transform(
+                        image.metadata.camera_profile_input.as_ref().ok_or(
+                            CameraWhiteBalanceError("original camera calibration is missing"),
+                        )?,
+                        &image.metadata.camera_profile,
+                        target,
+                    )?
+                    .1
+                } else {
+                    image.metadata.camera_profile.clone()
+                }),
             )
         }
     };

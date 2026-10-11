@@ -1,5 +1,18 @@
 # Current Task
 
+Current worktree adds actual opt-in physical RAW white (Kelvin/Delta-uv) through original
+camera metadata -> target calibration -> shared source preparation -> Native Preview/Export.
+Decode policy v7 retains calibration input with legacy absence; target metadata/profile hash,
+preparation/GPU/AI upstream identities change explicitly. Source-default and old Relative
+recipes remain unchanged. Independent DNG/non-DNG HDR/negative/black tests and real sensor
+serialization/cache/preview-export/source-immutability test pass. Native IPC carries the target.
+UI/undo/copy/restoration wiring, measured interactive latency and full acceptance are next;
+this is NOT a completed physical-WB/user-facing or Final milestone. RAW milestone passed
+1791701059038. Latest profiling-only change reran actual sensor/cache/parity test and targeted
+warning-denied Clippy successfully. Native stage-identity and AI precreative identity tests
+pass. UI/undo/copy/restoration closure remains next. Earlier `14a033d` Full CI 38117983299
+last observation is post-cache cleanup; preserve that run rather than cancelling it.
+
 Current worktree completes primary-DNG CameraNeutral inverse-white iteration with the existing
 Native Robertson provider. Resolver v8/decode v6, explicit non-convergence/unknown illuminants,
 original fixed-weight matrix thresholds, independent 4200K neutral and actual full/half/shared

@@ -2,6 +2,11 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Finish opt-in physical RAW Kelvin/Delta-uv UI, undo/copy/paste/restoration and full
+  qualification. Actual Native camera-domain transform/shared graph, serialized target,
+  real sensor/cache/parity and Native GPU/AI identity tests now pass; do not mark the
+  entire WB requirement done until the actual editor interaction and remaining quality gates pass.
+
 - [ ] Complete Full acceptance for primary DNG CameraNeutral inverse-white iteration
   (v8 resolver/v6 decode); targeted actual full/half/shared, chart and finite gates pass.
   Extra profiles/n>3, physical RAW controls and full photographic IQ remain required.

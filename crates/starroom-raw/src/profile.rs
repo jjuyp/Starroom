@@ -75,7 +75,7 @@ impl Default for DngMatrixSet {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CameraProfileInput {
     pub make: String,
     pub model: String,
@@ -129,6 +129,153 @@ struct CandidateMatrix {
 }
 
 pub struct CameraProfileResolver;
+
+/// Physical camera white, distinct from encoded-image Relative Temperature/Tint.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraWhiteBalanceTarget {
+    pub kelvin: f64,
+    pub delta_uv: f64,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("RAW camera white balance is unavailable: {0}")]
+pub struct CameraWhiteBalanceError(pub &'static str);
+
+impl CameraWhiteBalanceTarget {
+    pub fn white(self) -> Result<Xyz, CameraWhiteBalanceError> {
+        starroom_color_management::temperature::temperature_to_xyz(
+            starroom_color_management::temperature::CorrelatedTemperature {
+                kelvin: self.kelvin,
+                delta_uv: self.delta_uv,
+            },
+        )
+        .map_err(|_| CameraWhiteBalanceError("invalid physical temperature or tint"))
+    }
+}
+
+/// Retarget already decoded XYZ D65 through its original baked-camera domain. The decoder's
+/// gains are undone once, target gains applied once, and target calibration is resolved before
+/// working-space editing. No source pixels, decode or display-gamma conversion is repeated.
+pub fn camera_white_balance_transform(
+    input: &CameraProfileInput,
+    original: &CameraProfileDescriptor,
+    target: CameraWhiteBalanceTarget,
+) -> Result<(Matrix3, CameraProfileDescriptor), CameraWhiteBalanceError> {
+    let fail = || CameraWhiteBalanceError("invalid or unsupported camera calibration");
+    if original.status != CameraProfileStatus::Resolved {
+        return Err(fail());
+    }
+    let white = target.white()?;
+    let camera_from_xyz = if input.dng_version != 0 {
+        let sets: Vec<_> = input
+            .dng
+            .iter()
+            .filter(|set| set.parsed_fields & DNG_COLOR_MATRIX != 0)
+            .collect();
+        let first = sets.first().ok_or_else(fail)?;
+        let cm = |set: &DngMatrixSet| {
+            Matrix3([
+                set.color_matrix[0],
+                set.color_matrix[1],
+                set.color_matrix[2],
+            ])
+        };
+        let cc = |set: &DngMatrixSet| {
+            if input.calibration_signatures_match {
+                dng_camera_calibration(set)
+            } else {
+                Some(Matrix3::IDENTITY)
+            }
+        };
+        let (calibration, color) = if sets.len() == 2 {
+            let a = illuminant_kelvin(first.illuminant).ok_or_else(fail)?;
+            let b = illuminant_kelvin(sets[1].illuminant).ok_or_else(fail)?;
+            if (a - b).abs() < 1.0 {
+                return Err(fail());
+            }
+            let weight =
+                ((1e6 / target.kelvin as f32 - 1e6 / a) / (1e6 / b - 1e6 / a)).clamp(0.0, 1.0);
+            (
+                lerp_matrix(
+                    cc(first).ok_or_else(fail)?,
+                    cc(sets[1]).ok_or_else(fail)?,
+                    weight,
+                ),
+                lerp_matrix(cm(first), cm(sets[1]), weight),
+            )
+        } else {
+            (cc(first).ok_or_else(fail)?, cm(first))
+        };
+        unbalanced_camera_matrix(
+            calibration.multiply(color).inverse().ok_or_else(fail)?,
+            input.analog_balance,
+        )
+        .and_then(|matrix| matrix.inverse())
+        .ok_or_else(fail)?
+    } else {
+        let matrix = Matrix3([
+            input.libraw_cam_xyz[0],
+            input.libraw_cam_xyz[1],
+            input.libraw_cam_xyz[2],
+        ]);
+        if !valid_matrix(matrix) {
+            return Err(fail());
+        }
+        matrix
+    };
+    let neutral = camera_from_xyz.multiply_vec(white);
+    if ![neutral.x, neutral.y, neutral.z]
+        .iter()
+        .all(|v| v.is_finite() && *v > 0.0)
+        || !input.camera_neutral[..3]
+            .iter()
+            .all(|v| v.is_finite() && *v > 0.0)
+    {
+        return Err(fail());
+    }
+    let mut selected = input.clone();
+    selected.camera_neutral = [neutral.x / neutral.y, 1.0, neutral.z / neutral.y, 1.0];
+    let mut profile = CameraProfileResolver::resolve(&selected);
+    if input.dng_version == 0 {
+        let matrix = balanced_color_matrix_to_xyz_d65(
+            camera_from_xyz.inverse().ok_or_else(fail)?,
+            selected.camera_neutral,
+        )
+        .ok_or_else(fail)?;
+        profile.camera_to_xyz_d65 = matrix.0;
+        profile.hash = profile_hash(&profile);
+    }
+    if profile.status != CameraProfileStatus::Resolved {
+        return Err(fail());
+    }
+    let gains = Matrix3([
+        [
+            input.camera_neutral[0] / selected.camera_neutral[0],
+            0.0,
+            0.0,
+        ],
+        [
+            0.0,
+            input.camera_neutral[1] / selected.camera_neutral[1],
+            0.0,
+        ],
+        [
+            0.0,
+            0.0,
+            input.camera_neutral[2] / selected.camera_neutral[2],
+        ],
+    ]);
+    let matrix = Matrix3(profile.camera_to_xyz_d65).multiply(gains).multiply(
+        Matrix3(original.camera_to_xyz_d65)
+            .inverse()
+            .ok_or_else(fail)?,
+    );
+    if !valid_matrix(matrix) {
+        return Err(fail());
+    }
+    Ok((matrix, profile))
+}
 
 impl CameraProfileResolver {
     pub fn resolve(input: &CameraProfileInput) -> CameraProfileDescriptor {
@@ -765,6 +912,114 @@ fn slug(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn physical_non_dng_white_uses_original_coefficients_not_d65_normalized_coefficients() {
+        let mut value = input();
+        value.make = "Nikon".into();
+        value.dng_version = 0;
+        value.camera_neutral = [D65.x, 1.0, D65.z, 1.0];
+        value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        let original = CameraProfileResolver::resolve(&value);
+        let target = CameraWhiteBalanceTarget {
+            kelvin: 4200.0,
+            delta_uv: 0.008,
+        };
+        let white = target.white().unwrap();
+        let (matrix, selected) = camera_white_balance_transform(&value, &original, target).unwrap();
+        let sample = Xyz {
+            x: 0.3,
+            y: 0.4,
+            z: 1.2,
+        };
+        let actual = matrix.multiply_vec(sample);
+        let expected = bradford_adaptation(white, D65).multiply_vec(sample);
+        for (a, b) in [actual.x, actual.y, actual.z]
+            .into_iter()
+            .zip([expected.x, expected.y, expected.z])
+        {
+            assert!((a - b).abs() < 3e-5);
+        }
+        assert_ne!(selected.hash, original.hash);
+        assert_eq!(value.camera_neutral, [D65.x, 1.0, D65.z, 1.0]);
+    }
+    #[test]
+    fn physical_dng_white_uses_unbalanced_camera_domain_and_explicit_invalid_errors() {
+        let mut value = input();
+        value.dng_version = 1;
+        value.camera_neutral = [D65.x, 1.0, D65.z, 1.0];
+        value.dng[0].parsed_fields = DNG_COLOR_MATRIX | DNG_ILLUMINANT;
+        value.dng[0].illuminant = 21;
+        value.dng[0].color_matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        value.dng[1] = DngMatrixSet::default();
+        let original = CameraProfileResolver::resolve(&value);
+        for kelvin in [2856.0, 4200.0, 6504.0, 12000.0] {
+            for delta_uv in [-0.01, 0.0, 0.01] {
+                let target = CameraWhiteBalanceTarget { kelvin, delta_uv };
+                let white = starroom_color_management::temperature::temperature_to_xyz(
+                    starroom_color_management::temperature::CorrelatedTemperature {
+                        kelvin,
+                        delta_uv,
+                    },
+                )
+                .unwrap();
+                let (matrix, profile) =
+                    camera_white_balance_transform(&value, &original, target).unwrap();
+                assert_eq!(profile.status, CameraProfileStatus::Resolved);
+                for camera in [
+                    Xyz {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    Xyz {
+                        x: 0.3,
+                        y: 0.5,
+                        z: 0.8,
+                    },
+                    Xyz {
+                        x: 2.0,
+                        y: 4.0,
+                        z: -0.2,
+                    },
+                ] {
+                    let actual = matrix.multiply_vec(camera);
+                    let expected = bradford_adaptation(white, D65).multiply_vec(camera);
+                    for (a, b) in [actual.x, actual.y, actual.z]
+                        .into_iter()
+                        .zip([expected.x, expected.y, expected.z])
+                    {
+                        assert!(
+                            (a - b).abs() < 3e-5,
+                            "{target:?}: {actual:?} vs {expected:?}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            camera_white_balance_transform(
+                &value,
+                &original,
+                CameraWhiteBalanceTarget {
+                    kelvin: f64::NAN,
+                    delta_uv: 0.0
+                }
+            )
+            .is_err()
+        );
+        let unknown = CameraProfileResolver::resolve(&input());
+        assert!(
+            camera_white_balance_transform(
+                &input(),
+                &unknown,
+                CameraWhiteBalanceTarget {
+                    kelvin: 6504.0,
+                    delta_uv: 0.0
+                }
+            )
+            .is_err()
+        );
+    }
     use super::*;
 
     fn input() -> CameraProfileInput {

@@ -35,10 +35,10 @@ use starroom_look::{
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
-    GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster, RelativeColorParameters,
-    RenderSettings, SkinRetouchSettings, SourcePreparationCache, SourceRegion, ToneCurveSet,
-    WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings, prepare_source_for_ai_denoise,
-    render_source_export_to_srgb8, render_source_preview_to_srgb8,
+    CameraWhiteBalanceTarget, GeneratedMaskRaster, NativeAdjustmentLayer, PortraitMaskRaster,
+    RelativeColorParameters, RenderSettings, SkinRetouchSettings, SourcePreparationCache,
+    SourceRegion, ToneCurveSet, WhiteBalanceMode, WhiteBalanceSample, WhiteBalanceSettings,
+    prepare_source_for_ai_denoise, render_source_export_to_srgb8, render_source_preview_to_srgb8,
     render_source_preview_with_preparation_cache_to_srgb8, resolve_source_lens_profile,
     sample_source_color_band, sample_source_portrait_weights,
 };
@@ -1092,6 +1092,8 @@ struct NativeEditSettings {
     white_balance_mode: WhiteBalanceMode,
     #[serde(default)]
     white_balance_sample: Option<WhiteBalanceSample>,
+    #[serde(default)]
+    raw_white_balance: Option<CameraWhiteBalanceTarget>,
     curve: Vec<CurvePoint>,
     #[serde(default)]
     curves: ToneCurveSet,
@@ -1131,6 +1133,9 @@ const fn default_denoise_execution_provider() -> DenoiseExecutionProvider {
 
 impl NativeEditSettings {
     fn validated(self) -> Result<RenderSettings, String> {
+        if let Some(target) = self.raw_white_balance {
+            target.white().map_err(|error| error.to_string())?;
+        }
         // Persisted projects retain u64 seeds, but this IPC boundary uses JSON numbers.
         // Reject unrepresentable intent before any render/history commit instead of allowing
         // JavaScript to round a seed and silently change deterministic grain on the next edit.
@@ -1388,6 +1393,7 @@ impl NativeEditSettings {
                 mode: self.white_balance_mode,
                 sample: self.white_balance_sample,
             },
+            raw_white_balance: self.raw_white_balance,
             curve,
             curves: self.curves,
             color_mixer: self.color_mixer,
@@ -2459,6 +2465,7 @@ fn ai_denoise_input_identity(
     let input_stage = serde_json::to_vec(&(
         settings.color_management,
         settings.white_balance,
+        settings.raw_white_balance,
         &settings.optics,
         settings.geometry,
         settings
@@ -3637,7 +3644,10 @@ fn preview_stage_identity(
             sample: None,
         },
     };
-    parameters.insert(StageId::SourceWhiteBalance, encoded(&source_wb)?);
+    parameters.insert(
+        StageId::SourceWhiteBalance,
+        encoded(&(source_wb, settings.raw_white_balance))?,
+    );
     let measured_wb = if settings.white_balance.mode == WhiteBalanceMode::NeutralPicker {
         settings.white_balance
     } else {
@@ -5435,6 +5445,12 @@ mod tests {
         };
         let base = identity(&settings);
         let mut changes = vec![];
+        let mut physical = settings.clone();
+        physical.raw_white_balance = Some(CameraWhiteBalanceTarget {
+            kelvin: 4200.0,
+            delta_uv: 0.008,
+        });
+        changes.push(physical);
         let mut wb = settings.clone();
         wb.white_balance.mode = WhiteBalanceMode::Auto;
         changes.push(wb);
@@ -5680,6 +5696,15 @@ mod tests {
         let base = RenderSettings::default();
         let baseline = preview_stage_identity("same-source", &base).unwrap();
         let mut settings = base.clone();
+        settings.raw_white_balance = Some(CameraWhiteBalanceTarget {
+            kelvin: 4200.0,
+            delta_uv: 0.008,
+        });
+        let physical = preview_stage_identity("same-source", &settings).unwrap();
+        assert_eq!(baseline.source_texture, physical.source_texture);
+        assert_ne!(baseline.input_white_balance, physical.input_white_balance);
+        assert_ne!(baseline.global_creative, physical.global_creative);
+        settings = base.clone();
         settings.tone.exposure_ev = 0.5;
         let exposure = preview_stage_identity("same-source", &settings).unwrap();
         assert_eq!(baseline.source_texture, exposure.source_texture);
@@ -6662,6 +6687,7 @@ mod tests {
             noise_reduction: 0.0,
             white_balance_mode: WhiteBalanceMode::SourceDefault,
             white_balance_sample: None,
+            raw_white_balance: None,
             curve: vec![CurvePoint { x: 0.0, y: 0.0 }, CurvePoint { x: 1.0, y: 1.0 }],
             curves: ToneCurveSet::default(),
             color_mixer: ColorMixer::default(),

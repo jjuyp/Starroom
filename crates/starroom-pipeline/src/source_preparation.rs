@@ -9,6 +9,7 @@ use std::{
 struct PreparationState {
     color: ColorManagementSettings,
     white_balance: WhiteBalanceSettings,
+    raw_white_balance: Option<CameraWhiteBalanceTarget>,
     optics: OpticsSettings,
     geometry: GeometryParameters,
     source_region: Option<SourceRegion>,
@@ -23,6 +24,7 @@ impl PreparationState {
         Self {
             color: settings.color_management,
             white_balance,
+            raw_white_balance: settings.raw_white_balance,
             optics: if settings.optics.parameters.enabled {
                 settings.optics.clone()
             } else {

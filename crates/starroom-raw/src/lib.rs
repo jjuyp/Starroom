@@ -9,7 +9,8 @@ mod profile;
 pub use profile::{
     CAMERA_PROFILE_RESOLVER_VERSION, CalibrationIlluminant, CameraFamily, CameraProfileDescriptor,
     CameraProfileInput, CameraProfileResolver, CameraProfileSource, CameraProfileStatus,
-    DngMatrixSet, estimated_as_shot_kelvin,
+    CameraWhiteBalanceError, CameraWhiteBalanceTarget, DngMatrixSet,
+    camera_white_balance_transform, estimated_as_shot_kelvin,
 };
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
 use thiserror::Error;
 
 pub const LIBRAW_PINNED_VERSION: &str = "0.22.2";
-pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v6-dng-neutral-white-iteration";
+pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v7-physical-wb-calibration";
 pub const LIBRAW_TAG_OBJECT: &str = "24fa7e5463cbf8b8615dbd2b16c933a294d52400";
 pub const LIBRAW_COMMIT: &str = "b93f6e45c194f5df9b02a43b1af9a54b4f41f33f";
 
@@ -136,6 +137,9 @@ pub struct RawMetadata {
     pub wb_headroom_scale: f32,
     pub dng_color: [DngMatrixSet; 2],
     pub camera_profile: CameraProfileDescriptor,
+    /// Original camera calibration required for physical rebalancing, absent in legacy metadata.
+    #[serde(default)]
+    pub camera_profile_input: Option<CameraProfileInput>,
     pub output_space: String,
     pub demosaic_provider: String,
     pub libraw_version: String,
@@ -476,6 +480,7 @@ fn decode_inner_with_memory_limit(
             wb_headroom_scale: bridge.wb_headroom_scale,
             dng_color,
             camera_profile,
+            camera_profile_input: Some(profile_input),
             output_space: "linear Rec.2020 D65".to_owned(),
             demosaic_provider,
             libraw_version,

@@ -10,6 +10,24 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+Physical RAW WB dependency audit before the current backend group: `WhiteBalanceSettings` carries only mode/
+picker ROI; raw Camera/AsShot branches are baked-WB no-ops and UI `whiteBalancePresentation`
+converts relative creative Temperature into displayed Kelvin. Therefore current CCT metadata
+and inverse-white solving do NOT qualify editable physical WB. The next production change must
+carry real target camera-neutral/white intent through serialization, undo, copy, preparation
+identity and fresh Export, undo the decoder's baked gains exactly once, and resolve target-white
+calibration before working-space conversion. Encoded Relative controls remain separate.
+Independent equations are in Adobe DNG 1.7.1.0 chapter 6, printed pages 101-103:
+https://helpx.adobe.com/content/dam/help/en/camera-raw/digital-negative/jcr_content/root/content/flex/items/position/position-par/download_section_733958301/download-1/DNG_Spec_1_7_1_0.pdf
+No SDK source is copied by this audit. Targeted Camera/AsShot parity alone cannot qualify it.
+
+Current backend work adds explicit `RenderSettings.raw_white_balance` / Native IPC target
+and retained calibration input; source/target camera matrices genuinely change shared pixels,
+profile hashes and preparation/GPU/AI keys. Real sensor serialization/cache/parity plus independent
+DNG/non-DNG HDR/negative/black tests pass, with RAW milestone 1791701059038. Legacy None retains
+old recipes. Actual editor UI/undo/copy/restoration, complete profile coverage and latency remain
+OPEN; this implementation does not verify the entire physical-WB phase or Final acceptance.
+
 Primary DNG inverse-white follow-up (2026-10-11, under Full validation): CameraNeutral drives
 inverse AB/CC/CM and bounded independent CC/CM interpolation with the mature Robertson CCT
 provider, rather than an unverified midpoint. Resolver v8/decode v6 bind identity. Actual
