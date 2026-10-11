@@ -1,5 +1,11 @@
 # Starroom third-party notices
 
+The Native Robertson (1968) correlated-temperature code is derived from Colour Developers,
+colour-science/colour v0.4.7, under BSD-3-Clause. Copyright 2013 Colour Developers; no endorsement
+is implied. The full source notice is retained at
+`crates/starroom-color-management/COLOUR_SCIENCE_LICENSE.txt` and bundled at
+`licenses/colour-science/LICENSE.txt`. Source revision/blob and port details are in provenance.
+
 Starroom is licensed GPL-3.0-or-later; the complete license text is distributed as `LICENSE`.
 The authoritative dependency, source revision, integration
 mode, binary inclusion and redistribution-risk inventory is

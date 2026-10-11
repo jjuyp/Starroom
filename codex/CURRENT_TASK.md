@@ -2,6 +2,18 @@
 
 ## Current Milestone
 
+Current worktree ports the pinned BSD Colour Developers Robertson provider into Native f64
+temperature/Delta-uv/XYZ conversions. Three tests pass upstream example, tungsten/daylight/
+tint and invalid domains. It is wired into non-DNG unbalanced-camera As-Shot CCT metadata,
+correcting the baked-WB/D65-normalized-domain misuse; physical RAW controls and DNG inverse-white
+remain open. New executable derivation has retained runtime BSD notice; packaging notice closure
+is now in both bundle resource maps. RAW milestone/shared/format/workspace-Clippy passed
+1791694469804; provider tests 3 and packaging/JSON validators pass. Decode policy v5 binds
+metadata identity, not a pixel downgrade. Complete physical controls/Final remain unproven.
+
+`03cf9af1a5240cd83d1ed6b057ef19490cdbd2c7` primary-signature batch was pushed; Full CI
+38112321776 and secondary 38112325334 have completed successfully.
+
 Current worktree implements exact primary DNG calibration signature matching in the existing
 LibRaw metadata parser/arena and both coefficient paths, then the narrow Native resolver.
 Actual full/half tests cover UTF-8, absence/one-missing, long prefixes, no normalization and

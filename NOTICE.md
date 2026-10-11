@@ -1,5 +1,11 @@
 # Third-party notices
 
+Starroom's Native correlated-temperature provider is a BSD-3-Clause-derived scalar
+port of Colour Developers' Robertson (1968) implementation, colour-science/colour
+v0.4.7, colour/temperature/robertson1968.py, blob 380b8bf8327098e8532eedd219084e8386547530.
+Copyright 2013 Colour Developers. The full retained notice is
+crates/starroom-color-management/COLOUR_SCIENCE_LICENSE.txt. No endorsement is implied.
+
 ## Adobe DNG technology
 
 This product includes DNG technology under license by Adobe.

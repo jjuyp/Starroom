@@ -1,5 +1,30 @@
 # Implementation Notes
 
+## 2026-10-11 — Mature Native correlated-temperature foundation
+
+The pinned Colour Developers Robertson (1968) scalar table/algorithm is ported under BSD-3-Clause
+with full source notice. f64 direction/interpolation computes CCT/Delta-uv and normalized XYZ;
+invalid domains return explicit errors. Source numerical example and 2000/2856/4000/5000/6504/
+10000/25000K with independent tint round trips pass. No replacement polynomial is invented.
+
+Non-DNG As-Shot CCT now uses inverse(original unbalanced XYZ->camera) times true CameraNeutral,
+not the row-normalized matrix whose input is already baked-WB RGB. The previous unit fixture
+used unit neutral with identity XYZ->camera but incorrectly expected D65; it now explicitly
+uses D65 CameraNeutral with the original 6000..7000K assertion, and adds equal-energy white
+5300..5600K validation. No assertion is deleted or tolerance weakened. Decode policy v5 binds
+metadata caches/recipes. Native processing pixels remain unchanged in this component.
+
+This foundation is integrated into actual non-DNG metadata, not full Temperature/Tint control
+acceptance. DNG inverse-neutral iteration, actual editable camera gains/profile re-resolution,
+RAW/encoded controls and all original quality/residency/latency/100MP/Windows gates remain open.
+Runtime-derived BSD notice must be included in packaged notices before external release.
+
+The full retained BSD notice is now explicitly bundled by both production resource maps and
+referenced by NOTICE/THIRD_PARTY_NOTICES. JSON/packaging validators pass. Raw milestone
+1791694469804 passes actual six-format sensor decode, imageio signature/crop tests, shared
+photographic/RAW/GPU graph, format and warning-denied workspace Clippy. This is the scoped
+metadata/provider gate; prior Full/installer results are not attributed to this changed HEAD.
+
 ## 2026-10-11 — Selected-primary DNG calibration signature policy
 
 CameraCalibration previously applied regardless of the selected profile's calibration signature.

@@ -43,6 +43,18 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+Native correlated-temperature support now directly ports the scalar Robertson (1968) provider
+from Colour Developers' `colour/temperature/robertson1968.py`, v0.4.7, blob
+`380b8bf8327098e8532eedd219084e8386547530`, BSD-3-Clause / Copyright 2013 Colour Developers.
+The full runtime-source notice is retained in `starroom-color-management/COLOUR_SCIENCE_LICENSE.txt`
+and referenced by NOTICE. No new package is linked, but this is now executable derivation and
+must accompany binary redistribution, not merely the older numerical chart fixture. Source
+table/direction/interpolation logic is retained in f64 scalar Rust with explicit finite/domain
+validation; source example, tungsten/daylight/tint round trips and invalid inputs are tested.
+Non-DNG As-Shot metadata estimates now invert original unbalanced XYZ->camera coefficients,
+not the D65-row-normalized matrix prepared for baked-WB pixels. Decode policy v5 binds metadata
+identity. This is not complete physical WB editing, spectral recovery or DNG iterative-white.
+
 DNG signature handling extends the same pinned LibRaw TIFF/DNG parser/types and selected-IFD
 coefficient metadata under the selected CDDL-1.0 path. Exact UTF-8 bytes in ASCII/BYTE tags are
 stored in its existing memory manager and compared before CC use; the narrow C ABI passes a

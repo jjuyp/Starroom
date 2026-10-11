@@ -3,6 +3,7 @@
 //! so the render graph can keep file, working and display transforms explicit.
 
 pub mod quality;
+pub mod temperature;
 
 use lcms2::{
     CIEXYZ, CIEXYZExt, CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent,

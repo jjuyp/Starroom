@@ -422,6 +422,24 @@ fn interpolate_dng_candidates(
 
 /// Estimates correlated color temperature from real RAW camera-neutral metadata.
 pub fn estimated_as_shot_kelvin(input: &CameraProfileInput) -> Option<f32> {
+    if input.dng_version == 0 {
+        // CameraNeutral is unbalanced camera data. Do not use the D65-row-normalized
+        // matrix prepared for the already baked-WB pixel boundary to estimate its illuminant.
+        let camera_to_xyz = Matrix3([
+            input.libraw_cam_xyz[0],
+            input.libraw_cam_xyz[1],
+            input.libraw_cam_xyz[2],
+        ])
+        .inverse()?;
+        let white = camera_to_xyz.multiply_vec(Xyz {
+            x: input.camera_neutral[0],
+            y: input.camera_neutral[1],
+            z: input.camera_neutral[2],
+        });
+        return starroom_color_management::temperature::xyz_to_temperature(white)
+            .ok()
+            .map(|value| value.kelvin as f32);
+    }
     let matrix = libraw_camera_to_xyz(input.libraw_cam_xyz)?;
     let neutral = Xyz {
         x: input.camera_neutral[0],
@@ -731,10 +749,15 @@ mod tests {
     #[test]
     fn as_shot_kelvin_comes_from_camera_neutral_and_profile_matrix() {
         let mut value = input();
-        value.camera_neutral = [1.0; 4];
+        // An identity XYZ->camera matrix has CameraNeutral=XYZ white, not baked-WB unit RGB.
+        value.camera_neutral = [D65.x, 1.0, D65.z, 1.0];
         value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
         let kelvin = estimated_as_shot_kelvin(&value).expect("valid RAW WB metadata");
         assert!((6_000.0..=7_000.0).contains(&kelvin));
+
+        value.camera_neutral = [1.0; 4];
+        let equal_energy = estimated_as_shot_kelvin(&value).unwrap();
+        assert!((5_300.0..=5_600.0).contains(&equal_energy));
 
         value.libraw_cam_xyz = [[0.0; 3]; 4];
         assert_eq!(estimated_as_shot_kelvin(&value), None);
