@@ -1960,6 +1960,7 @@ fn native_sample_color(
 struct NativeWhiteBalanceInfo {
     source: &'static str,
     as_shot_kelvin: Option<f32>,
+    physical_supported: bool,
 }
 
 /// Small presentation geometry from the same spline used by the shared pixel graph. No photos
@@ -2010,10 +2011,29 @@ async fn native_white_balance_info(source_path: PathBuf) -> Result<NativeWhiteBa
             DecodedSourceImage::Raw(raw) => NativeWhiteBalanceInfo {
                 source: "rawMetadata",
                 as_shot_kelvin: raw.metadata.as_shot_kelvin,
+                physical_supported: raw.metadata.colors == 3
+                    && raw
+                        .metadata
+                        .camera_profile_input
+                        .as_ref()
+                        .is_some_and(|input| {
+                            starroom_pipeline::camera_white_balance_transform(
+                                input,
+                                &raw.metadata.camera_profile,
+                                CameraWhiteBalanceTarget {
+                                    kelvin: f64::from(
+                                        raw.metadata.as_shot_kelvin.unwrap_or(6504.0),
+                                    ),
+                                    delta_uv: 0.0,
+                                },
+                            )
+                            .is_ok()
+                        }),
             },
             DecodedSourceImage::Rendered(_) => NativeWhiteBalanceInfo {
                 source: "renderedRelative",
                 as_shot_kelvin: None,
+                physical_supported: false,
             },
         })
     })
@@ -6954,6 +6974,73 @@ mod tests {
         assert_eq!(settings.relative_color.tint, -0.1);
         assert_eq!(settings.curve.len(), 2);
         assert_eq!(settings.color_mixer, ColorMixer::default());
+    }
+
+    #[test]
+    fn physical_raw_white_survives_real_history_snapshot_restart_and_export() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("physical-wb.history.json");
+        let source_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/raw/sources/nikon-d1.nef");
+        let source_hash = source_content_hash(&source_path).unwrap();
+        let source = decode_source_preview(&source_path, 256).unwrap();
+        let info =
+            tauri::async_runtime::block_on(native_white_balance_info(source_path.clone())).unwrap();
+        assert_eq!(info.source, "rawMetadata");
+        assert!(
+            info.physical_supported,
+            "actual Native metadata must enable the real RAW UI"
+        );
+        let initial = serde_json::to_value(neutral_settings()).unwrap();
+        let mut edited = neutral_settings();
+        edited.raw_white_balance = Some(CameraWhiteBalanceTarget {
+            kelvin: 4200.0,
+            delta_uv: 0.008,
+        });
+        let changed = serde_json::to_value(&edited).unwrap();
+        let render = |state: &serde_json::Value| {
+            let settings: NativeEditSettings = serde_json::from_value(state.clone()).unwrap();
+            render_source_export_to_srgb8(&source, &settings.validated().unwrap()).unwrap()
+        };
+        let before = render(&initial);
+        let expected = render(&changed);
+        assert_ne!(before.data, expected.data);
+        assert_eq!(
+            expected,
+            render_source_preview_to_srgb8(&source, &edited.validated().unwrap()).unwrap()
+        );
+        let mut history = EditHistory::new(initial.clone()).unwrap();
+        history
+            .commit(
+                "Physical WB",
+                "camera",
+                EditCommand::ReplaceState {
+                    before: initial.clone(),
+                    after: changed.clone(),
+                },
+            )
+            .unwrap();
+        let snapshot = history.create_snapshot("Physical camera white").unwrap();
+        history.undo().unwrap();
+        assert_eq!(render(history.state()), before);
+        history.redo().unwrap();
+        assert_eq!(render(history.state()), expected);
+        history.persist(&path).unwrap();
+        let mut reopened = EditHistory::load(&path).unwrap();
+        assert_eq!(render(reopened.state()), expected);
+        reopened
+            .commit(
+                "As Shot",
+                "camera",
+                EditCommand::ReplaceState {
+                    before: reopened.state().clone(),
+                    after: initial,
+                },
+            )
+            .unwrap();
+        reopened.restore_snapshot(&snapshot).unwrap();
+        assert_eq!(render(reopened.state()), expected);
+        assert_eq!(source_content_hash(&source_path).unwrap(), source_hash);
     }
 
     #[test]

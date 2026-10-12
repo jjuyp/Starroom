@@ -9,6 +9,11 @@ import manualLensFixture from '../fixtures/contracts/native-manual-lens.json'
 import portraitCropFixture from '../fixtures/contracts/native-portrait-source-crop.json'
 
 describe('Library export selection contract', () => {
+  it('rejects malformed physical target during history hydration rather than substituting Relative', () => {
+    for (const rawWhiteBalance of [{ kelvin: Number.NaN, deltaUv: 0 }, { kelvin: 4200, deltaUv: .2 }]) {
+      expect(() => normalizeNativeSettings({ ...toNativeSettings(defaultAdjustments, []), rawWhiteBalance })).toThrow('invalid physical RAW')
+    }
+  })
   const settings = { format: 'png' } as Parameters<typeof nativeLibraryExportContract>[1]
   it('preserves all 500 cross-page IDs without photo records or pixel payloads', () => {
     const ids = Array.from({ length: 500 }, (_, index) => index + 1)
@@ -326,14 +331,16 @@ describe('native preview contract', () => {
 
   it('preserves native-returned Skin/Healing and hidden graph values across the next real request', () => {
     const wire = { ...toNativeSettings(defaultAdjustments, []), ...structuredClone(localWorkflowFixture),
-      layers: structuredClone(localLayersFixture) } as NativeEditSettings
+      layers: structuredClone(localLayersFixture), rawWhiteBalance: { kelvin: 4200, deltaUv: .008 } } as NativeEditSettings
     const original = JSON.stringify(wire)
     const ui = fromNativeSettings(defaultAdjustments, wire)
     expect(ui.adjustments.sharpness).toBe(45)
     expect(ui.adjustments.noiseReduction).toBe(12)
     const request = toNativeSettings(ui.adjustments, ui.curves.master, ui.settings.whiteBalanceMode,
       ui.settings.whiteBalanceSample, ui.curves, ui.settings.optics, ui.layers, ui.mask ?? defaultMask,
-      ui.settings.skinRetouch, ui.settings.healingOperations, ui.renderConstants)
+      ui.settings.skinRetouch, ui.settings.healingOperations, ui.renderConstants, ui.settings.rawWhiteBalance)
+    expect(request.rawWhiteBalance).toEqual({ kelvin: 4200, deltaUv: .008 })
+    expect(request.rawWhiteBalance).not.toBe(wire.rawWhiteBalance)
     expect(request.skinRetouch).toEqual(localWorkflowFixture.skinRetouch)
     expect(request.healingOperations).toEqual(localWorkflowFixture.healingOperations)
     expect(request.layers).toEqual(localLayersFixture)

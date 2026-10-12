@@ -43,6 +43,13 @@ are required; the Browser prototype is retained as a migration record, not the t
 
 ### October Native chroma semantics
 
+The physical-WB connection now preserves LibRaw's fixed non-DNG camera profile when changing
+camera-space gains (cam_xyz_coeff in src/utils/utils_dcraw.cpp; scale_colors in
+src/postprocessing/postprocessing_utils_dcrdefs.cpp, same pinned upstream). This is reuse of
+the existing adapter/matrix provider and independently implemented gain algebra, not new copied
+source. DNG target interpolation/adaptation retains its public chapter-6 rules. Test-only desktop
+tempfile 3.27.0 is already lockfile inventoried; source versions/licenses/notices are unchanged.
+
 Opt-in physical RAW white reuses pinned LibRaw metadata, Native Robertson and existing Bradford/
 matrix providers, with independently implemented public DNG chapter-6 target-neutral equations.
 No SDK code or new dependency is copied. Decode policy v7 retains original calibration for

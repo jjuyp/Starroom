@@ -1,5 +1,34 @@
 # Implementation Notes
 
+## 2026-10-12 — Physical RAW control/persistence connection, under acceptance
+
+The real editor now transports its explicit Kelvin/Delta-uv target to the same Native source
+preparation used by Before/After/Preview/Export, history, snapshots, restore and off-page export.
+Clipboard copies intent, never camera matrices/neutral; incompatible encoded targets are refused.
+As Shot/Camera/reset clears the physical target and relative WB offsets. Legacy Relative values
+are retained without fake Kelvin conversion; the obsolete mired display functions are removed.
+Numeric Delta-uv formatting now preserves four decimal digits. Hidden active relative offsets
+remain visible rather than being discarded. Target selection uses real Native capability metadata.
+
+A new independent capture-matched non-DNG identity oracle exposed an extra CAT in the previous
+backend group: [.3,.4,1.2] became [.41706192,.44706666,1.2529656] despite matching white. The mature
+LibRaw cam_xyz_coeff/scale_colors path keeps its camera profile fixed and changes camera gains.
+The provider now follows that boundary, preserving static profile identity; target intent remains
+in recipe/stage keys. DNG's explicit chapter-6 interpolated profile/CAT behavior is unchanged.
+The new identity oracle and camera-gain oracle retain 3e-5 thresholds; original chart fixtures/
+thresholds are untouched. Color policy v5 records the change.
+
+Actual Nikon sensor data exercises Native metadata, history commit/undo/redo, snapshot, atomic
+persist/reopen/restore and identical preview/export bytes without modifying the source. Existing
+tempfile 3.27.0 owns test directories; the added desktop reference is test-only, no new package.
+Full frontend 208 tests/30 files, lint/TypeScript/build/JSON/packaging pass 1791768069602, with final
+mode-label targeted/build replay. Final Full Web after presentation changes passed 1791768479375,
+208 tests/30 files. Full Rust acceptance passed 1791768290914; --list reports
+439 registered tests including four opt-in gates not executed by ordinary Full. Playwright viewed
+the actual relative panel and verified collapse (output/playwright/physical-wb-color-panel.png);
+it did not impersonate Native RAW or qualify installed Windows interaction/latency. Its owned
+browser and preview server were closed. No installer/Final/full photographic-WB claim is made.
+
 ## 2026-10-11 — Physical RAW white, Native backend in progress
 
 An explicit serialized Kelvin/Delta-uv target now uses original calibration retained by decode

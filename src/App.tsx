@@ -53,7 +53,7 @@ import {
   prependInteractiveHistory,
   scrollFilmstripFromWheel,
 } from './interactiveState'
-import { controlGradient, formatNumericValue, gradingGradient, kelvinToRelative, whiteBalancePresentation, type MixerBand } from './editControls'
+import { controlGradient, formatNumericValue, gradingGradient, whiteBalancePresentation, type MixerBand } from './editControls'
 import { ColorWheel } from './ColorWheel'
 import { generatedMaskActions, manualMaskTypes, maskLabel, maskLabels, portraitRegionLabels, validLinearGeometry, selectedRadialMask, replaceRadialGeometry, invertedMask, hasNativeSkinSelection, type ManualMaskType } from './maskWorkspace'
 import { MaskOverlay, LinearMaskOverlay } from './MaskOverlay'
@@ -62,6 +62,7 @@ import { canApplyWhiteBalanceMode, copyWhiteBalanceState, pasteWhiteBalanceState
 type WorkspaceView = 'library' | 'edit' | 'compare'
 
 interface PhotoItem {
+  rawWhiteBalance?: import('./nativeRender').NativeCameraWhiteBalanceTarget | null
   id: string
   name: string
   src: string
@@ -86,6 +87,7 @@ interface PhotoItem {
 }
 
 interface EditSnapshot {
+  rawWhiteBalance?: import('./nativeRender').NativeCameraWhiteBalanceTarget | null
   adjustments: Adjustments
   curvePoints: ToneCurvePoint[]
   curveChannels: NativeToneCurves
@@ -245,6 +247,7 @@ function MaskWorkspacePanel({ layers, selectedId, overlay, onSelect, onAdd, onUp
   </section>
 }
 const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
+  rawWhiteBalance: photo.rawWhiteBalance ? { ...photo.rawWhiteBalance } : null,
   adjustments: { ...photo.adjustments }, curvePoints: copyCurve(photo.curvePoints), curveChannels: copyCurveChannels(photo.curveChannels), whiteBalanceMode: photo.whiteBalanceMode,
   whiteBalanceSample: photo.whiteBalanceSample ? { ...photo.whiteBalanceSample } : null, mask: { ...photo.mask },
   opticsState: { ...photo.opticsState, manualIdentity: photo.opticsState.manualIdentity ? { ...photo.opticsState.manualIdentity } : null },
@@ -255,6 +258,7 @@ const takeSnapshot = (photo: PhotoItem): EditSnapshot => ({
 })
 const applySnapshot = (photo: PhotoItem, snapshot: EditSnapshot) => ({
   ...photo, adjustments: { ...snapshot.adjustments }, curvePoints: copyCurve(snapshot.curvePoints), curveChannels: copyCurveChannels(snapshot.curveChannels),
+  rawWhiteBalance: snapshot.rawWhiteBalance ? { ...snapshot.rawWhiteBalance } : null,
   whiteBalanceMode: snapshot.whiteBalanceMode, whiteBalanceSample: snapshot.whiteBalanceSample ? { ...snapshot.whiteBalanceSample } : null, mask: { ...snapshot.mask },
   opticsState: { ...snapshot.opticsState, manualIdentity: snapshot.opticsState.manualIdentity ? { ...snapshot.opticsState.manualIdentity } : null },
   layers: copyLayers(snapshot.layers),
@@ -386,16 +390,17 @@ function IconButton({ label, disabled, onClick, children }: { label: string; dis
   return <button className="icon-button" aria-label={label} title={label} disabled={disabled} onClick={onClick}>{children}</button>
 }
 
-function Slider({ label, value, min, max, step, suffix = '', disabled = false, displayValue, displayStep, gradient, onDisplayChange, onBeginEdit, onChange, onReset }: {
+function Slider({ label, value, min, max, step, suffix = '', disabled = false, displayValue, displayStep, gradient, unsigned = false, onDisplayChange, onBeginEdit, onChange, onReset }: {
   label: string; value: number; min: number; max: number; step: number; suffix?: string
   disabled?: boolean; displayValue?: number; displayStep?: number; gradient?: string; onDisplayChange?: (value: number) => void
+  unsigned?: boolean
   onBeginEdit: () => void; onChange: (value: number) => void; onReset: () => void
 }) {
   const [active, setActive] = useState(false)
   const percent = ((value - min) / (max - min)) * 100
   const shownValue = displayValue ?? value
   const shownStep = displayStep ?? step
-  const display = formatNumericValue(shownValue, shownStep)
+  const display = unsigned ? formatNumericValue(shownValue, shownStep).replace(/^\+/, '') : formatNumericValue(shownValue, shownStep)
   const [draft, setDraft] = useState(display)
   const [editing, setEditing] = useState(false)
   const discardDraft = useRef(false)
@@ -558,6 +563,7 @@ const applyNativeHistoryState = (photo: PhotoItem, state: NativeEditSettings): P
   const settings = mapped.settings
   return { ...photo, adjustments: mapped.adjustments, mask: mapped.mask ?? photo.mask, curveChannels: mapped.curves, curvePoints: copyCurve(mapped.curves.master),
     whiteBalanceMode: settings.whiteBalanceMode, whiteBalanceSample: settings.whiteBalanceSample,
+    rawWhiteBalance: settings.rawWhiteBalance ? { ...settings.rawWhiteBalance } : null,
     opticsState: { matchMode: settings.optics.matchMode, manualIdentity: settings.optics.manualIdentity },
     layers: mapped.layers, skinRetouch: settings.skinRetouch, healingOperations: settings.healingOperations,
     nativeRenderConstants: mapped.renderConstants }
@@ -698,7 +704,8 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
             before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
-            viewport.resolutionMode, viewport.viewport, before ? defaultNativeRenderConstants : photo.nativeRenderConstants)
+            viewport.resolutionMode, viewport.viewport, before ? defaultNativeRenderConstants : photo.nativeRenderConstants,
+            before ? null : photo.rawWhiteBalance)
           nativeResult = result
           if (activePhotoId.current === photo.id) {
             nativeDimensions.current = { id: photo.id, width: result.sourceWidth, height: result.sourceHeight }
@@ -803,7 +810,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
       window.cancelAnimationFrame(frameRequest)
     }
   }, [before, metric, onDimensions, onHistogram, onStatus, photo.adjustments, photo.curvePoints, photo.curveChannels, photo.whiteBalanceMode, photo.whiteBalanceSample,
-    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants, photo.renderBackend, photo.sourcePath, photo.src,
+    photo.mask, photo.opticsState, photo.layers, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants, photo.rawWhiteBalance, photo.renderBackend, photo.sourcePath, photo.src,
     photo.libraryAsset?.metadata.width, photo.libraryAsset?.metadata.height,
     maskPreview, interactionPhase, zoom, zoomScale, pan.x, pan.y, onDisplayScale, photo.id])
 
@@ -858,7 +865,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
 
 function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurveChannel, selectedCurvePoint, mask, renderBackend, whiteBalanceMode, whiteBalanceInfo, whiteBalanceError, onAdjust, onBeginAdjustment, onReset,
   onCurveSelect, onCurveBegin, onCurveChange, onCurvePresetSave, onCurvePresetLoad, canLoadCurvePreset, onMaskBegin, onMaskChange, onWhiteBalanceMode, onCopyWhiteBalance, onPasteWhiteBalance,
-  mixerBand, onMixerBand, mixerPicking, onMixerPicking, opticsState, opticsStatus, onOpticsState, onResolveOptics, nativeAiDenoiseReady, nativeSkinMaskReady }: {
+  mixerBand, onMixerBand, mixerPicking, onMixerPicking, opticsState, opticsStatus, onOpticsState, onResolveOptics, nativeAiDenoiseReady, nativeSkinMaskReady, rawWhiteBalance, onRawWhiteBalance }: {
+  rawWhiteBalance?: import('./nativeRender').NativeCameraWhiteBalanceTarget | null
+  onRawWhiteBalance: (target: import('./nativeRender').NativeCameraWhiteBalanceTarget | null, recordHistory?: boolean) => void
   tool: Tool; values: Adjustments; curvePoints: ToneCurvePoint[]; curveChannel: keyof NativeToneCurves; histogram: number[]; onCurveChannel: (channel: keyof NativeToneCurves) => void; selectedCurvePoint: string | null; mask: RadialMask; renderBackend: RenderBackend
   onAdjust: (key: AdjustmentKey, value: number, recordHistory?: boolean) => void
   onBeginAdjustment: () => void
@@ -881,28 +890,41 @@ function Inspector({ tool, values, curvePoints, curveChannel, histogram, onCurve
   const [gradingZone, setGradingZone] = useState<(typeof gradingZones)[number]>('Global')
   const [collapsed, setCollapsed] = useState(false)
   const sliders = sliderGroups[tool] ?? []
-  const wbPresentation = whiteBalancePresentation(whiteBalanceInfo?.asShotKelvin ?? null, values.temperature, whiteBalanceInfo?.source === 'rawMetadata')
+  const wbPresentation = whiteBalancePresentation(rawWhiteBalance ?? null, values.temperature)
   const normalizeAngle = (value: number) => ((value + 180) % 360 + 360) % 360 - 180
   return <section className="inspector-content" aria-label={`${tool} inspector`}>
     <button className="inspector-head inspector-toggle" aria-expanded={!collapsed} aria-controls={`inspector-${tool}`} onClick={() => setCollapsed(!collapsed)}><div><span className="eyebrow">調整</span><h2>{toolItems.find((item) => item.id === tool)?.label ?? tool}</h2></div><ChevronDown size={16} className={collapsed ? 'is-collapsed' : ''} /></button>
     <fieldset className="native-edit-controls" id={`inspector-${tool}`} hidden={collapsed} disabled={renderBackend !== 'native'} inert={renderBackend !== 'native'}>
     {tool === 'color' && <div className="color-bento">
       <div className="color-bento-column">
-      <section className="wb-panel" aria-label="白平衡"><div className={`wb-truth ${wbPresentation.native ? 'native' : 'relative'}`}><span>{wbPresentation.native ? 'RAW 原生白平衡' : whiteBalanceInfo?.source === 'rawMetadata' ? 'RAW 色溫不可推定' : '渲染影像相對白平衡'}</span><strong>{wbPresentation.native ? `${Math.round(wbPresentation.value)} K` : `${formatNumericValue(wbPresentation.value, 1)} 相對值`}</strong><small>{wbPresentation.native ? '來自 RAW camera-neutral 中繼資料；調整以 mired 域顯示。' : whiteBalanceInfo?.source === 'rawMetadata' ? '此 RAW 缺少可驗證的色溫矩陣；調整仍沿用原生 RAW 白平衡基準。' : '來源不含可驗證的 RAW Kelvin，因此不偽造 K 值。'}</small></div>
+      <section className="wb-panel" aria-label="白平衡"><div className={`wb-truth ${rawWhiteBalance ? 'native' : 'relative'}`}>
+        <span>{rawWhiteBalance ? 'RAW 實體白平衡' : whiteBalanceInfo?.source === 'rawMetadata' ? 'RAW 拍攝基準／相對校正' : '一般影像相對白平衡'}</span>
+        <strong>{wbPresentation.native ? `${Math.round(wbPresentation.value)} K` : `${formatNumericValue(wbPresentation.value, 1)} 相對值`}</strong>
+        <small>{rawWhiteBalance ? '由原始相機描述與 Camera Neutral 重新轉換；色調使用 Δuv。' : '相對調整不是物理 Kelvin，不會以色溫數字冒充。'}</small></div>
+      {whiteBalanceInfo?.source === 'rawMetadata' && <div className="wb-controls">
+        {rawWhiteBalance ? <>
+          <Slider label="RAW 色溫" min={1667} max={100000} step={50} value={rawWhiteBalance.kelvin} suffix=" K" unsigned gradient={controlGradient('Temperature')} onBeginEdit={onBeginAdjustment}
+            onChange={(kelvin) => onRawWhiteBalance({ ...rawWhiteBalance, kelvin }, false)} onReset={() => onRawWhiteBalance(null)} />
+          <Slider label="RAW 色調" min={-.05} max={.05} step={.0001} value={rawWhiteBalance.deltaUv} suffix=" Δuv" gradient={controlGradient('Tint')} onBeginEdit={onBeginAdjustment}
+            onChange={(deltaUv) => onRawWhiteBalance({ ...rawWhiteBalance, deltaUv }, false)} onReset={() => onRawWhiteBalance({ ...rawWhiteBalance, deltaUv: 0 })} />
+          <button onClick={() => onRawWhiteBalance(null)}>還原拍攝時白平衡</button>
+        </> : <button disabled={!whiteBalanceInfo.physicalSupported} onClick={() => onRawWhiteBalance({ kelvin: whiteBalanceInfo.asShotKelvin ?? 6504, deltaUv: 0 })}>自訂實體 RAW 白平衡</button>}
+        {!whiteBalanceInfo.physicalSupported && <small>這張 RAW 缺少可驗證的三通道相機描述；實體白平衡不可用。</small>}
+      </div>}
       {whiteBalanceError && <div className="tool-note" role="status">白平衡中繼資料讀取失敗：{whiteBalanceError}。目前僅顯示相對調整值。</div>}
-      {renderBackend === 'native' && <div className="wb-controls"><label>白平衡模式<select value={whiteBalanceMode}
-        onFocus={onBeginAdjustment} onChange={(event) => onWhiteBalanceMode(event.target.value as NativeWhiteBalanceMode)}>
+      {renderBackend === 'native' && <div className="wb-controls"><label>白平衡模式<select value={rawWhiteBalance ? 'physical' : whiteBalanceMode}
+        onFocus={onBeginAdjustment} onChange={(event) => event.target.value === 'physical'
+          ? onRawWhiteBalance(rawWhiteBalance ?? { kelvin: whiteBalanceInfo?.asShotKelvin ?? 6504, deltaUv: 0 })
+          : onWhiteBalanceMode(event.target.value as NativeWhiteBalanceMode)}>
         <option value="sourceDefault">來源預設</option><option value="asShot" disabled={whiteBalanceInfo?.source !== 'rawMetadata'}>拍攝時設定（RAW）</option>
+        <option value="physical" disabled={!whiteBalanceInfo?.physicalSupported}>自訂實體 RAW 白平衡</option>
         <option value="camera" disabled={whiteBalanceInfo?.source !== 'rawMetadata'}>相機白平衡（RAW）</option><option value="auto">自動（灰世界）</option>
         <option value="neutralPicker">中性灰吸管</option><option value="relative" disabled={whiteBalanceInfo?.source !== 'renderedRelative'}>相對校正（一般影像）</option>
       </select></label><div><button onClick={onCopyWhiteBalance}>複製白平衡</button><button onClick={onPasteWhiteBalance}>貼上白平衡</button></div>
       <small>{whiteBalanceMode === 'neutralPicker' ? '在預覽中雙擊中性區域即可取樣。' : '模式會與非破壞性編輯狀態一同保存。'}</small></div>}</section>
       <div className="basic-color-controls"><strong>基本色彩</strong>
-        {sliders.map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]}
-          displayValue={key === 'temperature' && wbPresentation.native ? wbPresentation.value : undefined}
-          displayStep={key === 'temperature' && wbPresentation.native ? 50 : undefined}
-          suffix={key === 'temperature' ? (wbPresentation.native ? ' K' : ' rel') : slider.suffix}
-          onDisplayChange={key === 'temperature' && whiteBalanceInfo?.asShotKelvin ? (kelvin) => onAdjust(key, kelvinToRelative(whiteBalanceInfo.asShotKelvin!, kelvin), false) : undefined}
+        {sliders.filter(({ key }) => !rawWhiteBalance || !['temperature', 'tint'].includes(key) || values.temperature !== 0 || values.tint !== 0).map(({ key, ...slider }) => <Slider key={key} {...slider} value={values[key]}
+          suffix={key === 'temperature' || key === 'tint' ? ' rel' : slider.suffix}
           onBeginEdit={onBeginAdjustment} onChange={(value) => onAdjust(key, value, false)} onReset={() => onReset(key)} />)}
       </div>
       </div>
@@ -1536,7 +1558,7 @@ export function App() {
   const nativeHistoryState = useMemo(() => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
     selected.curveChannels, selected.opticsState, selected.layers, selected.mask,
-    selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants,
+    selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants, selected.rawWhiteBalance,
   ), [selected])
   const comparedSnapshot = nativeHistory?.snapshots.find((snapshot) => snapshot.id === snapshotCompareId) ?? null
   const snapshotComparePhoto = comparedSnapshot ? applyNativeHistoryState(selected, comparedSnapshot.state) : null
@@ -1808,7 +1830,7 @@ export function App() {
       if (photo.libraryAsset && next.history.length > photo.history.length && !pendingNativeBefore.current) {
         pendingNativeBefore.current = toNativeSettings(photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
           photo.whiteBalanceSample, photo.curveChannels, photo.opticsState, photo.layers, photo.mask,
-          photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants)
+          photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants, photo.rawWhiteBalance)
       }
       return next
     }))
@@ -1869,13 +1891,13 @@ export function App() {
   const selectedNativeSettings = () => toNativeSettings(
     selected.adjustments, selected.curvePoints, selected.whiteBalanceMode,
     selected.whiteBalanceSample, selected.curveChannels, selected.opticsState,
-    selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants,
+    selected.layers, selected.mask, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants, selected.rawWhiteBalance,
   )
 
   const nativeSettingsForPhoto = (photo: PhotoItem) => toNativeSettings(
     photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
     photo.whiteBalanceSample, photo.curveChannels, photo.opticsState,
-    photo.layers, photo.mask, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants,
+    photo.layers, photo.mask, photo.skinRetouch, photo.healingOperations, photo.nativeRenderConstants, photo.rawWhiteBalance,
   )
 
   function applyWorkflowSettings(settings: ReturnType<typeof selectedNativeSettings>, label: string) {
@@ -2060,7 +2082,8 @@ export function App() {
   }
 
   function updateWhiteBalance(mode: NativeWhiteBalanceMode, sample: NativeWhiteBalanceSample | null = null) {
-    updateSelected((photo) => ({ ...photo, whiteBalanceMode: mode, whiteBalanceSample: sample,
+    updateSelected((photo) => ({ ...photo, whiteBalanceMode: mode, whiteBalanceSample: sample, rawWhiteBalance: null,
+      adjustments: mode === 'asShot' || mode === 'camera' ? { ...photo.adjustments, temperature: 0, tint: 0 } : photo.adjustments,
       history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
   }
@@ -2072,7 +2095,8 @@ export function App() {
 
   function pasteWhiteBalance() {
     if (!copiedWhiteBalance) { setNotice('請先複製白平衡'); return }
-    if (!canApplyWhiteBalanceMode(copiedWhiteBalance.whiteBalanceMode, whiteBalanceInfo?.source)) {
+    if (!canApplyWhiteBalanceMode(copiedWhiteBalance.whiteBalanceMode, whiteBalanceInfo?.source)
+      || copiedWhiteBalance.rawWhiteBalance && !whiteBalanceInfo?.physicalSupported) {
       setNotice('白平衡模式不適用於這張照片：RAW 相機白平衡與一般影像相對校正不能互相代替。請在來源照片選擇來源預設後重新複製。')
       return
     }
@@ -2080,6 +2104,18 @@ export function App() {
       history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
     setBefore(false)
     setNotice('已貼上白平衡')
+  }
+
+  function updateRawWhiteBalance(target: import('./nativeRender').NativeCameraWhiteBalanceTarget | null, recordHistory = true) {
+    if (target && !whiteBalanceInfo?.physicalSupported) {
+      setNotice('這張照片的實體 RAW 白平衡不可用；不會改用相對校正。')
+      return
+    }
+    updateSelected((photo) => ({ ...photo, rawWhiteBalance: target ? { ...target } : null,
+      whiteBalanceMode: target ? 'sourceDefault' : 'asShot', whiteBalanceSample: null,
+      adjustments: { ...photo.adjustments, temperature: 0, tint: 0 },
+      history: recordHistory ? appendInteractiveHistory(photo.history, takeSnapshot(photo)) : photo.history, future: [] }))
+    setBefore(false)
   }
 
   async function pickMixerBand(x: number, y: number) {
@@ -2285,7 +2321,7 @@ export function App() {
     const current = editorRequests.current.begin('advisor')
     try {
       const result = await adviseNativeImage(selected.sourcePath, selected.adjustments, selected.curvePoints, selected.whiteBalanceMode, selected.whiteBalanceSample,
-        selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants, selected.mask)
+        selected.curveChannels, selected.opticsState, selected.layers, selected.skinRetouch, selected.healingOperations, selected.nativeRenderConstants, selected.mask, selected.rawWhiteBalance)
       if (!current()) return
       setAdvisorResult(result)
       setNotice(`${result.suggestions.length} local, explainable suggestion${result.suggestions.length === 1 ? '' : 's'} ready`)
@@ -2447,7 +2483,7 @@ export function App() {
   function resetAll() {
     if (!hasPhotoEdits(selected)) return
     updateSelected((photo) => ({ ...photo, adjustments: { ...defaultAdjustments }, curvePoints: copyCurve(defaultCurvePoints), curveChannels: defaultCurveChannels(), whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null,
-      opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
+      rawWhiteBalance: null, opticsState: { ...defaultNativeOpticsState }, mask: { ...defaultMask },
       layers: [], skinRetouch: defaultNativeSkinRetouch(), healingOperations: [], nativeRenderConstants: { ...defaultNativeRenderConstants },
       history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
   }
@@ -2462,6 +2498,10 @@ export function App() {
         setNotice('已複製設定')
         return
       case 'pasteSettings':
+        if (copiedSettings?.rawWhiteBalance && !whiteBalanceInfo?.physicalSupported) {
+          setNotice('實體 RAW 白平衡不能貼到缺少相機描述的照片。')
+          return
+        }
         if (!copiedSettings) { setNotice('請先從照片複製設定'); return }
         updateSelected((photo) => ({ ...applySnapshot(photo, copiedSettings), history: appendInteractiveHistory(photo.history, takeSnapshot(photo)), future: [] }))
         setBefore(false)
@@ -2912,6 +2952,7 @@ export function App() {
         </fieldset>
           {(tool !== 'masks' || !activeLayer) && <Inspector key={tool} tool={tool} values={selected.adjustments} curvePoints={selected.curveChannels[curveChannel]} curveChannel={curveChannel} histogram={histogram.luminance} onCurveChannel={(channel) => { setCurveChannel(channel); setSelectedCurvePoint(null) }} selectedCurvePoint={selectedCurvePoint} renderBackend={selected.renderBackend}
             whiteBalanceMode={selected.whiteBalanceMode} whiteBalanceInfo={whiteBalanceInfo} whiteBalanceError={whiteBalanceError}
+            rawWhiteBalance={selected.rawWhiteBalance} onRawWhiteBalance={updateRawWhiteBalance}
             mask={selected.mask} onAdjust={adjust} onBeginAdjustment={beginInteractiveEdit} onReset={resetAdjustment} onCurveSelect={setSelectedCurvePoint}
             onCurveBegin={beginInteractiveEdit} onCurveChange={updateCurve} onMaskBegin={beginInteractiveEdit} onMaskChange={updateMask}
             onCurvePresetSave={saveCurvePreset} onCurvePresetLoad={loadCurvePreset} canLoadCurvePreset={savedCurvePreset !== null}

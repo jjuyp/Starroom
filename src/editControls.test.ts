@@ -1,18 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { controlGradient, formatNumericValue, gradingGradient, relativeKelvin, wheelPosition, wheelValue, wheelKeyboardValue, whiteBalancePresentation } from './editControls'
+import { controlGradient, formatNumericValue, gradingGradient, wheelPosition, wheelValue, wheelKeyboardValue, whiteBalancePresentation } from './editControls'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ColorWheel } from './ColorWheel'
 
 describe('Starroom V2 editing controls', () => {
   it('keeps rendered-image white balance explicitly relative', () => {
-    expect(whiteBalancePresentation(null, 12, false)).toEqual({ value: 12, unit: 'relative', native: false })
+    expect(whiteBalancePresentation(null, 12)).toEqual({ value: 12, unit: 'relative', native: false })
   })
 
-  it('maps RAW relative correction around a real as-shot Kelvin baseline', () => {
-    expect(relativeKelvin(5200, 0)).toBe(5200)
-    expect(relativeKelvin(5200, 20)).toBeGreaterThan(5200)
-    expect(whiteBalancePresentation(5200, 0, true)).toEqual({ value: 5200, unit: 'K', native: true })
+  it('displays only the actual physical target as Kelvin and preserves fine Delta-uv precision', () => {
+    expect(whiteBalancePresentation({ kelvin: 5200, deltaUv: .008 }, 20)).toEqual({ value: 5200, unit: 'K', native: true })
+    expect(formatNumericValue(.0081, .0001)).toBe('+0.0081')
   })
 
   it('uses semantic color gradients for temperature, tint and selected mixer target', () => {

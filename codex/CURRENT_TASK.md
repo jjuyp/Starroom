@@ -1,5 +1,22 @@
 # Current Task
 
+Current worktree wires explicit physical RAW white through real editor controls, Snapshot/
+Undo/Redo, white-balance and whole-settings clipboard, Native History, preview/before/export
+requests and hydration. Old Relative recipes retain their values but are no longer mislabeled
+Kelvin. Delta-uv numeric precision is four digits. Native metadata tests exercise the actual
+capability enabling path; real Nikon History/persist/reopen/snapshot/export test passes.
+Audit found non-DNG target CAT changed even capture-matched pixels [.3,.4,1.2] to
+[.41706192,.44706666,1.2529656]; fixed static LibRaw camera profile plus camera gains passes
+the original 3e-5 threshold. DNG chapter-6 adaptation remains unchanged. Color policy v5.
+Full Web has 208 tests/report 1791768069602; final mode-label-only change passes targeted/build.
+Full Rust report 1791768290914 passes; registry lists 439 including four separate opt-in gates.
+Latest Full Web passed after final control-presentation changes, report 1791768479375 (208 tests).
+Local batch is ready for commit/push/remote Full acceptance. Prior 14a033d Full CI 38117983299
+succeeded; PR #2 is Draft. Next work is measured physical-WB/preparation/slider latency and
+remaining complete color/profile/alpha/gamut/monitor requirements, not a Final/installed claim.
+Browser relative-panel/collapse check is UI-only, not installed physical-RAW acceptance.
+All complete profile/Golden/latency/GPU residency/alpha/gamut/monitor/100MP/Windows gates remain.
+
 Current worktree adds actual opt-in physical RAW white (Kelvin/Delta-uv) through original
 camera metadata -> target calibration -> shared source preparation -> Native Preview/Export.
 Decode policy v7 retains calibration input with legacy absence; target metadata/profile hash,

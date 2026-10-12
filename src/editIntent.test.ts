@@ -6,6 +6,10 @@ const original = (): AdditionalEditIntent => ({ curveChannels: { master: [], red
   whiteBalanceMode: 'sourceDefault', whiteBalanceSample: null })
 
 describe('complete workspace edit intent', () => {
+  it('tracks explicit physical RAW intent independently of legacy relative sliders', () => {
+    expect(countAdditionalEditIntent({ ...original(), rawWhiteBalance: { kelvin: 4200, deltaUv: .008 } })).toBe(1)
+    expect(countAdditionalEditIntent({ ...original(), rawWhiteBalance: null })).toBe(0)
+  })
   it('does not mark an untouched photo or explicit default graph constants as edited', () => {
     expect(countAdditionalEditIntent(original())).toBe(0)
     expect(countAdditionalEditIntent({ ...original(), nativeRenderConstants: { ...defaultNativeRenderConstants } })).toBe(0)

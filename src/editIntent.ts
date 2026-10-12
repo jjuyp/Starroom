@@ -2,6 +2,7 @@ import { defaultNativeRenderConstants, type NativeRenderConstants, type NativeTo
   type NativeWhiteBalanceMode, type NativeWhiteBalanceSample } from './nativeRender'
 
 export interface AdditionalEditIntent {
+  rawWhiteBalance?: import('./nativeRender').NativeCameraWhiteBalanceTarget | null
   curveChannels: NativeToneCurves
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
@@ -16,5 +17,5 @@ export function countAdditionalEditIntent(photo: AdditionalEditIntent): number {
   const changedConstants = (Object.keys(defaultNativeRenderConstants) as Array<keyof NativeRenderConstants>)
     .some((key) => constants[key] !== defaultNativeRenderConstants[key])
   return channels + (photo.whiteBalanceMode !== 'sourceDefault' ? 1 : 0)
-    + (photo.whiteBalanceSample ? 1 : 0) + (changedConstants ? 1 : 0)
+    + (photo.whiteBalanceSample ? 1 : 0) + (photo.rawWhiteBalance ? 1 : 0) + (changedConstants ? 1 : 0)
 }

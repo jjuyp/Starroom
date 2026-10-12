@@ -46,9 +46,10 @@ use starroom_project::{
 pub use starroom_raw::CAMERA_PROFILE_RESOLVER_VERSION;
 use starroom_raw::{
     CameraProfileDescriptor, CameraProfileStatus, CameraWhiteBalanceError, DecodedRawImage,
-    camera_white_balance_transform,
 };
-pub use starroom_raw::{CameraWhiteBalanceTarget, RAW_DECODE_POLICY_VERSION};
+pub use starroom_raw::{
+    CameraWhiteBalanceTarget, RAW_DECODE_POLICY_VERSION, camera_white_balance_transform,
+};
 use starroom_render::profiling::{self, ProfileStage};
 use starroom_render::{
     GpuStageCacheKeys,
@@ -58,7 +59,7 @@ use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
 /// Reproducible render-policy identity. Change whenever authoritative color semantics change.
-pub const COLOR_POLICY_VERSION: &str = "starroom-color-v4-relative-white-cat";
+pub const COLOR_POLICY_VERSION: &str = "starroom-color-v5-physical-camera-white";
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

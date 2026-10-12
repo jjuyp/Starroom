@@ -3,6 +3,16 @@ import { defaultAdjustments } from './editorState'
 import { canApplyWhiteBalanceMode, copyWhiteBalanceState, pasteWhiteBalanceState } from './whiteBalanceClipboard'
 
 describe('real white balance clipboard intent', () => {
+  it('copies physical target without aliasing or copying camera coefficients', () => {
+    const source = { adjustments: { ...defaultAdjustments }, whiteBalanceMode: 'sourceDefault' as const,
+      whiteBalanceSample: null, rawWhiteBalance: { kelvin: 4200, deltaUv: .008 } }
+    const clipboard = copyWhiteBalanceState(source)
+    const restored = pasteWhiteBalanceState(source, clipboard)
+    source.rawWhiteBalance.kelvin = 6504
+    expect(restored.rawWhiteBalance).toEqual({ kelvin: 4200, deltaUv: .008 })
+    expect(restored.rawWhiteBalance).not.toBe(clipboard.rawWhiteBalance)
+    expect(pasteWhiteBalanceState(source, { temperature:0,tint:0,whiteBalanceMode:'sourceDefault',whiteBalanceSample:null }).rawWhiteBalance).toBeNull()
+  })
   it('copies and pastes Temperature/Tint together with mode while preserving other edits', () => {
     const source = { adjustments: { ...defaultAdjustments, temperature: 28, tint: -14 },
       whiteBalanceMode: 'sourceDefault' as const, whiteBalanceSample: null }
@@ -21,7 +31,7 @@ describe('real white balance clipboard intent', () => {
     const result = pasteWhiteBalanceState(source, copied)
     expect(result.whiteBalanceSample?.x).toBe(.2)
     expect(result.whiteBalanceSample).not.toBe(copied.whiteBalanceSample)
-    expect(Object.keys(copied).sort()).toEqual(['temperature', 'tint', 'whiteBalanceMode', 'whiteBalanceSample'].sort())
+    expect(Object.keys(copied).sort()).toEqual(['temperature', 'tint', 'whiteBalanceMode', 'whiteBalanceSample', 'rawWhiteBalance'].sort())
   })
   it('refuses incompatible RAW/encoded mode pastes before making a broken render state', () => {
     expect(canApplyWhiteBalanceMode('camera', 'renderedRelative')).toBe(false)

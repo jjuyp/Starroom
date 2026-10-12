@@ -39,3 +39,6 @@ starroom-library = { path = "../crates/starroom-library" }
 starroom-history = { path = "../crates/starroom-history" }
 starroom-export = { path = "../crates/starroom-export" }
 starroom-session = { path = "../crates/starroom-session" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

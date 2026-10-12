@@ -236,16 +236,14 @@ pub fn camera_white_balance_transform(
     }
     let mut selected = input.clone();
     selected.camera_neutral = [neutral.x / neutral.y, 1.0, neutral.z / neutral.y, 1.0];
-    let mut profile = CameraProfileResolver::resolve(&selected);
-    if input.dng_version == 0 {
-        let matrix = balanced_color_matrix_to_xyz_d65(
-            camera_from_xyz.inverse().ok_or_else(fail)?,
-            selected.camera_neutral,
-        )
-        .ok_or_else(fail)?;
-        profile.camera_to_xyz_d65 = matrix.0;
-        profile.hash = profile_hash(&profile);
-    }
+    // LibRaw's non-DNG camera coefficients are fixed after D65 row normalization;
+    // scale_colors changes camera gains, not that profile. Adding a target-white CAT here
+    // changes even capture-matched As-Shot pixels. DNG instead uses its chapter-6 profile rules.
+    let profile = if input.dng_version == 0 {
+        original.clone()
+    } else {
+        CameraProfileResolver::resolve(&selected)
+    };
     if profile.status != CameraProfileStatus::Resolved {
         return Err(fail());
     }
@@ -913,6 +911,36 @@ fn slug(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn non_dng_capture_matched_physical_white_preserves_existing_as_shot_pixels() {
+        let mut value = input();
+        value.make = "Nikon".into();
+        value.dng_version = 0;
+        value.libraw_cam_xyz = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]];
+        let target = CameraWhiteBalanceTarget {
+            kelvin: 2856.0,
+            delta_uv: 0.008,
+        };
+        let white = target.white().unwrap();
+        value.camera_neutral = [white.x, 1.0, white.z, 1.0];
+        let original = CameraProfileResolver::resolve(&value);
+        let (matrix, _) = camera_white_balance_transform(&value, &original, target).unwrap();
+        let sample = Xyz {
+            x: 0.3,
+            y: 0.4,
+            z: 1.2,
+        };
+        let actual = matrix.multiply_vec(sample);
+        for (a, b) in [actual.x, actual.y, actual.z]
+            .into_iter()
+            .zip([sample.x, sample.y, sample.z])
+        {
+            assert!(
+                (a - b).abs() < 3e-5,
+                "matched white changed pixels: {actual:?} vs {sample:?}"
+            );
+        }
+    }
+    #[test]
     fn physical_non_dng_white_uses_original_coefficients_not_d65_normalized_coefficients() {
         let mut value = input();
         value.make = "Nikon".into();
@@ -932,14 +960,22 @@ mod tests {
             z: 1.2,
         };
         let actual = matrix.multiply_vec(sample);
-        let expected = bradford_adaptation(white, D65).multiply_vec(sample);
+        // Independent static-profile camera-gain oracle for identity XYZ->camera coefficients.
+        let expected = Xyz {
+            x: sample.x * D65.x / white.x,
+            y: sample.y,
+            z: sample.z * D65.z / white.z,
+        };
         for (a, b) in [actual.x, actual.y, actual.z]
             .into_iter()
             .zip([expected.x, expected.y, expected.z])
         {
             assert!((a - b).abs() < 3e-5);
         }
-        assert_ne!(selected.hash, original.hash);
+        assert_eq!(
+            selected.hash, original.hash,
+            "static camera profile does not change with WB gains"
+        );
         assert_eq!(value.camera_neutral, [D65.x, 1.0, D65.z, 1.0]);
     }
     #[test]

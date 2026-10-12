@@ -93,7 +93,8 @@ export interface NativeSessionOpen { state: NativeSessionState | null; recoveryA
 export interface NativeGpuStatus { backend: 'dx12' | 'other' | 'cpuFallback'; adapterName: string | null; reason: string | null }
 export type NativeWhiteBalanceMode = 'sourceDefault' | 'asShot' | 'camera' | 'auto' | 'neutralPicker' | 'relative'
 export interface NativeWhiteBalanceSample { x: number; y: number; width: number; height: number }
-export interface NativeWhiteBalanceInfo { source: 'rawMetadata' | 'renderedRelative'; asShotKelvin: number | null }
+export interface NativeCameraWhiteBalanceTarget { kelvin: number; deltaUv: number }
+export interface NativeWhiteBalanceInfo { source: 'rawMetadata' | 'renderedRelative'; asShotKelvin: number | null; physicalSupported?: boolean }
 export interface NativeToneCurves { master: ToneCurvePoint[]; red: ToneCurvePoint[]; green: ToneCurvePoint[]; blue: ToneCurvePoint[] }
 export type NativeColorBand = 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'purple' | 'magenta'
 export interface NativeBandAdjustment { hueDegrees: number; chroma: number; lightness: number }
@@ -247,6 +248,7 @@ export interface NativeEditSettings {
   noiseReduction: number
   whiteBalanceMode: NativeWhiteBalanceMode
   whiteBalanceSample: NativeWhiteBalanceSample | null
+  rawWhiteBalance?: NativeCameraWhiteBalanceTarget | null
   curve: Array<{ x: number; y: number }>
   curves: { master: Array<{ x: number; y: number }>; red: Array<{ x: number; y: number }>; green: Array<{ x: number; y: number }>; blue: Array<{ x: number; y: number }> }
   colorMixer: NativeColorMixer
@@ -300,6 +302,13 @@ export function normalizeNativeSettings(input: NativeEditSettings): NativeEditSe
   }
   if (!Array.isArray(raw.curve)) throw new Error('NativeEditContractInvalid: required legacy curve is missing.')
   const settings = { ...structuredClone(canonicalNativeDefaults), ...raw } as NativeEditSettings
+  settings.rawWhiteBalance = raw.rawWhiteBalance ? { ...raw.rawWhiteBalance } : null
+  if (settings.rawWhiteBalance && (!Number.isFinite(settings.rawWhiteBalance.kelvin)
+    || !Number.isFinite(settings.rawWhiteBalance.deltaUv)
+    || settings.rawWhiteBalance.kelvin < 1e6 / 600 || settings.rawWhiteBalance.kelvin > 100000
+    || Math.abs(settings.rawWhiteBalance.deltaUv) > .05)) {
+    throw new Error('NativeEditContractInvalid: invalid physical RAW white balance.')
+  }
   // Historical native JSON used snake_case inside the nested lens identity. Project
   // it into the current wire contract without rewriting acknowledged history JSON.
   if (settings.optics.manualIdentity) {
@@ -405,7 +414,8 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
   mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 },
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
   healingOperations: NativeHealingOperation[] = [],
-  renderConstants: NativeRenderConstants = defaultNativeRenderConstants): NativeEditSettings {
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
+  rawWhiteBalance: NativeCameraWhiteBalanceTarget | null = null): NativeEditSettings {
   checkedRenderConstants(renderConstants)
   const bands: NativeColorBand[] = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'magenta']
   const title = (band: string) => `${band[0].toUpperCase()}${band.slice(1)}`
@@ -429,6 +439,7 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
     noiseReduction: adjustments.noiseReduction,
     whiteBalanceMode,
     whiteBalanceSample,
+    rawWhiteBalance: rawWhiteBalance ? { ...rawWhiteBalance } : null,
     curve: [...curve].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y })),
     curves: Object.fromEntries(Object.entries(toneCurves).map(([channel, points]) => [channel, [...points].sort((left, right) => left.x - right.x).map(({ x, y }) => ({ x, y }))])) as NativeEditSettings['curves'],
     colorMixer: {
@@ -769,13 +780,14 @@ export async function renderNativePreview(
   resolutionMode: 'fit' | 'highResolution' = 'fit',
   viewport: NativePreviewViewport | null = null,
   renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
+  rawWhiteBalance: NativeCameraWhiteBalanceTarget | null = null,
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
   const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)
@@ -810,9 +822,10 @@ export async function adviseNativeImage(sourcePath: string, adjustments: Adjustm
   whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,
   toneCurves: NativeToneCurves, opticsState: NativeOpticsState, layers: NativeAdjustmentLayer[] = [],
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(), healingOperations: NativeHealingOperation[] = [],
-  renderConstants: NativeRenderConstants = defaultNativeRenderConstants, mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }): Promise<NativeAdvisorResult> {
+  renderConstants: NativeRenderConstants = defaultNativeRenderConstants, mask: RadialMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 },
+  rawWhiteBalance: NativeCameraWhiteBalanceTarget | null = null): Promise<NativeAdvisorResult> {
   return invoke<NativeAdvisorResult>('advise_native_image', { request: { sourcePath, maxEdge: 1024,
-    settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) } })
+    settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) } })
 }
 
 export async function chooseNativeExportPath(sourceName: string) {
@@ -945,10 +958,11 @@ export async function exportNativeJpeg(
   skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
   healingOperations: NativeHealingOperation[] = [],
   renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
+  rawWhiteBalance: NativeCameraWhiteBalanceTarget | null = null,
 ) {
   assertNativeSupported(adjustments, mask)
   return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants) },
+    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
   })
 }
 

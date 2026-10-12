@@ -10,6 +10,15 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-12 physical-control batch: real editor target now flows through UI, both clipboards,
+Snapshot/Undo/Redo/hydration, Native requests and shared Preview/Export. Actual Nikon Native
+capability metadata and history persist/reopen/restore/export test pass. Non-DNG capture-matched
+identity caught and repaired extra CAT while DNG keeps chapter-6 rules. Full local Rust report
+1791768290914 passes; registry lists 439 tests including opt-in gates not executed by ordinary
+Full. Browser checks only prove relative-panel/collapse presentation. Installed physical RAW
+interaction, full photographic IQ and <100ms/end-to-end performance remain OPEN, along with
+every original alpha/gamut/monitor/residency/tile/100MP/Windows/Final gate.
+
 Physical RAW WB dependency audit before the current backend group: `WhiteBalanceSettings` carries only mode/
 picker ROI; raw Camera/AsShot branches are baked-WB no-ops and UI `whiteBalancePresentation`
 converts relative creative Temperature into displayed Kelvin. Therefore current CCT metadata

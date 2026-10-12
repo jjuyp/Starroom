@@ -31,25 +31,13 @@ export function gradingGradient(property: 'Hue' | 'Chroma' | 'Lightness', hue: n
 }
 
 export function formatNumericValue(value: number, step: number) {
-  const digits = step < .1 ? 2 : step < 1 ? 1 : 0
+  const digits = Math.min(6, String(step).split('.')[1]?.length ?? Math.max(0, -Math.floor(Math.log10(step))))
   const rounded = value.toFixed(digits)
   return value > 0 ? `+${rounded}` : rounded
 }
 
-export function relativeKelvin(baseKelvin: number, relative: number) {
-  const baseMired = 1_000_000 / Math.min(25_000, Math.max(1_500, baseKelvin))
-  const adjustedMired = baseMired - relative * 1.35
-  return Math.round(Math.min(25_000, Math.max(1_500, 1_000_000 / adjustedMired)) / 50) * 50
-}
-
-export function kelvinToRelative(baseKelvin: number, kelvin: number) {
-  const baseMired = 1_000_000 / Math.min(25_000, Math.max(1_500, baseKelvin))
-  const targetMired = 1_000_000 / Math.min(25_000, Math.max(1_500, kelvin))
-  return Math.min(100, Math.max(-100, (baseMired - targetMired) / 1.35))
-}
-
-export function whiteBalancePresentation(baseKelvin: number | null, relative: number, isRaw: boolean) {
-  if (isRaw && baseKelvin !== null) return { value: relativeKelvin(baseKelvin, relative), unit: 'K', native: true }
+export function whiteBalancePresentation(target: { kelvin: number; deltaUv: number } | null, relative: number) {
+  if (target !== null) return { value: target.kelvin, unit: 'K', native: true }
   return { value: relative, unit: 'relative', native: false }
 }
 
