@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+Destination-gamut counterexample (2026-10-12): actual LCMS maps working [1,0,0] to sRGB
+[1.2482357,-1.6096301,-.23438673], and [.8,.1,.2] to sRGB/P3 over-range while Adobe RGB fits.
+Working-only Rec.2020 compression therefore cannot qualify destination preservation. The
+existing LCMS proofing provider, with isolated dual-alarm contexts, detects the profile-specific
+boundary without white/black-alarm ambiguity. Doc52/probe are diagnostic evidence only; actual
+mapping, general RGB ICCs, metrics, parity and performance remain OPEN.
+
 2026-10-12 RAW working storage: actual MSVC release proves old flatten did not reuse its
 full RGB allocation; one flat fallibly reserved working Vec now preserves previous f32 bits
 for ten actual Nikon WB/physical combinations and rejects invalid dimensions. RAW/shared/
