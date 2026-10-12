@@ -1,5 +1,21 @@
 # Implementation Notes
 
+## 2026-10-12 — RAW working storage without an extra full flatten allocation
+
+The MSVC release ownership probe proves old Vec<[f32;3]> -> flattened Vec<f32> did not reuse
+storage on Rust1.97.1: one extra 8,355,840-byte buffer at 1024x680. Native raw preparation now
+uses one fallibly reserved flat working Vec and borrowed triples, retaining exact operations,
+finite boundaries, immutable source and cached-prefix policy. Overflow/empty dimensions fail
+before allocation; the new typed reservation failure is correctly classified as Memory in UI.
+No camera, gamma, ICC, creative math, dependency, output precision or resolution is changed.
+
+Ten actual Nikon mode/physical-WB combinations compare old/new f32 bits exactly; original RAW
+data and strict tolerances remain unchanged. RAW/shared/photographic/GPU/format/workspace-Clippy
+milestone passes 1791771181496; full Web 209 tests/30 files passes 1791771448027. Full Rust
+passes 1791771667236. Doc51 preserves both real X-Trans reports and regressions/variation in unchanged
+controls; physical Temp/Tint medians change 65.3407/65.5568 -> 63.1510/62.5470ms in those runs,
+but that is not a desktop latency or whole-process peak-RAM acceptance. No 100MP claim follows.
+
 ## 2026-10-12 — Physical RAW control/persistence connection, under acceptance
 
 The real editor now transports its explicit Kelvin/Delta-uv target to the same Native source

@@ -1,5 +1,15 @@
 # Current Task
 
+Current worktree removes measured non-reused full RAW flatten allocation. MSVC release layout
+probe reports false allocation reuse (Rust1.97.1); production now reserves one flat Vec fallibly
+and borrows triples in place, with overflow/empty-dimension guard and Memory UX. Ten real Nikon
+mode/physical combinations match previous f32 bits exactly. RAW/shared/Golden/GPU/Clippy milestone
+passed 1791771181496; full Web 209 tests passed 1791771448027; Full Rust passed 1791771667236. Doc51 records
+honest before/after timings including exposure/picker variation, not a universal speed claim.
+Prior 9c83695 authoritative Full CI 38192249996 has completed SUCCESS. Benchmark-only 9db73d3
+is local and will be pushed with this repair after local Full acceptance. All original color/
+alpha/gamut/monitor/residency/latency/100MP/Windows/Final gates remain active.
+
 `9c836957fe62bddaf8b988b52b360f5a270fbf5d` UI/physical-WB batch is pushed; PR #2 is Open/Draft.
 Authoritative Full CI 38192249996 remains live (latest observed Rust test step); secondary
 38192254267 succeeded. Do not cancel it with another push. Current independent work extends

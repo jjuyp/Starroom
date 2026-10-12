@@ -459,6 +459,8 @@ pub enum PipelineError {
     InvalidDecodedBuffer,
     #[error("detail image buffer is invalid")]
     DetailBuffer,
+    #[error("RAW working allocation exceeded available memory ({samples} float samples)")]
+    RawWorkingAllocation { samples: usize },
     #[error("Lensfun profile is unavailable: {0:?}")]
     OpticsProfile(LensProfileStatus),
     #[error("Lensfun correction failed")]
@@ -1822,8 +1824,11 @@ fn to_working_raw(
     decoded: &DecodedRawImage,
     settings: &RenderSettings,
 ) -> Result<LinearImage, PipelineError> {
-    let expected = decoded.width as usize * decoded.height as usize * 3;
-    if decoded.rgb.len() != expected {
+    let expected = (decoded.width as usize)
+        .checked_mul(decoded.height as usize)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or(PipelineError::InvalidDecodedBuffer)?;
+    if decoded.width == 0 || decoded.height == 0 || decoded.rgb.len() != expected {
         return Err(PipelineError::InvalidDecodedBuffer);
     }
     if settings.raw_white_balance.is_some() && decoded.metadata.colors != 3 {
@@ -1833,10 +1838,10 @@ fn to_working_raw(
         .into());
     }
     let working_bytes = (decoded.rgb.len() as u64).saturating_mul(F32_BYTES);
-    let pixels = profiling::measure(
+    let data = profiling::measure(
         ProfileStage::WhiteBalance,
         working_bytes,
-        || -> Result<Vec<[f32; 3]>, PipelineError> {
+        || -> Result<Vec<f32>, PipelineError> {
             let physical = settings
                 .raw_white_balance
                 .map(|target| {
@@ -1846,41 +1851,40 @@ fn to_working_raw(
                     camera_white_balance_transform(input, &decoded.metadata.camera_profile, target)
                 })
                 .transpose()?;
-            let mut pixels: Vec<[f32; 3]> = decoded
-                .rgb
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|pixel| {
-                    if let Some((matrix, _)) = &physical {
-                        let xyz = starroom_color_management::rec2020_linear_to_xyz_d65(LinearRgb {
-                            r: pixel[0],
-                            g: pixel[1],
-                            b: pixel[2],
-                        });
-                        let rgb = starroom_color_management::xyz_d65_to_rec2020_linear(
-                            matrix.multiply_vec(xyz),
-                        );
-                        [rgb.r, rgb.g, rgb.b]
-                    } else {
-                        [pixel[0], pixel[1], pixel[2]]
-                    }
-                })
-                .collect();
+            let mut data = Vec::new();
+            data.try_reserve_exact(decoded.rgb.len()).map_err(|_| {
+                PipelineError::RawWorkingAllocation {
+                    samples: decoded.rgb.len(),
+                }
+            })?;
+            data.extend_from_slice(&decoded.rgb);
+            let pixels = data.as_chunks_mut::<3>().0;
+            if let Some((matrix, _)) = &physical {
+                for pixel in pixels.iter_mut() {
+                    let xyz = starroom_color_management::rec2020_linear_to_xyz_d65(LinearRgb {
+                        r: pixel[0],
+                        g: pixel[1],
+                        b: pixel[2],
+                    });
+                    let rgb = starroom_color_management::xyz_d65_to_rec2020_linear(
+                        matrix.multiply_vec(xyz),
+                    );
+                    *pixel = [rgb.r, rgb.g, rgb.b];
+                }
+            }
             if pixels.iter().flatten().any(|v| !v.is_finite()) {
                 return Err(CameraWhiteBalanceError("non-finite camera transform output").into());
             }
             apply_white_balance(
-                &mut pixels,
+                pixels,
                 decoded.width,
                 decoded.height,
                 SourceKind::Raw,
                 source_white_balance(settings.white_balance),
             )?;
-            Ok(pixels)
+            Ok(data)
         },
     )?;
-    let data = pixels.into_iter().flatten().collect();
     LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)
 }
@@ -2591,6 +2595,102 @@ pub fn render_to_srgb8(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn raw_working_flat_storage_matches_previous_layout_bit_exactly() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/raw/sources/nikon-d1.nef");
+        let source = starroom_imageio::decode_source_preview(path, 256).unwrap();
+        let DecodedSourceImage::Raw(raw) = source else {
+            panic!("actual RAW fixture required")
+        };
+        let original = raw.rgb.clone();
+        for mode in [
+            WhiteBalanceMode::SourceDefault,
+            WhiteBalanceMode::AsShot,
+            WhiteBalanceMode::Camera,
+            WhiteBalanceMode::Auto,
+            WhiteBalanceMode::NeutralPicker,
+        ] {
+            for physical in [
+                None,
+                Some(CameraWhiteBalanceTarget {
+                    kelvin: 4200.0,
+                    delta_uv: 0.008,
+                }),
+            ] {
+                let settings = RenderSettings {
+                    white_balance: WhiteBalanceSettings { mode, sample: None },
+                    raw_white_balance: physical,
+                    ..Default::default()
+                };
+                let transform = physical.map(|target| {
+                    camera_white_balance_transform(
+                        raw.metadata.camera_profile_input.as_ref().unwrap(),
+                        &raw.metadata.camera_profile,
+                        target,
+                    )
+                    .unwrap()
+                    .0
+                });
+                // Exact previous production operations, including order, retained as ownership oracle.
+                let mut triples: Vec<[f32; 3]> = raw
+                    .rgb
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|pixel| {
+                        if let Some(matrix) = &transform {
+                            let xyz =
+                                starroom_color_management::rec2020_linear_to_xyz_d65(LinearRgb {
+                                    r: pixel[0],
+                                    g: pixel[1],
+                                    b: pixel[2],
+                                });
+                            let rgb = starroom_color_management::xyz_d65_to_rec2020_linear(
+                                matrix.multiply_vec(xyz),
+                            );
+                            [rgb.r, rgb.g, rgb.b]
+                        } else {
+                            *pixel
+                        }
+                    })
+                    .collect();
+                apply_white_balance(
+                    &mut triples,
+                    raw.width,
+                    raw.height,
+                    SourceKind::Raw,
+                    source_white_balance(settings.white_balance),
+                )
+                .unwrap();
+                let expected: Vec<f32> = triples.into_iter().flatten().collect();
+                let actual = to_working_raw(&raw, &settings).unwrap();
+                assert_eq!(actual.data.len(), expected.len());
+                assert!(
+                    actual
+                        .data
+                        .iter()
+                        .zip(expected)
+                        .all(|(a, b)| a.to_bits() == b.to_bits())
+                );
+                assert_eq!(raw.rgb, original);
+            }
+        }
+        let mut corrupt = (*raw).clone();
+        corrupt.width = u32::MAX;
+        corrupt.height = u32::MAX;
+        assert!(matches!(
+            to_working_raw(&corrupt, &RenderSettings::default()),
+            Err(PipelineError::InvalidDecodedBuffer)
+        ));
+        corrupt.width = 0;
+        corrupt.height = 0;
+        corrupt.rgb.clear();
+        assert!(matches!(
+            to_working_raw(&corrupt, &RenderSettings::default()),
+            Err(PipelineError::InvalidDecodedBuffer)
+        ));
+    }
     use super::*;
     use starroom_ai_denoise::ExecutionProvider as AiExecutionProvider;
     use starroom_color::{BandAdjustment, ColorBand};

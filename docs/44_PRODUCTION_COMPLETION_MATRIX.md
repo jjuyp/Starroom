@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-12 RAW working storage: actual MSVC release proves old flatten did not reuse its
+full RGB allocation; one flat fallibly reserved working Vec now preserves previous f32 bits
+for ten actual Nikon WB/physical combinations and rejects invalid dimensions. RAW/shared/
+photographic/GPU milestone passes; Full/remote is under acceptance. Doc51 records timings
+including variation/regressions, not a universal speed or actual 100MP peak-RAM claim. Whole
+Phase19/20/25 and every original color/latency/installed requirement remain OPEN.
+
 2026-10-12 physical-control batch: real editor target now flows through UI, both clipboards,
 Snapshot/Undo/Redo/hydration, Native requests and shared Preview/Export. Actual Nikon Native
 capability metadata and history persist/reopen/restore/export test pass. Non-DNG capture-matched

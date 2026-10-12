@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Complete Full/remote acceptance for the bit-exact single-flat RAW working buffer;
+  preserve typed reservation/overflow/empty errors and measured ownership/timing evidence.
+  Original full memory/100MP lifecycle and end-to-end latency gates remain separate requirements.
+
 - [ ] Qualify opt-in physical RAW Kelvin/Delta-uv against installed interaction, photographic
   quality and latency gates. Actual UI/undo/copy/paste/restoration/Native transport is wired;
   real Nikon history/restart/snapshot/export, sensor/cache and strict domain regressions pass.
