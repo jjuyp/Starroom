@@ -1,5 +1,15 @@
 # Current Task
 
+`9c836957fe62bddaf8b988b52b360f5a270fbf5d` UI/physical-WB batch is pushed; PR #2 is Open/Draft.
+Authoritative Full CI 38192249996 remains live (latest observed Rust test step); secondary
+38192254267 succeeded. Do not cancel it with another push. Current independent work extends
+the existing real Native probe to legal X-Trans RAW/edge/physical controls and exclusive JSON
+reports. Actual MSVC release report color-latency-1791769362374-75416.json: 1024x680, RTX3050
+DX12, physical Temp/Tint median 65.3407/65.5568ms, max CPU/GPU RGB8 delta0. CPU ICC output
+~22ms versus source WB ~4ms is the demonstrated next bottleneck. Doc50 scopes all measurements.
+These are not UI/pointer-to-present, complete24/100MP, installed or Final gates. Continue original
+color/alpha/gamut/monitor/quality and actual GPU/display/latency requirements without narrowing them.
+
 Current worktree wires explicit physical RAW white through real editor controls, Snapshot/
 Undo/Redo, white-balance and whole-settings clipboard, Native History, preview/before/export
 requests and hydration. Old Relative recipes retain their values but are no longer mislabeled

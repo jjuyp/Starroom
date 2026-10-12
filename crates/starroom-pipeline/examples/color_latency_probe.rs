@@ -2,22 +2,45 @@
 //! Uses the existing licensed portrait without modifying it; emits measurements, no image files.
 use starroom_imageio::decode_source_preview;
 use starroom_pipeline::{
-    RenderSettings, SourcePreparationCache, WhiteBalanceMode, WhiteBalanceSample,
-    WhiteBalanceSettings, render_source_export_to_srgb8, render_source_preview_with_gpu_to_srgb8,
-    render_source_preview_with_preparation_cache_to_srgb8,
+    CameraWhiteBalanceTarget, RenderSettings, SourcePreparationCache, WhiteBalanceMode,
+    WhiteBalanceSample, WhiteBalanceSettings, render_source_export_to_srgb8,
+    render_source_preview_with_gpu_to_srgb8, render_source_preview_with_preparation_cache_to_srgb8,
 };
 use starroom_render::gpu::GpuRenderer;
-use std::{error::Error, path::Path, sync::Arc, time::Instant};
+use std::{
+    error::Error,
+    io::Write,
+    path::Path,
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/golden/sources/astronaut-eileen-collins.png");
-    let source = Arc::new(decode_source_preview(path, 512)?);
-    let use_prepared = std::env::args().any(|argument| argument == "--prepared");
+    let arguments: Vec<_> = std::env::args().collect();
+    let raw = arguments.iter().any(|argument| argument == "--raw");
+    let edge = arguments
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--edge="))
+        .map(str::parse::<u32>)
+        .transpose()?
+        .unwrap_or(512);
+    if !(256..=2048).contains(&edge) {
+        return Err("edge must stay inside 256..2048".into());
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(if raw {
+        "../../fixtures/raw/sources/fujifilm-x-pro1.raf"
+    } else {
+        "../../fixtures/golden/sources/astronaut-eileen-collins.png"
+    });
+    let original_bytes = std::fs::read(&path)?;
+    let decode_start = Instant::now();
+    let source = Arc::new(decode_source_preview(&path, edge)?);
+    let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
+    let use_prepared = arguments.iter().any(|argument| argument == "--prepared");
     let preparation = SourcePreparationCache::default();
     let gpu = GpuRenderer::try_new()?;
     let mut report = Vec::new();
-    for control in [
+    let mut controls = vec![
         "Exposure",
         "Temperature",
         "Tint",
@@ -25,7 +48,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Vibrance",
         "AutoWhiteBalance",
         "NeutralPicker",
-    ] {
+    ];
+    if raw {
+        controls.extend(["PhysicalTemperature", "PhysicalTint"]);
+    }
+    for control in controls {
         let mut samples = Vec::new();
         let mut max_delta = 0;
         let mut last_profile = None;
@@ -38,6 +65,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "Tint" => settings.relative_color.tint = value,
                 "Saturation" => settings.relative_color.saturation = value,
                 "Vibrance" => settings.relative_color.vibrance = value,
+                "PhysicalTemperature" => {
+                    settings.raw_white_balance = Some(CameraWhiteBalanceTarget {
+                        kelvin: 3000.0 + f64::from(value) * 5000.0,
+                        delta_uv: 0.0,
+                    })
+                }
+                "PhysicalTint" => {
+                    settings.raw_white_balance = Some(CameraWhiteBalanceTarget {
+                        kelvin: 6504.0,
+                        delta_uv: f64::from(value) * 0.025,
+                    })
+                }
                 "AutoWhiteBalance" => settings.white_balance.mode = WhiteBalanceMode::Auto,
                 "NeutralPicker" => {
                     settings.white_balance = WhiteBalanceSettings {
@@ -93,16 +132,33 @@ fn main() -> Result<(), Box<dyn Error>> {
             "lastProfile": last_profile,
         }));
     }
-    println!(
-        "{}",
-        serde_json::json!({
-            "scope": "512px real portrait, Native engine only; no UI/encode presentation timing",
-            "colorPolicy": starroom_pipeline::COLOR_POLICY_VERSION,
-            "adapter": gpu.status(), "measurements": report,
-            "gpuResources": gpu.resource_stats(),
-            "iccTransformCache": starroom_color_management::icc_transform_cache_stats()?,
-            "sourcePreparation": preparation.stats()?, "usesPreparationCache": use_prepared,
-        })
+    if std::fs::read(&path)? != original_bytes {
+        return Err("source bytes changed".into());
+    }
+    let result = serde_json::json!({
+        "scope": "real immutable fixture, Native engine only; no UI/encode presentation timing",
+        "sourceKind": if raw { "RAW sensor / X-Trans" } else { "encoded portrait" },
+        "previewDimensions": [source.width(), source.height()], "decodeMs": decode_ms,
+        "colorPolicy": starroom_pipeline::COLOR_POLICY_VERSION,
+        "kernelHead": std::env::var("STARROOM_BENCHMARK_HEAD").ok(),
+        "adapter": gpu.status(), "measurements": report,
+        "gpuResources": gpu.resource_stats(),
+        "iccTransformCache": starroom_color_management::icc_transform_cache_stats()?,
+        "sourcePreparation": preparation.stats()?, "usesPreparationCache": use_prepared,
+    });
+    std::fs::create_dir_all(".starroom-reports")?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+    let report_path = format!(
+        ".starroom-reports/color-latency-{stamp}-{}.json",
+        std::process::id()
     );
+    let mut report = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&report_path)?;
+    report.write_all(serde_json::to_string_pretty(&result)?.as_bytes())?;
+    report.sync_all()?;
+    println!("{result}");
+    eprintln!("Measurement report: {report_path}");
     Ok(())
 }
