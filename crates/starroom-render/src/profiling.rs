@@ -59,7 +59,15 @@ pub struct RenderProfile {
     pub gpu_final_readback_nanoseconds: u64,
     /// Backward-compatible name retained for existing performance reports.
     pub gpu_readback_nanoseconds: u64,
+    /// Legacy host elapsed duration around GPU creative submission/readback, not hardware time.
     pub gpu_creative_nanoseconds: u64,
+    /// Real compute-pass timestamp duration, excluding host work, queue waits and readback.
+    /// None means no hardware measurement (unsupported adapter or no executed pass), never
+    /// a host-duration substitute. Legacy gpu_* timing fields retain their existing meaning.
+    #[serde(default)]
+    pub gpu_hardware_nanoseconds: Option<u64>,
+    #[serde(default)]
+    pub gpu_hardware_pass_count: u32,
     pub gpu_mask_nanoseconds: u64,
     pub gpu_spatial_nanoseconds: u64,
     pub gpu_display_nanoseconds: u64,
@@ -199,6 +207,25 @@ pub fn record_gpu(stage: ProfileStage, elapsed_nanoseconds: u64) {
     });
 }
 
+pub fn record_gpu_hardware(elapsed_nanoseconds: Option<u64>) {
+    let Some(elapsed) = elapsed_nanoseconds else {
+        return;
+    };
+    ACTIVE.with(|active| {
+        if let Some(active) = active.borrow_mut().as_mut() {
+            active.report.gpu_hardware_nanoseconds = Some(
+                active
+                    .report
+                    .gpu_hardware_nanoseconds
+                    .unwrap_or(0)
+                    .saturating_add(elapsed),
+            );
+            active.report.gpu_hardware_pass_count =
+                active.report.gpu_hardware_pass_count.saturating_add(1);
+        }
+    });
+}
+
 /// A real retained stage output was used; do not invent execution time for skipped work.
 pub fn record_stage_cache_hit(stage: ProfileStage) {
     ACTIVE.with(|active| {
@@ -299,6 +326,21 @@ const fn nanos(value: u128) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hardware_measurements_accumulate_only_observed_passes_and_default_to_unavailable() {
+        let (_, report) = capture(|| {
+            record_gpu_hardware(None);
+            record_gpu_hardware(Some(100));
+            record_gpu_hardware(Some(200));
+        });
+        assert_eq!(report.gpu_hardware_nanoseconds, Some(300));
+        assert_eq!(report.gpu_hardware_pass_count, 2);
+        assert_eq!(report.gpu_creative_nanoseconds, 0);
+        let (_, unavailable) = capture(|| record_gpu_hardware(None));
+        assert_eq!(unavailable.gpu_hardware_nanoseconds, None);
+        assert_eq!(unavailable.gpu_hardware_pass_count, 0);
+    }
 
     #[test]
     fn captures_real_stage_time_memory_and_cache_counts() {

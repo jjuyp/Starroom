@@ -158,6 +158,7 @@ pub struct GpuStatus {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GpuResourceStats {
+    pub timestamp_query_supported: bool,
     /// Statistics are non-authoritative. Recovery is observable without changing image state.
     pub statistics_recovery_count: u64,
     /// Sum of live wgpu buffer sizes, not physical VRAM allocation or process peak memory.
@@ -257,6 +258,7 @@ pub struct GpuRenderer {
 }
 
 struct GpuBufferResources {
+    timing: Option<GpuTimingResources>,
     capacity_bytes: u64,
     source_fingerprint: u64,
     creative_fingerprint: Option<u64>,
@@ -267,6 +269,29 @@ struct GpuBufferResources {
     /// LUT storage consumed by the fused creative shader. Masks run elsewhere in the graph;
     /// do not reserve full-frame buffers for stages that never bind them.
     curve_lut: wgpu::Buffer,
+}
+
+struct GpuTimingResources {
+    queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+}
+impl GpuTimingResources {
+    fn writes(&self) -> wgpu::ComputePassTimestampWrites<'_> {
+        wgpu::ComputePassTimestampWrites {
+            query_set: &self.queries,
+            beginning_of_pass_write_index: Some(0),
+            end_of_pass_write_index: Some(1),
+        }
+    }
+    fn resolve_into(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        staging: &wgpu::Buffer,
+        offset: u64,
+    ) {
+        encoder.resolve_query_set(&self.queries, 0..2, &self.resolve, 0);
+        encoder.copy_buffer_to_buffer(&self.resolve, 0, staging, offset, 16);
+    }
 }
 
 impl GpuBufferResources {
@@ -280,16 +305,17 @@ impl GpuBufferResources {
         ]
         .into_iter()
         .map(wgpu::Buffer::size)
-        .sum()
+        .sum::<u64>()
+            + self.timing.as_ref().map_or(0, |t| t.resolve.size())
     }
 }
 
 impl GpuRenderer {
     pub fn try_new() -> Result<Self, GpuError> {
-        pollster::block_on(Self::initialize())
+        pollster::block_on(Self::initialize(true))
     }
 
-    async fn initialize() -> Result<Self, GpuError> {
+    async fn initialize(timestamps: bool) -> Result<Self, GpuError> {
         // Windows is authoritative for M12. Try DX12 first; a non-DX12 adapter remains an
         // explicitly labelled development fallback rather than a silent semantic substitution.
         let mut dx12_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
@@ -320,10 +346,15 @@ impl GpuRenderer {
             (instance, adapter, GpuBackendKind::Other)
         };
         let info = adapter.get_info();
+        let timing_features = if timestamps {
+            adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("starroom-m12-device"),
-                required_features: wgpu::Features::empty(),
+                required_features: timing_features,
                 required_limits: wgpu::Limits::downlevel_defaults(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -497,6 +528,10 @@ impl GpuRenderer {
 
     pub fn resource_stats(&self) -> GpuResourceStats {
         let mut stats = *self.statistics();
+        stats.timestamp_query_supported = self
+            .device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY);
         stats.allocated_buffer_bytes = self
             .resources
             .lock()
@@ -555,12 +590,51 @@ impl GpuRenderer {
         }
     }
 
+    fn timing_resources(&self) -> Option<GpuTimingResources> {
+        self.device
+            .features()
+            .contains(wgpu::Features::TIMESTAMP_QUERY)
+            .then(|| GpuTimingResources {
+                queries: self.device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("starroom-compute-timestamps"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: 2,
+                }),
+                resolve: self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("starroom-timestamp-resolve"),
+                    size: 16,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
+            })
+    }
+
+    fn staging_buffer(&self, byte_len: u64) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("starroom-final-readback"),
+            // Timestamp pairs share the existing map/poll/readback submission, never a second wait.
+            size: byte_len
+                + if self
+                    .device
+                    .features()
+                    .contains(wgpu::Features::TIMESTAMP_QUERY)
+                {
+                    16
+                } else {
+                    0
+                },
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        })
+    }
+
     /// Await only this submission, not unrelated work; all paths cancel/unmap the owned staging
     /// mapping. Neither an ignored poll error nor a missing callback may hang a Native worker.
     fn readback_rgba(
         &self,
         buffer: &wgpu::Buffer,
         byte_len: u64,
+        timestamps: bool,
         submission: wgpu::SubmissionIndex,
     ) -> Result<Vec<[f32; 4]>, GpuError> {
         struct Unmap<'a>(&'a wgpu::Buffer);
@@ -569,7 +643,7 @@ impl GpuRenderer {
                 self.0.unmap();
             }
         }
-        let slice = buffer.slice(..byte_len);
+        let slice = buffer.slice(..byte_len + if timestamps { 16 } else { 0 });
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -591,9 +665,15 @@ impl GpuRenderer {
         let data = slice
             .get_mapped_range()
             .map_err(|error| GpuError::Readback(error.to_string()))?;
-        let result = bytemuck::try_cast_slice::<u8, [f32; 4]>(&data)
+        let result = bytemuck::try_cast_slice::<u8, [f32; 4]>(&data[..byte_len as usize])
             .map_err(|error| GpuError::Readback(error.to_string()))?
             .to_vec();
+        if timestamps {
+            crate::profiling::record_gpu_hardware(timestamp_nanoseconds(
+                &data[byte_len as usize..],
+                self.queue.get_timestamp_period(),
+            ));
+        }
         drop(data);
         Ok(result)
     }
@@ -692,6 +772,7 @@ impl GpuRenderer {
                 })
             };
             *resources = Some(GpuBufferResources {
+                timing: self.timing_resources(),
                 capacity_bytes: byte_len,
                 source_fingerprint: 0,
                 creative_fingerprint: None,
@@ -703,10 +784,7 @@ impl GpuRenderer {
                     "starroom-working-pong",
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 ),
-                staging: storage(
-                    "starroom-final-readback",
-                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                ),
+                staging: self.staging_buffer(byte_len),
                 parameters: self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("starroom-creative-uniforms"),
                     size: 512,
@@ -771,15 +849,23 @@ impl GpuRenderer {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("starroom-m12-exposure-pass"),
-                timestamp_writes: None,
+                timestamp_writes: resources.timing.as_ref().map(GpuTimingResources::writes),
             });
             pass.set_pipeline(&self.exposure_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups((pixels.len() as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&resources.output, 0, &resources.staging, 0, byte_len);
+        if let Some(timing) = &resources.timing {
+            timing.resolve_into(&mut encoder, &resources.staging, byte_len);
+        }
         let submission = self.queue.submit(Some(encoder.finish()));
-        let result = self.readback_rgba(&resources.staging, byte_len, submission)?;
+        let result = self.readback_rgba(
+            &resources.staging,
+            byte_len,
+            resources.timing.is_some(),
+            submission,
+        )?;
         self.statistics().final_readback_count += 1;
         if !result.iter().flatten().all(|value| value.is_finite()) {
             return Err(GpuError::InvalidPixels);
@@ -835,6 +921,7 @@ impl GpuRenderer {
                 })
             };
             *resources = Some(GpuBufferResources {
+                timing: self.timing_resources(),
                 capacity_bytes: byte_len,
                 source_fingerprint: 0,
                 creative_fingerprint: None,
@@ -848,11 +935,7 @@ impl GpuRenderer {
                     byte_len,
                     wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 ),
-                staging: storage(
-                    "starroom-final-readback",
-                    byte_len,
-                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                ),
+                staging: self.staging_buffer(byte_len),
                 parameters: storage(
                     "starroom-creative-uniforms",
                     512,
@@ -942,16 +1025,20 @@ impl GpuRenderer {
         if !creative_hit {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("starroom-fused-creative-pass"),
-                timestamp_writes: None,
+                timestamp_writes: resources.timing.as_ref().map(GpuTimingResources::writes),
             });
             pass.set_pipeline(&self.creative_pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             pass.dispatch_workgroups((pixels.len() as u32).div_ceil(64), 1, 1);
         }
         encoder.copy_buffer_to_buffer(&resources.output, 0, &resources.staging, 0, byte_len);
+        let timestamps = !creative_hit && resources.timing.is_some();
+        if let Some(timing) = resources.timing.as_ref().filter(|_| timestamps) {
+            timing.resolve_into(&mut encoder, &resources.staging, byte_len);
+        }
         let submission = self.queue.submit(Some(encoder.finish()));
         let readback_started = Instant::now();
-        let result = self.readback_rgba(&resources.staging, byte_len, submission)?;
+        let result = self.readback_rgba(&resources.staging, byte_len, timestamps, submission)?;
         crate::profiling::record_gpu_transfer(
             0,
             u64::try_from(readback_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
@@ -964,11 +1051,22 @@ impl GpuRenderer {
     }
 }
 
+fn timestamp_nanoseconds(bytes: &[u8], period: f32) -> Option<u64> {
+    if bytes.len() != 16 || !period.is_finite() || period <= 0.0 {
+        return None;
+    }
+    let start = u64::from_ne_bytes(bytes[..8].try_into().ok()?);
+    let end = u64::from_ne_bytes(bytes[8..].try_into().ok()?);
+    let elapsed = end.checked_sub(start)? as f64 * f64::from(period);
+    (elapsed.is_finite() && elapsed < u64::MAX as f64).then_some(elapsed.round() as u64)
+}
+
 fn pixel_fingerprint(pixels: &[[f32; 4]]) -> u64 {
     let mut hasher = DefaultHasher::new();
-    for component in bytemuck::cast_slice::<[f32; 4], u32>(pixels) {
-        component.hash(&mut hasher);
-    }
+    // Same native-endian bytes as the previous sequence of write_u32 calls, without one
+    // Hasher call per component. Keep hashing actual pixels: a caller-provided stage key is
+    // not sufficient proof that the uploaded source buffer is unchanged.
+    hasher.write(bytemuck::cast_slice(pixels));
     hasher.finish()
 }
 
@@ -1033,6 +1131,124 @@ pub fn resolve_preview_backend(prefer_gpu: bool, gpu: Result<&GpuRenderer, GpuEr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn contiguous_pixel_hash_is_bit_exact_to_previous_component_hash() {
+        use std::hint::black_box;
+        let previous = |pixels: &[[f32; 4]]| {
+            let mut hasher = DefaultHasher::new();
+            for component in bytemuck::cast_slice::<[f32; 4], u32>(pixels) {
+                component.hash(&mut hasher);
+            }
+            hasher.finish()
+        };
+        for count in [0, 1, 2, 3, 7, 64, 128, 1025, 1024 * 680] {
+            let pixels: Vec<_> = (0..count)
+                .map(|i| [i as f32 / 1024.0, -0.0, -1.25, 4.0])
+                .collect();
+            assert_eq!(
+                pixel_fingerprint(&pixels),
+                previous(&pixels),
+                "length {count}"
+            );
+            if count == 1024 * 680 {
+                let measure = |bulk| {
+                    let mut times: Vec<_> = (0..7)
+                        .map(|_| {
+                            let start = Instant::now();
+                            black_box(if bulk {
+                                pixel_fingerprint(black_box(&pixels))
+                            } else {
+                                previous(black_box(&pixels))
+                            });
+                            start.elapsed().as_secs_f64() * 1000.0
+                        })
+                        .collect();
+                    times.sort_by(f64::total_cmp);
+                    times[3]
+                };
+                eprintln!(
+                    "PIXEL_HASH_MS previous={} contiguous={} profile={}",
+                    measure(false),
+                    measure(true),
+                    if cfg!(debug_assertions) {
+                        "debug"
+                    } else {
+                        "release"
+                    }
+                );
+            }
+        }
+        let positive = [[0.0, 1.0, 2.0, 1.0]];
+        let negative = [[-0.0, 1.0, 2.0, 1.0]];
+        assert_ne!(pixel_fingerprint(&positive), pixel_fingerprint(&negative));
+        assert_eq!(
+            pixel_fingerprint(&[[f32::from_bits(0x7fc00001); 4]]),
+            previous(&[[f32::from_bits(0x7fc00001); 4]])
+        );
+    }
+    #[test]
+    fn hardware_tick_conversion_is_explicit_and_never_substitutes_host_time() {
+        let ticks = |a: u64, b: u64| [a.to_ne_bytes(), b.to_ne_bytes()].concat();
+        assert_eq!(timestamp_nanoseconds(&ticks(100, 140), 2.5), Some(100));
+        assert_eq!(timestamp_nanoseconds(&ticks(100, 100), 1.0), Some(0));
+        assert_eq!(timestamp_nanoseconds(&ticks(101, 100), 1.0), None);
+        for period in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(timestamp_nanoseconds(&ticks(100, 140), period), None);
+        }
+        assert_eq!(timestamp_nanoseconds(&[], 1.0), None);
+        assert_eq!(timestamp_nanoseconds(&ticks(0, u64::MAX), f32::MAX), None);
+    }
+
+    #[test]
+    fn hardware_queries_do_not_change_pixels_or_add_a_second_readback() {
+        let Ok(measured) = GpuRenderer::try_new() else {
+            return;
+        };
+        let plain = pollster::block_on(GpuRenderer::initialize(false)).unwrap();
+        let source: Vec<_> = (0..1024)
+            .map(|i| [i as f32 / 1024.0, 0.2, 1.5, 0.5])
+            .collect();
+        let mut params = GpuCreativeParameters {
+            values: [[0.0; 4]; 23],
+        };
+        params.values[18] = [1024.0, 1024.0, 1.0, 0.0];
+        let luts = [0.0; 8192];
+        let (output, first) = crate::profiling::capture(|| {
+            measured.apply_creative(&source, &params, &luts, Some("timestamp-test"))
+        });
+        assert_eq!(
+            output.unwrap(),
+            plain
+                .apply_creative(&source, &params, &luts, Some("timestamp-test"))
+                .unwrap()
+        );
+        let supported = measured.resource_stats().timestamp_query_supported;
+        assert_eq!(first.gpu_hardware_nanoseconds.is_some(), supported);
+        assert_eq!(first.gpu_hardware_pass_count, u32::from(supported));
+        let (cached, second) = crate::profiling::capture(|| {
+            measured.apply_creative(&source, &params, &luts, Some("timestamp-test"))
+        });
+        assert_eq!(cached.unwrap(), source);
+        assert_eq!(
+            second.gpu_hardware_nanoseconds, None,
+            "cached passes must not reuse old timestamps"
+        );
+        assert_eq!(second.gpu_hardware_pass_count, 0);
+        let (output, exposure) =
+            crate::profiling::capture(|| measured.apply_exposure(&source, 1.0));
+        assert_eq!(output.unwrap(), plain.apply_exposure(&source, 1.0).unwrap());
+        assert_eq!(exposure.gpu_hardware_nanoseconds.is_some(), supported);
+        let (_, reused_capacity) =
+            crate::profiling::capture(|| measured.apply_exposure(&source[..128], 0.5));
+        assert_eq!(
+            reused_capacity.gpu_hardware_nanoseconds.is_some(),
+            supported
+        );
+        assert_eq!(measured.resource_stats().final_readback_count, 4);
+        assert!(!plain.resource_stats().timestamp_query_supported);
+        let (_, unavailable) = crate::profiling::capture(|| plain.apply_exposure(&source, 0.0));
+        assert_eq!(unavailable.gpu_hardware_nanoseconds, None);
+    }
     use super::*;
 
     #[test]
@@ -1212,7 +1428,17 @@ mod tests {
         assert_eq!(stats.source_upload_count, 1);
         assert_eq!(stats.final_readback_count, 3);
         assert_eq!(stats.pipeline_create_count, 2);
-        assert_eq!(stats.allocated_buffer_bytes, 3 * 128 * 16 + 512 + 32768);
+        assert_eq!(
+            stats.allocated_buffer_bytes,
+            3 * 128 * 16
+                + 512
+                + 32768
+                + if stats.timestamp_query_supported {
+                    32
+                } else {
+                    0
+                }
+        );
         assert!(stats.resource_reuse_count >= 1);
         assert!(stats.source_texture_hit >= 2);
         assert_eq!(stats.working_texture_hit, 1);
@@ -1330,32 +1556,37 @@ mod tests {
             return;
         };
         assert_eq!(renderer.resource_stats().allocated_buffer_bytes, 0);
+        let timing_bytes = if renderer.resource_stats().timestamp_query_supported {
+            32
+        } else {
+            0
+        };
         let small = vec![[0.1, 0.2, 0.3, 1.0]; 64];
         let large = vec![[0.1, 0.2, 0.3, 1.0]; 256];
         let (result, profile) = crate::profiling::capture(|| renderer.apply_exposure(&small, 0.0));
         assert_eq!(result.expect("small frame"), small);
-        assert_eq!(profile.gpu_buffer_bytes, 3 * 64 * 16 + 33280);
+        assert_eq!(profile.gpu_buffer_bytes, 3 * 64 * 16 + 33280 + timing_bytes);
         assert_eq!(
             renderer.resource_stats().allocated_buffer_bytes,
-            3 * 64 * 16 + 33280
+            3 * 64 * 16 + 33280 + timing_bytes
         );
         renderer.apply_exposure(&large, 0.0).expect("resized frame");
         assert_eq!(renderer.resource_stats().source_upload_count, 2);
         assert_eq!(
             renderer.resource_stats().allocated_buffer_bytes,
-            3 * 256 * 16 + 33280
+            3 * 256 * 16 + 33280 + timing_bytes
         );
         renderer
             .apply_exposure(&small, 0.0)
             .expect("reuse larger capacity");
         assert_eq!(
             renderer.resource_stats().allocated_buffer_bytes,
-            3 * 256 * 16 + 33280
+            3 * 256 * 16 + 33280 + timing_bytes
         );
         renderer.reset_resource_stats();
         assert_eq!(
             renderer.resource_stats().allocated_buffer_bytes,
-            3 * 256 * 16 + 33280
+            3 * 256 * 16 + 33280 + timing_bytes
         );
     }
 }

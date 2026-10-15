@@ -4,6 +4,13 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-15 GPU instrumentation uses the same pinned wgpu30.0.1 TIMESTAMP_QUERY,
+ComputePassTimestampWrites, resolve_query_set and Queue::get_timestamp_period public APIs
+in `starroom-render`. No upstream code is copied/ported; runtime adapter code is Starroom-
+authored. Existing MIT/Apache notices and binary closure are unchanged. Rust std DefaultHasher
+pixel-byte batching retains the prior byte stream; it introduces no package/license. Doc54
+records measured scope and explicit unsupported/absent timestamp semantics.
+
 2026-10-15 destination-gamut / D65 correction: existing pinned LittleCMS 2.19 and lcms2 6.1.1
 now also own actual output-gamut proofing, inverse reproduction and private matrix-shaper
 linearization. No engine/wrapper source, version, lockfile or license is changed. The reference

@@ -10,6 +10,14 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-15 hardware profiling: actual exposure/fused GPU timestamps now have independent
+optional hardware fields, not host-duration substitution. Pair resolves piggyback the existing
+readback; cached passes do not reuse stale ticks and unsupported devices remain explicit.
+DX12 actual output/readback/resource/cache tests pass. Bit-exact contiguous pixel hashing
+reduces measured release hash9.3582→2.6002ms and RAW1024 engine Exposure62.8004→56.5347ms
+in scoped five-sample reports (doc54), without a change to pixel/source cache semantics.
+This is not direct GPU presentation, full tile/cache migration or installed <100ms validation.
+
 2026-10-15 destination mapping: shared final output now uses real LCMS destination proofing/
 inverse plus bounded fixed-L/h OKLab chroma reduction, not a working-unit-cube clamp. CPU/WGSL
 D65 coefficients are corrected and final owned output avoids full triples/flatten copies.
@@ -250,7 +258,10 @@ open. Do not infer general camera IQ or whole Phase 1/3/10 acceptance from this 
    and callback deadline with RAII mapping cleanup. Real device loss/uncaptured OOM/validation
    latches failure/diagnostics and Native preview retires critical failed devices to labeled CPU.
    Actual isolated device destroy and production deadline/error/classification tests pass.
-   Readback removal, direct presentation, GPU timestamp profiling and final hardware stress remain open.
+   **Targeted profiling repair (doc54):** real compute-pass timestamps are now separate from
+   legacy host fields and piggyback the existing readback. Source fingerprint bytes remain
+   exact but are hashed contiguously; actual MSVC/RAW measurements are recorded. Readback
+   removal, direct presentation, per-stage/full hardware stress and input-to-present remain open.
 8. **Memory/export:** preflight is performed after `renderer.render`; output dimensions drive the
    estimate even if the full source was already allocated. Export cancellation is checked around
    expensive work but needs full in-render/inference validation. Full-frame RGB buffers/encoding

@@ -1,5 +1,33 @@
 # Implementation Notes
 
+## 2026-10-15 — Actual GPU timestamps and bit-exact source hashing
+
+Doc54 records the existing wgpu30.0.1 optional timestamp API integration. Exposure/fused
+creative compute passes report real hardware ticks separately from legacy host elapsed fields;
+unsupported adapters and retained passes never invent/reuse a hardware duration. Query results
+share the existing submission/map/readback tail with only32 additional buffer bytes, not a
+second full image or wait. Actual enabled/disabled-device pixel comparisons, cache hits,
+resized capacity and readback counts pass, along with typed conversion/error tests.
+
+Measured RTX3050/DX12 pass0.128ms versus host creative17.8345ms identified a host-side target.
+Production fingerprinting now writes the exact previous byte stream in one mature std Hasher
+call, preserving actual-pixel verification rather than trusting caller keys. Independent old/
+new hashes match at all tested sizes/bit patterns. MSVC release same-process microbenchmark
+median9.3582→2.6002ms; real RAW1024x680 engine Exposure median62.8004→56.5347ms, physical
+Tint69.9035→64.4941ms, original max RGB8 deltas1/0 unchanged. Report1792076553859-15324.
+Validation/build activity and five samples are explicitly scoped; saturation p95 regresses
+slightly. No complete UI/<100ms/100MP/resident-display/Final claim is made.
+GPU milestone1792076288308 passes; final Full Rust including the last hash refinement passes
+1792076774130:455 registered/451 executed/passed/four explicit opt-in excluded, format,
+warning-denied workspace Clippy and doc-tests. Frontend source remains the same211-test Full
+Web1792075555690. Previous destination group32741ad Full38754585296 and secondary38754593125
+both succeeded; PR#2 remains Open/Draft. New batch remote acceptance is next.
+Second post-build probe1792076851022-17280 is retained: Exposure56.9682/58.6367ms,
+but Saturation p95140.4390ms, NeutralPicker103.7217/135.4593ms and physicalTint70.0710/
+181.4273ms. These outliers explicitly fail a universal<100ms engine claim; no favorable
+rerun is allowed to hide them. Full input-to-present and Production remain unqualified.
+
+
 ## 2026-10-15 — Destination-aware shared output and white-consistent OKLab
 
 Doc53 records the actual implementation replacing working-Rec2020-only compression with

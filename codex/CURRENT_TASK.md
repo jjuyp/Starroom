@@ -1,5 +1,26 @@
 # Current Task
 
+2026-10-15 next group: wgpu actual hardware timestamps are implemented for exposure/fused
+creative passes, with optional advertised feature, persistent2-query/16-byte resolve and16-byte
+existing-readback tail. No second submission/map/wait; cache hits report no stale hardware
+duration. New RenderProfile hardware fields are separate from legacy host timings. Real DX12
+enabled/disabled pixel identity, cache hit, resized capacity, readback count and38 render tests
+pass; GPU milestone1792076288308 passes (before last contiguous-hash refinement).
+Actual report1792076124929-20712 shows Exposure hardware0.128ms vs host17.8345ms and CMM27.8833ms.
+Pixel fingerprint now writes the exact prior byte stream contiguously, still hashing actual
+pixels; independent previous/new hash tests pass. Release hash/probe21837 completed:
+hash9.3582→2.6002ms, actual RAW report1792076553859-15324 Exposure56.5347/66.8201ms and
+physicalTint64.4941/68.0181ms, deltas1/0. Doc54 scopes build contention/percentile regressions.
+Full Rust96280 completed successfully, report1792076774130 (455 registered/451 ordinary,
+four opt-in excluded). Post-build probe59239 completed report1792076851022-17280: Exposure
+56.9682/58.6367ms, but Saturation p95140.4390ms, Picker103.7217/135.4593ms and physicalTint
+70.0710/181.4273ms. Retain these outliers; universal<100ms is NOT passed. All local process
+handles from this group are terminal; do not poll/restart them as live. Doc54/provenance/TODO
+updated. Prior destination32741ad Full38754585296 and secondary38754593125 both succeeded.
+Current locally accepted hardware-timestamp/hash group is ready for focused commit/push.
+No frontend source changes after211-test Full Web1792075555690. All original requirements stay
+active, especially residency/display/latency/alpha/monitor/100MP/Windows and photographic IQ.
+
 2026-10-15 current worktree: real destination-gamut adapter is integrated at the shared final
 output before LCMS, with v6 policy identity. Safe bounded proof cache, exact affine fast path
 validated against LCMS, fixed-L/h search and owned final output are implemented. Dense near-

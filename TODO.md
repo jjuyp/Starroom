@@ -2,6 +2,13 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Complete acceptance of real wgpu hardware timestamps and bit-exact contiguous source
+  fingerprinting (doc54). Actual DX12 pass timing is now separate from host elapsed time;
+  cached passes never reuse stale measurements and no extra readback/wait is introduced.
+  Release measurements and Full Rust pass (455 registered/451 ordinary/four opt-in excluded).
+  Post-build repeated measurements retain >100ms outliers: doc54. Remote acceptance and
+  actual end-to-end responsiveness remain unqualified; do not hide unsuccessful timings.
+
 - [ ] Finish acceptance of destination-aware Native output mapping (doc53): real LCMS
   proof/inverse + bounded OKLab chroma path, shared Preview/Export integration, corrected
   CPU/WGSL D65 matrices, exact profile-cache identity and owned final buffer are implemented.
