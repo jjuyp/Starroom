@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { presentError } from './errorPresentation'
 
 describe('typed production error presentation', () => {
+  it.each(['GamutMappingUnavailable',
+    'Color management failed: destination ICC gamut mapping could not preserve the neutral anchor'])('explains incompatible output gamut without silent profile replacement: %s', (diagnostic) => {
+    expect(presentError(diagnostic, '預覽失敗')).toEqual({ category: 'Color', diagnostic,
+      message: '目前的 ICC 描述檔無法保留中性色。請確認描述檔是否適用於 RGB 輸出；Starroom 不會自動替換描述檔。' })
+  })
   it.each(['CropAllocation: 786432 float samples',
     'RAW decoder memory limit exceeded: sensor unpack: Image too big for processing (LibRaw -100012)',
     'RAW preview failed: image crop allocation exceeded available memory (786432 float samples)',

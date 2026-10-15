@@ -2,8 +2,10 @@
 //! ICC parsing/execution is provided by LittleCMS. Published chromatic adaptation math lives here
 //! so the render graph can keep file, working and display transforms explicit.
 
+mod gamut;
 pub mod quality;
 pub mod temperature;
+pub use gamut::map_output_gamut;
 
 use lcms2::{
     CIEXYZ, CIEXYZExt, CIExyY, CIExyYTRIPLE, DisallowCache, Flags, GlobalContext, Intent,
@@ -403,6 +405,8 @@ impl std::fmt::Display for ProfileRole {
 
 #[derive(Debug, Error)]
 pub enum ColorManagementError {
+    #[error("destination ICC gamut mapping could not preserve the neutral anchor")]
+    GamutMappingUnavailable,
     #[error("LittleCMS transform cache is unavailable")]
     TransformCacheUnavailable,
     #[error("chromatic adaptation requires a finite, positive, nonsingular measured white point")]

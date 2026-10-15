@@ -10,6 +10,14 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-15 destination mapping: shared final output now uses real LCMS destination proofing/
+inverse plus bounded fixed-L/h OKLab chroma reduction, not a working-unit-cube clamp. CPU/WGSL
+D65 coefficients are corrected and final owned output avoids full triples/flatten copies.
+Ten gamut tests cover named/supplied/wide profiles, gradients/CIEDE2000, neutral precision,
+exact cache/LRU/byte bounds and concurrency. Doc53 records actual latency including regression
+against v5. Full/remote and arbitrary LUT/photographic IQ remain under acceptance; this does
+not close complete Phase1/14/16/19/25/26/30 or alpha/monitor/residency/100MP/Windows gates.
+
 Destination-gamut counterexample (2026-10-12): actual LCMS maps working [1,0,0] to sRGB
 [1.2482357,-1.6096301,-.23438673], and [.8,.1,.2] to sRGB/P3 over-range while Adobe RGB fits.
 Working-only Rec.2020 compression therefore cannot qualify destination preservation. The
@@ -211,10 +219,12 @@ open. Do not infer general camera IQ or whole Phase 1/3/10 acceptance from this 
    ~.00018293 to ~.00154786 (standard ~.00154799). Output recipes bind actual ICC bytes and engine
    version. Rec.2020 gamma-2.2 photographic SDR is explicitly labeled, not asserted as PQ/HLG or
    a different scene/display video transfer. Monitor ownership and full perceptual gates remain open.
-4. **Output gamut/alpha:** compression bounds Rec.2020 channels before destination conversion,
-   not the selected destination gamut. `to_working_image` drops decoded alpha and exported buffers
-   are RGB-only. Declare/implement correct transparency and SDR/HDR behavior instead of silently
-   flattening hidden RGB; measure hue/luminance/clipping in each supported output profile.
+4. **Output gamut/alpha:** original audit found working-only compression before destination
+   conversion. **Targeted repair (doc53):** real destination-aware mapping now runs before LCMS
+   in the shared final boundary, with named/supplied/wide/gradient/cache regressions and a v6
+   render-policy identity. Photographic/LUT qualification remains open. `to_working_image` still
+   drops decoded alpha and exported buffers are RGB-only; correct transparency/hidden RGB and
+   complete SDR/HDR behavior remain required, not solved by the gamut repair.
 5. **GPU order:** fused vignette is applied before CPU layers/Skin/Healing/detail. CPU export
    applies finishing effects after those stages. Existing isolated parity does not prove the
    non-commuting combinations. Fix correctness before optimizing the final stage.

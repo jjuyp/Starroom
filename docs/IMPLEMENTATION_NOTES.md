@@ -1,5 +1,35 @@
 # Implementation Notes
 
+## 2026-10-15 — Destination-aware shared output and white-consistent OKLab
+
+Doc53 records the actual implementation replacing working-Rec2020-only compression with
+destination-aware LittleCMS proofing/inverse + fixed-L/h OKLab chroma reduction at the final
+shared output boundary. Invalid ICCs never substitute sRGB; valid wide destination values
+outside the working unit cube retain identity. Exact validated matrix-shaper affine membership
+avoids per-search ICC gamma work; general supplied profiles retain real LCMS processing.
+Bounded proof cache has exact bytes/intent/BPC identity, four-entry/2MiB LRU and safe context
+lifetimes. Final output reuses its owned detail buffer rather than two full RGB conversions.
+
+Dense near-white testing caught a real D65 matrix inconsistency. Native CPU and WGSL use
+the same pinned W3C white-consistent coefficients; no JS math/dependency/tolerance change.
+Ten gamut tests plus 24 color tests and four actual RAW forward/shared tests pass. Added
+8193-level neutral precision, 24 chroma-ray CIEDE2000 continuity, exact cache/LRU/concurrency
+and noncanonical supplied-profile tests. Full Rust (format, warning-denied workspace Clippy,
+tests/doc-tests) passes report1792075544926: 451 registered tests, 447 executed/passed and four
+explicit opt-in gates not executed. Full Web passes report1792075555690: 211 tests/30 files,
+ESLint/TypeScript/production build, JSON/Golden manifest and packaging configuration. Golden
+actual-photograph, RAW, GPU parity, 16-bit and export/recovery regressions passed in Full Rust.
+License validation passes 561 Rust/6 npm packages/269 notices; infrastructure validator passes.
+Initial sandbox-only temporary-rename/persistence denials are retained as failed reports; normal
+approved reruns pass without changing atomicity or tests. Remote acceptance is next.
+
+Actual MSVC/RTX3050/DX12 X-Trans 1024x680 engine report 1792074870247-21272: Exposure
+74.9053/81.4680ms median/p95, physical Tint 68.9005/69.0354ms, max RGB8 delta1/0 respectively.
+This is slower than old working-only v5, faster than the initial correct general-only mapper;
+no UI/presentation latency, universal speedup, 100MP or installed-release claim is made.
+All original phases and photographic/LUT/alpha/monitor/residency/Final gates remain active.
+
+
 ## 2026-10-12 — RAW working storage without an extra full flatten allocation
 
 The MSVC release ownership probe proves old Vec<[f32;3]> -> flattened Vec<f32> did not reuse

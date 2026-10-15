@@ -2,7 +2,16 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
-- [ ] Complete Full/remote acceptance for the bit-exact single-flat RAW working buffer;
+- [ ] Finish acceptance of destination-aware Native output mapping (doc53): real LCMS
+  proof/inverse + bounded OKLab chroma path, shared Preview/Export integration, corrected
+  CPU/WGSL D65 matrices, exact profile-cache identity and owned final buffer are implemented.
+  Ten targeted gamut tests pass, including dense gradients/CIEDE2000/concurrency/cache.
+  Full local Rust/Web passes (447 ordinary Rust / 211 frontend; four opt-in gates excluded).
+  Remote acceptance, arbitrary LUT/photographic IQ and final latency remain distinct gates.
+  Latest actual RAW engine probe is slower than v5; do not claim universal speedup.
+
+- [x] Complete ordinary Full/remote acceptance for the bit-exact single-flat RAW working buffer
+  (`d961b3d`, GitHub Full38195759699 success); this does not qualify the opt-in/Final gates;
   preserve typed reservation/overflow/empty errors and measured ownership/timing evidence.
   Original full memory/100MP lifecycle and end-to-end latency gates remain separate requirements.
 

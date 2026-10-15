@@ -4,6 +4,21 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-15 destination-gamut / D65 correction: existing pinned LittleCMS 2.19 and lcms2 6.1.1
+now also own actual output-gamut proofing, inverse reproduction and private matrix-shaper
+linearization. No engine/wrapper source, version, lockfile or license is changed. The reference
+for constant-L/h chroma reduction and white-consistent XYZ/LMS numerical coefficients is
+[W3C CSS Color 4, Candidate Recommendation Draft 2026-10-09](https://www.w3.org/TR/2026/CRD-css-color-4-20261009/),
+sections 14.1.3 and 19; upstream repository [w3c/csswg-drafts](https://github.com/w3c/csswg-drafts).
+This is a pinned published-document reference, not a newly vendored package/commit. W3C
+permissive document terms apply to the reference document. No sample JavaScript functions or
+pseudocode were copied; Starroom's existing CPU/WGSL conversions receive the numerical matrix
+correction and its Native adapter implements the bounded search. Numerical correction and
+adapter enter the binary; no browser color engine is added. No new executable third-party
+source or notice obligation is introduced. Re-review if sample code is later imported.
+Doc53 records the exact placement, ownership, tests and photographic-mapping limitations;
+do not describe this as CSS local-MINDE conformance or completed photographic IQ acceptance.
+
 | Project | Intended use | Upstream and fixed revision | License | Direct derivation / port | Enters shipped binary | External-distribution risk and required action |
 |---|---|---|---|---|---|---|
 | darktable | Production M4 scene-linear highlight shoulder and normalized monotonic shadow response, plus quality reference for tone, color calibration/grading, sharpening, denoise and perspective behavior | [darktable-org/darktable](https://github.com/darktable-org/darktable), `release-5.6.0`, tag object `f89bf9231fb21db0a53b3c279ff164caef48cef8`, commit `3c17b2976793303c186a5f64e8c9635ecf8b15d3` | GPL-3.0-or-later | **Direct adaptation** of the stable generalized-loglogistic response in `src/iop/sigmoid.c` into `crates/starroom-color/src/lib.rs`; marked `GPL-derived / private-use`, with Starroom control mapping and tests authored around the adapted operator. The 2026-10-03 shadow mapping reuses this pinned response with black/18%-gray anchors; no new upstream revision or dependency is introduced. | **Yes**, compiled into `starroom-color` / desktop binary | **GPL distribution obligation accepted by project owner.** Workspace is now declared GPL-3.0-or-later and NOTICE identifies source/revision. Before every external binary release, retain the full GPL text, corresponding source, notices and review all bundled-license compatibility. |

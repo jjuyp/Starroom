@@ -19,7 +19,7 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
   if (value.includes('curvepreview') || value.includes('native_curve_preview') || value.includes('littlecms')) return 'Color'
   if (['whitebalance', 'white-balance', 'neutral-picker', 'chromatic adaptation', 'invalidwhitepoint'].some((term) => value.includes(term))) return 'Color'
   if (value.includes('raw') || value.includes('libraw') || value.includes('demosaic')) return 'RAW'
-  if (value.includes('icc') || value.includes('profile') || value.includes('color')) return 'Color'
+  if (value.includes('icc') || value.includes('profile') || value.includes('color') || value.includes('gamutmappingunavailable')) return 'Color'
   if (value.includes('database') || value.includes('library') || value.includes('history')) return 'Library'
   if (value.includes('missing') || value.includes('not found')) return 'Missing'
   if (value.includes('relink') || value.includes('moved source')) return 'Relink'
@@ -35,6 +35,8 @@ export function presentError(error: unknown, fallback: string): PresentedError {
   const category = categoryFor(diagnostic)
   const invalidNeutral = /invalidwhitebalancesample|invalidwhitepoint|neutral-picker sample is missing or invalid|chromatic adaptation requires/i.test(diagnostic)
   const message = diagnostic.includes('SourceOverwriteForbidden') ? '匯出不能覆寫原始照片。請更換檔名或匯出資料夾。'
+    : /gamutmappingunavailable|destination ICC gamut mapping could not preserve the neutral anchor/i.test(diagnostic)
+      ? '目前的 ICC 描述檔無法保留中性色。請確認描述檔是否適用於 RGB 輸出；Starroom 不會自動替換描述檔。'
     : /curvepreview|native_curve_preview/i.test(diagnostic) ? '無法顯示原生曲線，請重新開啟曲線面板，必要時復原最近的曲線調整。'
     : invalidNeutral ? '無法從這個區域取得有效白平衡。請選擇有亮度的中性灰或白色區域。'
     : diagnostic.includes('MaskSourceMismatch') ? '這個 AI 遮罩屬於另一張照片，請在目前照片重新產生遮罩。'

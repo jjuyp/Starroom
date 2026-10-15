@@ -14,8 +14,8 @@ pub use source_preparation::{
 use starroom_ai_denoise::{AiDenoiseError, AiDenoiseParameters, AiDenoiseResidual, apply_residual};
 use starroom_color::{
     ColorBand, ColorMixer, CurvePoint, LinearRgb, PreparedCurve, ToneParameters,
-    apply_chroma_controls, apply_color_mixer, apply_tone, compress_to_unit_gamut, oklab_to_rec2020,
-    rec2020_to_oklab, sample_color_band,
+    apply_chroma_controls, apply_color_mixer, apply_tone, oklab_to_rec2020, rec2020_to_oklab,
+    sample_color_band,
 };
 use starroom_color_management::{
     ColorManagementError, InputProfileSource, LittleCmsProvider, Matrix3 as ColorMatrix3,
@@ -59,7 +59,7 @@ use std::time::Instant;
 
 const F32_BYTES: u64 = 4;
 /// Reproducible render-policy identity. Change whenever authoritative color semantics change.
-pub const COLOR_POLICY_VERSION: &str = "starroom-color-v5-physical-camera-white";
+pub const COLOR_POLICY_VERSION: &str = "starroom-color-v6-destination-gamut";
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2158,28 +2158,25 @@ fn render_prepared_working_graph(
             apply_detail_stage(creative, settings)
         }
     })?;
-    let mut pixels = detailed
-        .data
-        .par_chunks_exact(3)
-        .map(|pixel| {
-            let working_rgb = compress_to_unit_gamut(LinearRgb {
-                r: pixel[0],
-                g: pixel[1],
-                b: pixel[2],
-            });
-            [working_rgb.r, working_rgb.g, working_rgb.b]
-        })
-        .collect::<Vec<_>>();
+    // The final detail buffer is already owned. Borrow its RGB triples instead of allocating
+    // another full frame and flattening it into yet another buffer after ICC processing.
+    let mut output = detailed.data;
+    let pixels = output.as_chunks_mut::<3>().0;
     checkpoint()?;
     let output_source = profiling::measure(ProfileStage::ColorTransform, working_bytes, || {
+        starroom_color_management::map_output_gamut(
+            pixels,
+            output_icc,
+            settings.color_management.intent,
+            settings.color_management.black_point_compensation,
+        )?;
         LittleCmsProvider.working_to_output(
-            &mut pixels,
+            pixels,
             output_icc,
             settings.color_management.intent,
             settings.color_management.black_point_compensation,
         )
     })?;
-    let output = pixels.into_iter().flatten().collect();
     Ok(RenderedRgbF32 {
         width,
         height,

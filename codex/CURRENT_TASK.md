@@ -1,5 +1,22 @@
 # Current Task
 
+2026-10-15 current worktree: real destination-gamut adapter is integrated at the shared final
+output before LCMS, with v6 policy identity. Safe bounded proof cache, exact affine fast path
+validated against LCMS, fixed-L/h search and owned final output are implemented. Dense near-
+white test exposed old OKLab D65 inconsistency; CPU/WGSL matrices now match published reference.
+Ten new gamut tests and actual RAW forward/color tests pass. Initial sandbox-only failures
+were rerun with normal approval, without changing tests/persistence atomicity. Full Rust
+report1792075544926 passes format/warning-denied Clippy/tests/doc-tests (451 registered,
+447 passed, four opt-in excluded). Full Web1792075555690 passes 211 tests, lint/TS/build,
+JSON/Golden/packaging configuration. License561Rust/6npm/269notices and infrastructure pass.
+Report1792074870247-21272 records real RAW1024x680 engine-only physicalTint68.9005/69.0354ms,
+Exposure74.9053/81.4680ms, delta0/1.
+No universal speedup or pointer-to-present acceptance. Doc53/provenance/matrix/TODO updated.
+Remote d961b3d Full38195759699 has succeeded; local40dc74f diagnostic parent is not pushed.
+Commit/push this locally accepted focused group and inspect its own CI. Continue the
+entire original Production objective; photographic/LUT/alpha/monitor/GPU-residency/100MP/
+installed Windows and every original final gate remain OPEN. Do not tag Final or merge main.
+
 Current worktree removes measured non-reused full RAW flatten allocation. MSVC release layout
 probe reports false allocation reuse (Rust1.97.1); production now reserves one flat Vec fallibly
 and borrows triples in place, with overflow/empty-dimension guard and Memory UX. Ten real Nikon

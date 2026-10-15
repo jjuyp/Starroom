@@ -352,9 +352,11 @@ fn xyz_to_rec2020(x: f32, y: f32, z: f32) -> LinearRgb {
 
 pub fn rec2020_to_oklab(rgb: LinearRgb) -> Oklab {
     let (x, y, z) = rec2020_to_xyz(rgb);
-    let l = (0.818_933 * x + 0.361_866_74 * y - 0.128_859_71 * z).cbrt();
-    let m = (0.032_984_544 * x + 0.929_311_9 * y + 0.036_145_64 * z).cbrt();
-    let s = (0.048_200_3 * x + 0.264_366_27 * y + 0.633_851_7 * z).cbrt();
+    // White-consistent XYZ/LMS coefficients, W3C CSS Color 4 2026-10-09 section 19.
+    // The older XYZ matrices map a=0,b=0 to a visibly non-D65 near-white RGB anchor.
+    let l = (0.819_022_4 * x + 0.361_906_26 * y - 0.128_873_78 * z).cbrt();
+    let m = (0.032_983_653 * x + 0.929_286_84 * y + 0.036_144_666 * z).cbrt();
+    let s = (0.048_177_19 * x + 0.264_239_52 * y + 0.633_547_84 * z).cbrt();
     Oklab {
         l: 0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
         a: 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
@@ -369,9 +371,9 @@ pub fn oklab_to_rec2020(lab: Oklab) -> LinearRgb {
     let l = l_prime * l_prime * l_prime;
     let m = m_prime * m_prime * m_prime;
     let s = s_prime * s_prime * s_prime;
-    let x = 1.227_014 * l - 0.557_8 * m + 0.281_256_14 * s;
-    let y = -0.040_580_18 * l + 1.112_256_9 * m - 0.071_676_68 * s;
-    let z = -0.076_381_29 * l - 0.421_481_97 * m + 1.586_163_2 * s;
+    let x = 1.226_879_8 * l - 0.557_815 * m + 0.281_391_05 * s;
+    let y = -0.040_575_746 * l + 1.112_286_8 * m - 0.071_711_06 * s;
+    let z = -0.076_372_94 * l - 0.421_493_32 * m + 1.586_924 * s;
     xyz_to_rec2020(x, y, z)
 }
 
@@ -655,6 +657,26 @@ impl PreparedCurve {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn white_consistent_oklab_neutral_axis_matches_working_d65_through_hdr() {
+        for lightness in [0.0_f32, 0.001, 0.18, 0.5, 0.999999, 1.0, 2.0, -0.5] {
+            let rgb = oklab_to_rec2020(Oklab {
+                l: lightness,
+                a: 0.0,
+                b: 0.0,
+            });
+            let expected = lightness * lightness * lightness;
+            for value in [rgb.r, rgb.g, rgb.b] {
+                assert!(
+                    (value - expected).abs() < 3e-6 * expected.abs().max(1.0),
+                    "L={lightness}: {rgb:?}"
+                );
+            }
+            let recovered = rec2020_to_oklab(rgb);
+            assert!((recovered.l - lightness).abs() < 3e-6);
+            assert!(recovered.a.abs() < 3e-6 && recovered.b.abs() < 3e-6);
+        }
+    }
     use super::*;
 
     #[test]
