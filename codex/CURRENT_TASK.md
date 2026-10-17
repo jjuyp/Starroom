@@ -1,5 +1,19 @@
 # Current Task
 
+2026-10-17 latest CI repair: transport2180079 Full39025065770 FAILED on Clippy1.99
+constant-size chunks_exact (local1.97.1). All three uses become as_chunks arrays;
+transport and actual decoded-export regressions plus targeted Clippy pass unchanged.
+Commit/push this focused fix with accepted d14c979 instrumentation; retain Draft PR.
+Independent opt-in24MP test/runner work is still uncommitted: explicitJPEG/RGBA
+benchmark on the same real Native request path, exclusive tempfile, source hash,
+binary magic assertion and honest non-resident labels. Baseline report
+native-preview-jpeg-1792233648343.json PASS27controls, but severalMixer/detail p95>100ms;
+RGBA comparison session3483 remains live. No installed IPC/input-to-present claim.
+Frozen old serial detail math287lines is test-only/uncommitted at
+crates/starroom-detail/tests/oracles/serial_detail_v1.rs for upcoming scheduling-only
+optimization, not enabled or registered as production. Do not change source detail
+while the paired RGBA benchmark is still executing. All original phases stay active.
+
 2026-10-17 latest: transport21800795df0d120c2803eea593beaec079d51735 is pushed;
 PR#2 Open/Draft. Own Full39025065770 running, secondary39025069734 SUCCESS; do not
 cancel it with another push. Prior f73745f Full39023204842 completed SUCCESS.

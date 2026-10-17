@@ -1,5 +1,15 @@
 # Implementation Notes
 
+## 2026-10-17 — CI1.99 fixed-size slice compatibility
+
+Transport2180079 Full39025065770 failed at warning-denied Clippy1.99 (local1.97.1):
+three constant-size chunks_exact uses in the new packer/test. Replaced them with
+as_chunks arrays, retaining exact byte/length/ownership tests and all lint levels.
+The original transport tests and actual decoded ICC PNG export equality pass again;
+targeted desktop Clippy passes. This is a real source compatibility repair, not an
+external infrastructure classification or a reason to disable tests. Remote Full
+acceptance still needs the corrected SHA. No new installer/Final/PR merge claim.
+
 ## 2026-10-17 — Actual output color timing decomposition
 
 Doc57 separates existing gamut proof/search as an OutputGamut child, preserving

@@ -74,7 +74,7 @@ pub fn rgba_preview_frame(
         samples / 3 * 4,
         PreviewPayloadFormat::Rgba8,
     )?;
-    for pixel in rgb.chunks_exact(3) {
+    for pixel in rgb.as_chunks::<3>().0 {
         bytes.extend_from_slice(pixel);
         bytes.push(255);
     }
@@ -157,7 +157,12 @@ mod tests {
         assert_eq!(&bytes[..6], b"SRP4\x04\0");
         assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 1);
         assert_eq!(bytes.len(), 40 + 7 + 256 * 4);
-        for (expected, actual) in rgb.chunks_exact(3).zip(bytes[47..].chunks_exact(4)) {
+        for (expected, actual) in rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(bytes[47..].as_chunks::<4>().0)
+        {
             assert_eq!(expected, &actual[..3]);
             assert_eq!(actual[3], 255);
         }
