@@ -273,22 +273,26 @@ fn cached_proof(
 }
 
 impl Proof {
-    fn search_membership(&self, input: &[[f32; 3]]) -> Result<Vec<bool>, ColorManagementError> {
+    fn search_membership(
+        &self,
+        input: &[[f32; 3]],
+        result: &mut Vec<bool>,
+    ) -> Result<(), ColorManagementError> {
+        result.clear();
         if let Some(linear) = self.linear {
             // Search candidates may be moved conservatively inside the true linear device
             // boundary. Original pixels still use full ICC membership/identity above.
             // This small inward numerical guard prevents gamma-amplified rounding at black.
-            return Ok(input
-                .iter()
-                .map(|p| {
-                    linear
-                        .apply(*p)
-                        .iter()
-                        .all(|v| v.is_finite() && (2e-6..=0.999998).contains(v))
-                })
-                .collect());
+            result.extend(input.iter().map(|p| {
+                linear
+                    .apply(*p)
+                    .iter()
+                    .all(|v| v.is_finite() && (2e-6..=0.999998).contains(v))
+            }));
+            return Ok(());
         }
-        self.general_membership(input)
+        result.extend(self.general_membership(input)?);
+        Ok(())
     }
     fn membership(&self, input: &[[f32; 3]]) -> Result<Vec<bool>, ColorManagementError> {
         if let Some(linear) = self.linear {
@@ -424,13 +428,14 @@ pub fn map_output_gamut(
             if proof.membership(&best)?.iter().any(|v| !v) {
                 return Err(ColorManagementError::GamutMappingUnavailable);
             }
+            let mut trial = vec![[0.0; 3]; lab.len()];
+            let mut fits = Vec::with_capacity(lab.len());
             for _ in 0..16 {
-                let trial: Vec<_> = lab
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| candidate(*v, (low[i] + high[i]) * 0.5))
-                    .collect();
-                for (i, fits) in proof.search_membership(&trial)?.into_iter().enumerate() {
+                for (i, (pixel, value)) in trial.iter_mut().zip(&lab).enumerate() {
+                    *pixel = candidate(*value, (low[i] + high[i]) * 0.5);
+                }
+                proof.search_membership(&trial, &mut fits)?;
+                for (i, fits) in fits.iter().copied().enumerate() {
                     let middle = (low[i] + high[i]) * 0.5;
                     if fits {
                         low[i] = middle;
@@ -451,6 +456,132 @@ pub fn map_output_gamut(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reused_search_scratch_matches_previous_allocating_path_bit_exactly() {
+        let source: Vec<_> = (0..4133)
+            .map(|i| {
+                let angle = i as f32 * 0.17;
+                let rgb = oklab_to_rec2020(Oklab {
+                    l: 0.15 + (i % 70) as f32 / 100.0,
+                    a: angle.cos() * 0.4,
+                    b: angle.sin() * 0.4,
+                });
+                [rgb.r, rgb.g, rgb.b]
+            })
+            .collect();
+        for name in [
+            BuiltinOutputProfile::Srgb,
+            BuiltinOutputProfile::DisplayP3,
+            BuiltinOutputProfile::AdobeRgb,
+            BuiltinOutputProfile::Rec2020,
+        ] {
+            let bytes = LittleCmsProvider
+                .builtin_output_profile_bytes(name)
+                .unwrap();
+            let proof =
+                build_proof(Some(&bytes), RenderingIntent::RelativeColorimetric, true).unwrap();
+            let mut expected = source.clone();
+            // Exact former per-chunk allocating operations; frozen ownership oracle only.
+            for chunk in expected.chunks_mut(2048) {
+                let indices: Vec<_> = proof
+                    .membership(chunk)
+                    .unwrap()
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(i, fits)| (!fits).then_some(i))
+                    .collect();
+                let labs: Vec<_> = indices
+                    .iter()
+                    .map(|i| {
+                        rec2020_to_oklab(LinearRgb {
+                            r: chunk[*i][0],
+                            g: chunk[*i][1],
+                            b: chunk[*i][2],
+                        })
+                    })
+                    .collect();
+                let candidate = |lab: Oklab, ratio: f32| {
+                    let rgb = oklab_to_rec2020(Oklab {
+                        l: lab.l,
+                        a: lab.a * ratio,
+                        b: lab.b * ratio,
+                    });
+                    [rgb.r, rgb.g, rgb.b]
+                };
+                let mut low = vec![0.0; labs.len()];
+                let mut high = vec![1.0; labs.len()];
+                let mut best: Vec<_> = labs.iter().map(|lab| candidate(*lab, 0.0)).collect();
+                assert!(proof.membership(&best).unwrap().into_iter().all(|v| v));
+                for _ in 0..16 {
+                    let trial: Vec<_> = labs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, lab)| candidate(*lab, (low[i] + high[i]) * 0.5))
+                        .collect();
+                    let fits: Vec<_> = if let Some(linear) = proof.linear {
+                        trial
+                            .iter()
+                            .map(|p| {
+                                linear
+                                    .apply(*p)
+                                    .iter()
+                                    .all(|v| v.is_finite() && (2e-6..=0.999998).contains(v))
+                            })
+                            .collect()
+                    } else {
+                        proof.general_membership(&trial).unwrap()
+                    };
+                    for (i, fits) in fits.into_iter().enumerate() {
+                        let middle = (low[i] + high[i]) * 0.5;
+                        if fits {
+                            low[i] = middle;
+                            best[i] = trial[i];
+                        } else {
+                            high[i] = middle;
+                        }
+                    }
+                }
+                for (index, p) in indices.into_iter().zip(best) {
+                    chunk[index] = p;
+                }
+            }
+            let mut actual = source.clone();
+            map_output_gamut(
+                &mut actual,
+                Some(&bytes),
+                RenderingIntent::RelativeColorimetric,
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                actual
+                    .iter()
+                    .flatten()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .flatten()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                "{name:?}"
+            );
+            let mut scratch = Vec::with_capacity(source.len());
+            let allocation = scratch.as_ptr();
+            for count in [source.len(), 13, 0, source.len()] {
+                proof
+                    .search_membership(&source[..count], &mut scratch)
+                    .unwrap();
+                assert_eq!(scratch.len(), count);
+                assert_eq!(
+                    scratch.as_ptr(),
+                    allocation,
+                    "membership must retain its bounded scratch allocation"
+                );
+            }
+        }
+    }
 
     #[test]
     fn destination_proof_cache_has_exact_keys_lru_bounds_and_duplicate_build_ownership() {

@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## 2026-10-17 — Encoded working storage and gamut scratch acceptance
+
+Doc55 records the2026-10-15 implementation and measured evidence, recovered after interruption.
+One flat float RGB allocation replaces encoded triple+flatten ownership, with checked shape,
+typed reservation errors and Memory UX. Same linked LittleCMS/WB operations;16 valid16-bit
+ICC/WB combinations match old f32 bits and eight encoded Camera/AsShot cases retain typed
+rejection. Four-profile4x4133-vector old/new mapping bits and scratch capacity match. No source
+image is modified. Alpha remains open, not claimed repaired by RGB storage changes.
+
+Full Rust1792078304648 passes format, warning-denied workspace Clippy, tests/doc-tests:
+457 registered/453 ordinary passed/four opt-in excluded. Full Web1792077863686 passes213
+tests/30files, lint/TS/production build/JSON/Golden/packaging configuration. No tests rerun
+merely because the observation handle expired; authoritative completed reports were inspected.
+Packing8.0205→3.9508ms is a controlled ownership result. Whole portrait probes are slower:
+Exposure39.6747→42.1172ms, Picker36.2487→44.0832ms median. Retain unfavorable reports; no
+overall latency or100MP/installed/Final acceptance. Prior64621bf Full38757838412 and secondary
+38757850830 completed successfully; current group still needs its own remote acceptance.
+
+
 ## 2026-10-15 — Actual GPU timestamps and bit-exact source hashing
 
 Doc54 records the existing wgpu30.0.1 optional timestamp API integration. Exposure/fused

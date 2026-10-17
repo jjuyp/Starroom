@@ -10,6 +10,12 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-17 resumed storage group: interrupted local Full report1792078304648 is terminal/pass,
+457 registered/453 ordinary/four opt-in excluded; Web1792077863686 passes213 tests. Encoded
+one-flat LCMS/WB storage and reused gamut scratch preserve former f32 bits (doc55), with typed
+shape/allocation errors. Controlled packing improves, whole portrait timings regress and are
+retained. This does not close full latency/alpha/streaming100MP or other original phases.
+
 2026-10-15 hardware profiling: actual exposure/fused GPU timestamps now have independent
 optional hardware fields, not host-duration substitution. Pair resolves piggyback the existing
 readback; cached passes do not reuse stale ticks and unsupported devices remain explicit.

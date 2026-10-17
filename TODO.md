@@ -2,6 +2,11 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Remote acceptance for encoded one-flat working pixels and reused gamut scratch (doc55).
+  Full local Rust457 registered/453 ordinary and Web213 pass; same f32 bits/typed semantics.
+  Packing improves but whole portrait observations regress; no overall speedup claim. Full
+  alpha/monitor/GPU residency/latency/100MP/Windows/Final requirements remain active.
+
 - [ ] Complete acceptance of real wgpu hardware timestamps and bit-exact contiguous source
   fingerprinting (doc54). Actual DX12 pass timing is now separate from host elapsed time;
   cached passes never reuse stale measurements and no extra readback/wait is introduced.

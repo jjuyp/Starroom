@@ -4,6 +4,11 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-17 encoded storage/gamut scratch review (doc55): existing pinned LittleCMS continues
+all ICC/WB transforms and proofing without algorithm, source, version or license changes.
+Only Starroom-authored Vec ownership and scratch lifetimes change. No dependency/model/code
+port or new notice; existing binary redistribution obligations remain unchanged.
+
 2026-10-15 GPU instrumentation uses the same pinned wgpu30.0.1 TIMESTAMP_QUERY,
 ComputePassTimestampWrites, resolve_query_set and Queue::get_timestamp_period public APIs
 in `starroom-render`. No upstream code is copied/ported; runtime adapter code is Starroom-

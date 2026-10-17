@@ -461,6 +461,8 @@ pub enum PipelineError {
     DetailBuffer,
     #[error("RAW working allocation exceeded available memory ({samples} float samples)")]
     RawWorkingAllocation { samples: usize },
+    #[error("encoded working allocation exceeded available memory ({samples} float samples)")]
+    EncodedWorkingAllocation { samples: usize },
     #[error("Lensfun profile is unavailable: {0:?}")]
     OpticsProfile(LensProfileStatus),
     #[error("Lensfun correction failed")]
@@ -1782,22 +1784,31 @@ fn to_working_image(
         return Err(CameraWhiteBalanceError("physical white balance requires RAW input").into());
     }
     checkpoint()?;
-    let expected = decoded.width as usize * decoded.height as usize * 4;
-    if decoded.rgba.len() != expected {
+    let pixel_count = (decoded.width as usize)
+        .checked_mul(decoded.height as usize)
+        .ok_or(PipelineError::InvalidDecodedBuffer)?;
+    let expected = pixel_count
+        .checked_mul(4)
+        .ok_or(PipelineError::InvalidDecodedBuffer)?;
+    if decoded.width == 0 || decoded.height == 0 || decoded.rgba.len() != expected {
         return Err(PipelineError::InvalidDecodedBuffer);
     }
-
-    let mut pixels: Vec<[f32; 3]> = decoded
-        .rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|rgba| [rgba[0], rgba[1], rgba[2]])
-        .collect();
+    let samples = pixel_count
+        .checked_mul(3)
+        .ok_or(PipelineError::InvalidDecodedBuffer)?;
+    // One owned float RGB buffer, with borrowed triples for the mature ICC/WB adapters.
+    // Do not collect triples and flatten into a second complete image after conversion.
+    let mut data = Vec::new();
+    data.try_reserve_exact(samples)
+        .map_err(|_| PipelineError::EncodedWorkingAllocation { samples })?;
+    for rgba in decoded.rgba.as_chunks::<4>().0 {
+        data.extend_from_slice(&rgba[..3]);
+    }
+    let pixels = data.as_chunks_mut::<3>().0;
     let working_bytes = (pixels.len() as u64).saturating_mul(3 * F32_BYTES);
     let input_source = profiling::measure(ProfileStage::CameraTransform, working_bytes, || {
         LittleCmsProvider.input_to_working(
-            &mut pixels,
+            pixels,
             decoded.embedded_icc.as_deref(),
             settings.color_management.intent,
             settings.color_management.black_point_compensation,
@@ -1806,15 +1817,13 @@ fn to_working_image(
 
     profiling::measure(ProfileStage::WhiteBalance, working_bytes, || {
         apply_white_balance(
-            &mut pixels,
+            pixels,
             decoded.width,
             decoded.height,
             SourceKind::Encoded,
             source_white_balance(settings.white_balance),
         )
     })?;
-    let data = pixels.into_iter().flatten().collect();
-
     let image = LinearImage::new(decoded.width as usize, decoded.height as usize, data)
         .map_err(|_| PipelineError::DetailBuffer)?;
     Ok((image, input_source))
@@ -2592,6 +2601,123 @@ pub fn render_to_srgb8(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn encoded_working_flat_storage_matches_previous_lcms_and_wb_bits() {
+        use starroom_color_management::BuiltinOutputProfile;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("precision-source.png");
+        let samples: Vec<u16> = (0..257_u16)
+            .flat_map(|v| [v * 251, 123 + v * 127, 65535 - v * 191])
+            .collect();
+        let provider = LittleCmsProvider;
+        for profile in [
+            BuiltinOutputProfile::Srgb,
+            BuiltinOutputProfile::DisplayP3,
+            BuiltinOutputProfile::AdobeRgb,
+            BuiltinOutputProfile::Rec2020,
+        ] {
+            let icc = provider.builtin_output_profile_bytes(profile).unwrap();
+            let bytes = starroom_imageio::encode_png_rgb16_with_metadata(
+                &samples,
+                257,
+                1,
+                Some(icc),
+                None,
+                None,
+            )
+            .unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            let image = starroom_imageio::decode_rendered(&path).unwrap();
+            let original = image.clone();
+            for mode in [
+                WhiteBalanceMode::SourceDefault,
+                WhiteBalanceMode::AsShot,
+                WhiteBalanceMode::Camera,
+                WhiteBalanceMode::Relative,
+                WhiteBalanceMode::Auto,
+                WhiteBalanceMode::NeutralPicker,
+            ] {
+                let settings = RenderSettings {
+                    white_balance: WhiteBalanceSettings {
+                        mode,
+                        sample: Some(WhiteBalanceSample {
+                            x: 0.25,
+                            y: 0.0,
+                            width: 0.5,
+                            height: 1.0,
+                        }),
+                    },
+                    ..Default::default()
+                };
+                // Previous production layout and operations, not a second color algorithm.
+                let mut triples: Vec<[f32; 3]> = image
+                    .rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| [p[0], p[1], p[2]])
+                    .collect();
+                let expected_source = provider
+                    .input_to_working(
+                        &mut triples,
+                        image.embedded_icc.as_deref(),
+                        settings.color_management.intent,
+                        settings.color_management.black_point_compensation,
+                    )
+                    .unwrap();
+                let previous_wb = apply_white_balance(
+                    &mut triples,
+                    image.width,
+                    image.height,
+                    SourceKind::Encoded,
+                    source_white_balance(settings.white_balance),
+                );
+                if let Err(previous_error) = previous_wb {
+                    // Camera/AsShot are intentionally invalid for encoded images. Preserve
+                    // the real typed semantic failure, never enable a fake camera-WB path.
+                    let actual_error = to_working_image(&image, &settings).unwrap_err();
+                    assert!(matches!(
+                        actual_error,
+                        PipelineError::WhiteBalanceSemantic { .. }
+                    ));
+                    assert_eq!(actual_error.to_string(), previous_error.to_string());
+                    assert_eq!(image, original);
+                    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+                    continue;
+                }
+                let expected: Vec<f32> = triples.into_iter().flatten().collect();
+                let (actual, source) = to_working_image(&image, &settings).unwrap();
+                assert_eq!(source, expected_source);
+                assert_eq!(actual.data.len(), expected.len());
+                assert!(
+                    actual
+                        .data
+                        .iter()
+                        .zip(&expected)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{profile:?}/{mode:?}"
+                );
+                assert_eq!(image, original);
+                assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            }
+        }
+        // This refactor does not claim to repair the still-open RGBA/alpha workflow.
+        let mut malformed = fixture(&[[0.5; 4]]);
+        malformed.width = u32::MAX;
+        malformed.height = u32::MAX;
+        assert!(matches!(
+            to_working_image(&malformed, &RenderSettings::default()),
+            Err(PipelineError::InvalidDecodedBuffer)
+        ));
+        malformed.width = 0;
+        malformed.height = 0;
+        malformed.rgba.clear();
+        assert!(matches!(
+            to_working_image(&malformed, &RenderSettings::default()),
+            Err(PipelineError::InvalidDecodedBuffer)
+        ));
+    }
+
     #[test]
     fn raw_working_flat_storage_matches_previous_layout_bit_exactly() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

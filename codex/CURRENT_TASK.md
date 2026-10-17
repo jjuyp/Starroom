@@ -1,5 +1,16 @@
 # Current Task
 
+2026-10-17 resume: current storage/scratch worktree has local Full Rust1792078304648 PASS
+(457 registered/453 ordinary/four opt-in excluded) and Full Web1792077863686 PASS (213 tests).
+Expired handle17584 is terminal/missing, not live; completed report is authoritative. No other
+local test processes are pending. Doc55 and notes/TODO/provenance/matrix now record the real
+one-flat encoded working buffer, typed errors,16 valid/8 rejected ICC/WB combinations and
+bit-exact gamut scratch reuse. Packing8.0205→3.9508ms, but whole portrait timings regress;
+retain the reports and do not claim overall speedup. Prior64621bf remote Full38757838412
+and secondary38757850830 are SUCCESS; PR#2 Open/Draft at64621bf. Commit/push current verified
+storage group, inspect its own CI, then continue the complete original Production scope.
+No alpha/monitor/photographic/residentGPU/tiles/100MP/Windows/presentation/Final acceptance.
+
 2026-10-15 next group: wgpu actual hardware timestamps are implemented for exposure/fused
 creative passes, with optional advertised feature, persistent2-query/16-byte resolve and16-byte
 existing-readback tail. No second submission/map/wait; cache hits report no stale hardware
