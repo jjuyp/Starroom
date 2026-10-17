@@ -10,6 +10,14 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-17 detail group (doc59): original spatial algorithms now use existing Rayon and
+shared neighbor addresses/weights, verified against a frozen serial reference bit-for-bit
+across588 cases/1-2-4threads and MSVCRelease. Grain/vignette Off is a real no-op with finite
+validation, not per-pixel noise work triggered by other detail settings. Actual24MP Native
+sharpener180.705→70.964ms, lumaNR421.432→100.008ms medians; multiple p95>100ms and cold/
+refine/zoom costs remain. Full ordinary Rust458+Web216/license pass; own remote pending.
+No reduction in processing resolution/quality and no completePhase11/16/19/20/25/30 claim.
+
 2026-10-17 transport group (doc56): actual interactive PhotoCanvas now uses bounded
 lossless SRP4/RGBA8; Final JPEG96 unchanged. Encoded frame cache keys separate format/
 quality. Actual portrait preview equals decoded ICC PNG export; actual RAW Chromium

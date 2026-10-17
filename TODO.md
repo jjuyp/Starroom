@@ -2,6 +2,12 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Remote acceptance of exact detail scheduling/Off finishing (doc59). Existing Rayon,
+  frozen serial588 function comparisons in1/2/4 threads, MSVC Release exact bits, same
+  algorithms/precision. Actual24MP Native sharpen180.705→70.964ms, lumaNR421.432→100.008ms
+  medians; residual>100ms p95 retained. Full Rust462 registered/458 ordinary and Web216 pass;
+  license561Rust/6npm/269notices passes. No full input-to-present/100MP/Final claim.
+
 - [ ] Use real inclusive-CMM/gamut-child profiling (doc57) to finish the remaining
   output-transform and full input-to-present latency gate. Actual RAW Exposure's
   CMM24.9256ms includes gamut4.8941ms, leaving20.0315ms LCMS/checks; GPU hardware.129ms.

@@ -1,5 +1,21 @@
 # Implementation Notes
 
+## 2026-10-17 — Exact detail scheduling and true Off finishing acceptance
+
+Doc59 records pinned-Rayon independent row/pixel work, shared neighbor addresses and
+unchanged precomputed spatial weights, preserving original accumulation order/precision.
+A frozen pre-change serial oracle passes588 comparisons in1/2/4-thread pools (Debug
+and MSVC Release), including empty/odd/negative/HDR/independent/extreme cases. Disabled
+grain/vignette no longer execute per-pixel hashes/radius math when another detail tool
+is enabled; Off preserves HDR/signed zero and still rejects malformed/nonfinite images.
+Actual24MP Native sharpening180.705→70.964ms, lumaNR421.432→100.008ms median. Retain
+p95 failures: NR121.789ms, Texture108.059ms, and cold open/refine/zoom delays. No lower
+preview resolution, changed radius, weaker blur or new pixel engine. Full Rust1792235622485
+passes format/workspaceClippy/tests/doc-tests (462 registered/458 ordinary/four opt-in
+excluded), Web1792235436963 passes216 tests/lint/TS/build/JSON/Golden/packaging config.
+Updated lockfile adds only existing Rayon edge; license561Rust/6npm/269notices passes.
+Remote acceptance requires own commit. No Final/installer/complete latency qualification.
+
 ## 2026-10-17 — Real27-control Native request benchmark
 
 Doc58 records both retained first/contention observations and sequential same-binary

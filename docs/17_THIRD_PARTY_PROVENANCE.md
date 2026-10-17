@@ -4,6 +4,13 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-17 detail scheduling: `starroom-detail` now directly uses the already pinned
+Rayon1.12.0 public parallel iterators (same MIT OR Apache-2.0 row below). No new upstream
+package/version/source, pixel algorithm or image engine. Only independent row/pixel
+scheduling and identical precomputed spatial weights change; serial accumulation order
+and precision remain frozen in a test-only oracle. Cargo.lock changes one workspace
+dependency edge; license extraction is regenerated and passes561Rust/6npm/269notices.
+
 2026-10-17 interactive transport (doc56): Starroom-authored bounded SRP4 packing uses
 the existing shared Native/LCMS output; presentation uses browser-native ImageData and
 ImageBitmap, not a new color/codec dependency or upstream code port. Final JPEG uses

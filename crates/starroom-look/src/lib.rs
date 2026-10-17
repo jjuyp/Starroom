@@ -461,6 +461,12 @@ pub fn apply_finishing_effects(
     if image.data.len() != image.width * image.height * 3 {
         return Err(LookError::InvalidImage);
     }
+    // Off must not execute per-pixel vignette, noise hashes and grain arithmetic merely
+    // because another detail control is enabled. Retain the same finite/shape validation.
+    if grain.amount == 0.0 && vignette.amount == 0.0 {
+        return LinearImage::new(image.width, image.height, image.data.clone())
+            .map_err(|_| LookError::InvalidImage);
+    }
     let identity = Sha256::digest(image_identity.as_bytes());
     let seed = grain.seed ^ u64::from_le_bytes(identity[..8].try_into().unwrap());
     let mut data = image.data.clone();
@@ -511,6 +517,43 @@ pub fn apply_finishing_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn off_finishing_is_exact_hdr_identity_and_preserves_validation() {
+        let source =
+            LinearImage::new(3, 1, vec![-0.0, 0.0, 1.0e-9, -0.3, 1.5, 9.0, 0.2, 0.4, 0.9]).unwrap();
+        let output = apply_finishing_effects(
+            &source,
+            GrainSettings::default(),
+            VignetteSettings::default(),
+            "off",
+        )
+        .unwrap();
+        assert_eq!(
+            source.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            output.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+        let mut invalid = source.clone();
+        invalid.data[0] = f32::NAN;
+        assert_eq!(
+            apply_finishing_effects(
+                &invalid,
+                GrainSettings::default(),
+                VignetteSettings::default(),
+                "off"
+            ),
+            Err(LookError::InvalidImage)
+        );
+        invalid.data.pop();
+        assert_eq!(
+            apply_finishing_effects(
+                &invalid,
+                GrainSettings::default(),
+                VignetteSettings::default(),
+                "off"
+            ),
+            Err(LookError::InvalidImage)
+        );
+    }
     fn image() -> LinearImage {
         LinearImage::new(32, 24, vec![0.5; 32 * 24 * 3]).unwrap()
     }

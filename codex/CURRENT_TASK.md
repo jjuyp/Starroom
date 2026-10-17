@@ -1,5 +1,27 @@
 # Current Task
 
+2026-10-17 latest: detail/Off worktree has complete local ordinary acceptance, doc59.
+Full Rust1792235622485 PASS format/workspaceClippy/tests/doc-tests (462 registered/458
+ordinary/four opt-in excluded); Full Web1792235436963 PASS216, all license gates pass.
+Frozen serial588 comparisons and MSVCRelease pass; actual after packed-neighbor/Off
+reportnative-preview-rgba8-1792235081478 has compiler/sourceSHA256 and no source change
+during timing. Sharpen180.705→70.964ms, lumaNR421.432→100.008ms median, but p95 failures
+remain (luma121.789, chroma102.704, texture108.059,dehaze100.540ms); no universal latency
+claim. All sessions terminal, no server/browser active. Current localHEAD5617731 has
+benchmark/docs commit, remote1b40115 Full39026042794 SUCCESS and PR#2Open/Draft.
+Commit/push the focused accepted detail/lockfile/notices/doc59 group, then inspect ownCI.
+
+Separate next-group diagnostic NOT part of accepted detail batch is untracked
+crates/starroom-imageio/examples/raw_resize_range_probe.rs. It executed actual pinned
+image0.25.10Lanczos3 and proves constantRGB[-.25,1.5,4] becomes[0,1,1] when8x8→2x2;
+original is unchanged. Existing resize_raw_preview uses this bounded float resampler.
+Review image0.25.10 source commit76e57184f22772dad1138e96954e57945406b15e, src/imageops/
+sample.rs sinc/lanczos3+vertical/horizontal, underMIT/Apache2. An unbounded RAW adapter
+must integrate/adapt mature math with license/source/hash, not weaker custom resampling.
+No repair yet. This must precede derived preview pyramids/adaptive spatial tiers; current
+1024 cold tier misses re-decode full encoded source, explaining another latency target.
+All original31-phase requirements/alpha/monitor/residency/100MP/Windows remain active.
+
 2026-10-17 Native-request benchmark group is locally accepted, doc58: exclusive
 tempfile, explicit diagnosticJPEG versus actual UI-defaultRGBA, binary magic and
 changed-state assertions/source hash, honest non-resident labels, MSVC/compiler/

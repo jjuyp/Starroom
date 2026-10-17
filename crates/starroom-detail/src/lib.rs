@@ -2,6 +2,7 @@
 //! Production preview/export will move these operations to tiled GPU kernels, but the GPU must
 //! remain numerically close to these deterministic references.
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +28,8 @@ impl LinearImage {
         })
     }
 
+    // Retained only for the frozen pre-optimization serial oracle.
+    #[cfg(test)]
     fn sample(&self, x: isize, y: isize, channel: usize) -> f32 {
         let safe_x = x.clamp(0, self.width.saturating_sub(1) as isize) as usize;
         let safe_y = y.clamp(0, self.height.saturating_sub(1) as isize) as usize;
@@ -147,18 +150,24 @@ pub fn gaussian_blur(image: &LinearImage, radius: f32) -> LinearImage {
     let kernel = gaussian_kernel(radius);
     let half = (kernel.len() / 2) as isize;
     let mut horizontal = vec![0.0; image.data.len()];
-    for y in 0..image.height {
-        for x in 0..image.width {
-            for channel in 0..3 {
-                let mut value = 0.0;
+    horizontal
+        .par_chunks_mut(image.width * 3)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, pixel) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                let mut value = [0.0; 3];
                 for (index, weight) in kernel.iter().enumerate() {
                     let offset = index as isize - half;
-                    value += image.sample(x as isize + offset, y as isize, channel) * weight;
+                    let source_x =
+                        (x as isize + offset).clamp(0, image.width as isize - 1) as usize;
+                    let base = (y * image.width + source_x) * 3;
+                    for (channel, value) in value.iter_mut().enumerate() {
+                        *value += image.data[base + channel] * weight;
+                    }
                 }
-                horizontal[(y * image.width + x) * 3 + channel] = value;
+                pixel.copy_from_slice(&value);
             }
-        }
-    }
+        });
 
     let horizontal_image = LinearImage {
         width: image.width,
@@ -166,19 +175,24 @@ pub fn gaussian_blur(image: &LinearImage, radius: f32) -> LinearImage {
         data: horizontal,
     };
     let mut output = vec![0.0; image.data.len()];
-    for y in 0..image.height {
-        for x in 0..image.width {
-            for channel in 0..3 {
-                let mut value = 0.0;
+    output
+        .par_chunks_mut(image.width * 3)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, pixel) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                let mut value = [0.0; 3];
                 for (index, weight) in kernel.iter().enumerate() {
                     let offset = index as isize - half;
-                    value +=
-                        horizontal_image.sample(x as isize, y as isize + offset, channel) * weight;
+                    let source_y =
+                        (y as isize + offset).clamp(0, image.height as isize - 1) as usize;
+                    let base = (source_y * image.width + x) * 3;
+                    for (channel, value) in value.iter_mut().enumerate() {
+                        *value += horizontal_image.data[base + channel] * weight;
+                    }
                 }
-                output[(y * image.width + x) * 3 + channel] = value;
+                pixel.copy_from_slice(&value);
             }
-        }
-    }
+        });
     LinearImage {
         width: image.width,
         height: image.height,
@@ -203,20 +217,22 @@ fn box_blur(image: &LinearImage, radius: usize) -> LinearImage {
                 integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + row;
             }
         }
-        for y in 0..image.height {
-            for x in 0..image.width {
-                let x0 = x.saturating_sub(radius);
-                let y0 = y.saturating_sub(radius);
-                let x1 = (x + radius + 1).min(image.width);
-                let y1 = (y + radius + 1).min(image.height);
-                let sum = integral[y1 * stride + x1]
-                    - integral[y0 * stride + x1]
-                    - integral[y1 * stride + x0]
-                    + integral[y0 * stride + x0];
-                output[(y * image.width + x) * 3 + channel] =
-                    (sum / ((x1 - x0) * (y1 - y0)) as f64) as f32;
-            }
-        }
+        output
+            .par_chunks_mut(image.width * 3)
+            .enumerate()
+            .for_each(|(y, row)| {
+                for (x, pixel) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                    let x0 = x.saturating_sub(radius);
+                    let y0 = y.saturating_sub(radius);
+                    let x1 = (x + radius + 1).min(image.width);
+                    let y1 = (y + radius + 1).min(image.height);
+                    let sum = integral[y1 * stride + x1]
+                        - integral[y0 * stride + x1]
+                        - integral[y1 * stride + x0]
+                        + integral[y0 * stride + x0];
+                    pixel[channel] = (sum / ((x1 - x0) * (y1 - y0)) as f64) as f32;
+                }
+            });
     }
     LinearImage {
         width: image.width,
@@ -237,39 +253,43 @@ pub fn sharpen(image: &LinearImage, parameters: SharpenParameters) -> LinearImag
     let detail_mix = parameters.detail.clamp(0.0, 1.0);
     let masking = parameters.masking.clamp(0.0, 1.0);
     let halo = parameters.halo_protection.clamp(0.0, 1.0);
-    for pixel in 0..image.width.saturating_mul(image.height) {
-        let base = pixel * 3;
-        let (source_y, _, _) =
-            rgb_to_ycbcr(image.data[base], image.data[base + 1], image.data[base + 2]);
-        let (fine_y, _, _) =
-            rgb_to_ycbcr(fine.data[base], fine.data[base + 1], fine.data[base + 2]);
-        let (coarse_y, _, _) = rgb_to_ycbcr(
-            coarse.data[base],
-            coarse.data[base + 1],
-            coarse.data[base + 2],
-        );
-        let fine_detail = source_y - fine_y;
-        let coarse_detail = fine_y - coarse_y;
-        let detail_y =
-            fine_detail * (0.55 + detail_mix * 0.9) + coarse_detail * (1.0 - detail_mix) * 0.35;
-        let edge = (source_y - coarse_y).abs();
-        let edge_mask = if masking <= f32::EPSILON {
-            1.0
-        } else {
-            smoothstep(threshold, threshold + 0.03 + masking * 0.08, edge)
-        };
-        let local_range = (fine_y - coarse_y).abs() + fine_detail.abs() + 0.002;
-        let limit = local_range * (2.2 - halo * 1.6);
-        let delta_y = (detail_y * amount * edge_mask).clamp(-limit, limit);
-        let scale = if source_y.abs() > 1.0e-7 {
-            (source_y + delta_y) / source_y
-        } else {
-            1.0
-        };
-        for channel in 0..3 {
-            output.data[base + channel] = image.data[base + channel] * scale;
-        }
-    }
+    output
+        .data
+        .par_chunks_mut(3)
+        .enumerate()
+        .for_each(|(pixel, output_pixel)| {
+            let base = pixel * 3;
+            let (source_y, _, _) =
+                rgb_to_ycbcr(image.data[base], image.data[base + 1], image.data[base + 2]);
+            let (fine_y, _, _) =
+                rgb_to_ycbcr(fine.data[base], fine.data[base + 1], fine.data[base + 2]);
+            let (coarse_y, _, _) = rgb_to_ycbcr(
+                coarse.data[base],
+                coarse.data[base + 1],
+                coarse.data[base + 2],
+            );
+            let fine_detail = source_y - fine_y;
+            let coarse_detail = fine_y - coarse_y;
+            let detail_y =
+                fine_detail * (0.55 + detail_mix * 0.9) + coarse_detail * (1.0 - detail_mix) * 0.35;
+            let edge = (source_y - coarse_y).abs();
+            let edge_mask = if masking <= f32::EPSILON {
+                1.0
+            } else {
+                smoothstep(threshold, threshold + 0.03 + masking * 0.08, edge)
+            };
+            let local_range = (fine_y - coarse_y).abs() + fine_detail.abs() + 0.002;
+            let limit = local_range * (2.2 - halo * 1.6);
+            let delta_y = (detail_y * amount * edge_mask).clamp(-limit, limit);
+            let scale = if source_y.abs() > 1.0e-7 {
+                (source_y + delta_y) / source_y
+            } else {
+                1.0
+            };
+            for (channel, output_channel) in output_pixel.iter_mut().enumerate() {
+                *output_channel = image.data[base + channel] * scale;
+            }
+        });
     output
 }
 
@@ -302,11 +322,11 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
         return image.clone();
     }
 
-    let mut components = Vec::with_capacity(image.data.len());
-    for pixel in image.data.as_chunks::<3>().0 {
+    let mut components = image.data.clone();
+    components.par_chunks_mut(3).for_each(|pixel| {
         let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-        components.extend_from_slice(&[y, cb, cr]);
-    }
+        pixel.copy_from_slice(&[y, cb, cr]);
+    });
     let component_image = LinearImage {
         width: image.width,
         height: image.height,
@@ -317,35 +337,41 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
     let spatial_radius = parameters.radius.clamp(0.6, 4.0);
     let half = (spatial_radius * 2.0).ceil() as isize;
     let detail_protection = parameters.detail_protection.clamp(0.0, 1.0);
+    let range_sigma = 0.018 + (1.0 - detail_protection) * 0.12 + iso_boost * 0.08;
+    // Same f32 weights and dy/dx order as the serial path, evaluated once per frame.
+    let mut spatial_kernel = Vec::new();
+    for dy in -half..=half {
+        for dx in -half..=half {
+            let spatial =
+                (-0.5 * ((dx * dx + dy * dy) as f32) / (spatial_radius * spatial_radius)).exp();
+            spatial_kernel.push((dx, dy, spatial));
+        }
+    }
     let mut output = image.clone();
-    for y_index in 0..image.height {
-        for x_index in 0..image.width {
-            let pixel_index = y_index * image.width + x_index;
+    output
+        .data
+        .par_chunks_mut(3)
+        .enumerate()
+        .for_each(|(pixel_index, output_pixel)| {
+            let y_index = pixel_index / image.width;
+            let x_index = pixel_index % image.width;
             let base = pixel_index * 3;
             let original_y = component_image.data[base];
             let original_cb = component_image.data[base + 1];
             let original_cr = component_image.data[base + 2];
-            let range_sigma = 0.018 + (1.0 - detail_protection) * 0.12 + iso_boost * 0.08;
             let mut sum = [0.0_f32; 3];
             let mut weight_sum = 0.0;
-            for dy in -half..=half {
-                for dx in -half..=half {
-                    let sample_y =
-                        component_image.sample(x_index as isize + dx, y_index as isize + dy, 0);
-                    let spatial = (-0.5 * ((dx * dx + dy * dy) as f32)
-                        / (spatial_radius * spatial_radius))
-                        .exp();
-                    let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
-                    let weight = spatial * range;
-                    for (channel, accumulated) in sum.iter_mut().enumerate() {
-                        *accumulated += component_image.sample(
-                            x_index as isize + dx,
-                            y_index as isize + dy,
-                            channel,
-                        ) * weight;
-                    }
-                    weight_sum += weight;
+            for &(dx, dy, spatial) in &spatial_kernel {
+                let source_x = (x_index as isize + dx).clamp(0, image.width as isize - 1) as usize;
+                let source_y = (y_index as isize + dy).clamp(0, image.height as isize - 1) as usize;
+                let source_base = (source_y * image.width + source_x) * 3;
+                let sample_y = component_image.data[source_base];
+                let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
+                let weight = spatial * range;
+                for (channel, accumulated) in sum.iter_mut().enumerate() {
+                    *accumulated += component_image.data[source_base + channel] * weight;
                 }
+                weight_sum += weight;
             }
             let filtered = sum.map(|value| value / weight_sum.max(f32::EPSILON));
             let y = original_y
@@ -353,11 +379,8 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
             let cb = original_cb + (filtered[1] - original_cb) * chroma_strength;
             let cr = original_cr + (filtered[2] - original_cr) * chroma_strength;
             let (r, g, b) = ycbcr_to_rgb(y, cb, cr);
-            output.data[base] = r;
-            output.data[base + 1] = g;
-            output.data[base + 2] = b;
-        }
-    }
+            output_pixel.copy_from_slice(&[r, g, b]);
+        });
     output
 }
 
@@ -377,37 +400,134 @@ pub fn local_detail(image: &LinearImage, parameters: LocalDetailParameters) -> L
     let medium = gaussian_blur(image, 3.0);
     let broad = box_blur(image, 12);
     let mut output = image.clone();
-    for pixel in 0..image.width.saturating_mul(image.height) {
-        let base = pixel * 3;
-        let y = rgb_to_ycbcr(image.data[base], image.data[base + 1], image.data[base + 2]).0;
-        let fine_y = rgb_to_ycbcr(fine.data[base], fine.data[base + 1], fine.data[base + 2]).0;
-        let medium_y = rgb_to_ycbcr(
-            medium.data[base],
-            medium.data[base + 1],
-            medium.data[base + 2],
-        )
-        .0;
-        let broad_y = rgb_to_ycbcr(broad.data[base], broad.data[base + 1], broad.data[base + 2]).0;
-        let target = y
-            + (y - fine_y) * texture * 0.8
-            + (fine_y - medium_y) * clarity * 1.15
-            + (y - broad_y) * dehaze * 0.7
-            + dehaze * (0.18 - broad_y) * 0.10;
-        let scale = if y.abs() > 1.0e-7 {
-            target.max(0.0) / y
-        } else {
-            1.0
-        };
-        for channel in 0..3 {
-            output.data[base + channel] = image.data[base + channel] * scale;
-        }
-    }
+    output
+        .data
+        .par_chunks_mut(3)
+        .enumerate()
+        .for_each(|(pixel, output_pixel)| {
+            let base = pixel * 3;
+            let y = rgb_to_ycbcr(image.data[base], image.data[base + 1], image.data[base + 2]).0;
+            let fine_y = rgb_to_ycbcr(fine.data[base], fine.data[base + 1], fine.data[base + 2]).0;
+            let medium_y = rgb_to_ycbcr(
+                medium.data[base],
+                medium.data[base + 1],
+                medium.data[base + 2],
+            )
+            .0;
+            let broad_y =
+                rgb_to_ycbcr(broad.data[base], broad.data[base + 1], broad.data[base + 2]).0;
+            let target = y
+                + (y - fine_y) * texture * 0.8
+                + (fine_y - medium_y) * clarity * 1.15
+                + (y - broad_y) * dehaze * 0.7
+                + dehaze * (0.18 - broad_y) * 0.10;
+            let scale = if y.abs() > 1.0e-7 {
+                target.max(0.0) / y
+            } else {
+                1.0
+            };
+            for (channel, output_channel) in output_pixel.iter_mut().enumerate() {
+                *output_channel = image.data[base + channel] * scale;
+            }
+        });
     output
 }
 
 #[cfg(test)]
+#[path = "../tests/oracles/serial_detail_v1.rs"]
+mod serial_reference;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_detail_matches_frozen_serial_bits_for_hdr_edges_and_thread_counts() {
+        fn same(actual: LinearImage, expected: LinearImage) {
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            assert_eq!(actual.data.len(), expected.data.len());
+            for (index, (a, b)) in actual.data.iter().zip(&expected.data).enumerate() {
+                assert_eq!(a.to_bits(), b.to_bits(), "sample {index}: {a} vs {b}");
+            }
+        }
+        for threads in [1, 2, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            pool.install(|| {
+                for (width, height) in [(0, 0), (0, 5), (5, 0), (1, 1), (1, 9), (9, 1), (37, 23)] {
+                    let data = (0..width * height * 3)
+                        .map(|i| ((i * 97 % 1021) as f32 - 50.0) / 317.0)
+                        .collect();
+                    let image = LinearImage::new(width, height, data).unwrap();
+                    let original = image.clone();
+                    for radius in [0.0, 0.3, 1.0, 4.0, 8.0] {
+                        same(
+                            gaussian_blur(&image, radius),
+                            serial_reference::gaussian_blur(&image, radius),
+                        );
+                    }
+                    for amount in [0.0, 0.35, 2.0] {
+                        let parameters = SharpenParameters {
+                            amount,
+                            radius: 2.3,
+                            detail: 0.7,
+                            masking: 0.5,
+                            halo_protection: 0.9,
+                            ..Default::default()
+                        };
+                        same(
+                            sharpen(&image, parameters),
+                            serial_reference::sharpen(&image, parameters),
+                        );
+                    }
+                    for radius in [0.6, 1.7, 4.0] {
+                        for (luminance, chroma, high_iso, detail_protection) in [
+                            (0.0, 0.0, 0.0, 0.0),
+                            (0.4, 0.0, 0.0, 0.8),
+                            (0.0, 0.4, 0.0, 0.5),
+                            (1.0, 1.0, 1.0, 1.0),
+                            (-0.5, 2.0, 0.3, 0.0),
+                        ] {
+                            let parameters = DenoiseParameters {
+                                luminance,
+                                chroma,
+                                high_iso,
+                                radius,
+                                detail_protection,
+                            };
+                            same(
+                                denoise(&image, parameters),
+                                serial_reference::denoise(&image, parameters),
+                            );
+                        }
+                    }
+                    for (texture, clarity, dehaze) in [
+                        (0.0, 0.0, 0.0),
+                        (1.0, 0.0, 0.0),
+                        (0.0, 1.0, 0.0),
+                        (0.0, 0.0, 1.0),
+                        (-1.0, 1.0, -0.7),
+                    ] {
+                        let parameters = LocalDetailParameters {
+                            texture,
+                            clarity,
+                            dehaze,
+                        };
+                        same(
+                            local_detail(&image, parameters),
+                            serial_reference::local_detail(&image, parameters),
+                        );
+                    }
+                    assert_eq!(image, original);
+                }
+            });
+        }
+    }
 
     fn fixture() -> LinearImage {
         LinearImage::new(
