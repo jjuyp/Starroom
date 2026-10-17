@@ -1,5 +1,27 @@
 # Implementation Notes
 
+## 2026-10-17 — Bounded lossless interactive preview presentation
+
+Doc56 records real PhotoCanvas -> Native SRP4/RGBA8 -> ImageBitmap presentation,
+bounded to1024/interactive, retaining shared graph/LCMS/authoritative float precision.
+Final/HQ JPEG96 stays unchanged; encoded frame cache identities distinguish RGBA,
+JPEG88 and JPEG96 while prepared/creative keys stay unchanged. Parser validates all
+lengths/bounds and borrows payload views. Bitmap/URL cleanup is finally-protected.
+Actual NASA portrait binary preview exactly matches decoded ICC PNG export for three
+edited states; original unchanged. Actual Native RAW output rendered in Chromium155
+has zero byte differences and22/22 closed bitmaps. MSVC release transport-only median
+15.604→1.1843ms, browser decode/draw/readback7.4→2.8ms. Payload grows197454→2785356bytes;
+installed IPC/pointer-to-present must still be measured, not inferred by adding medians.
+No pixel algorithm/dependency change; opacity remains existing RGB semantics, not alpha repair.
+Full Web1792232203917 passes216 tests. Full Rust1792232440212 passes format, warning-denied
+workspace Clippy and tests/doc-tests (460 registered/456 ordinary/four opt-in excluded).
+Later diagnostic median-definition/backend flags and target-config changes pass targeted
+Clippy/ESLint/infrastructure validation. Doc56 uses arithmetic central-pair medians from
+retained samples (15.5737/1.1822ms Native,7.35/2.8ms browser), not old upper-median selection.
+Remote batch acceptance remains pending.
+Previous f73745f CI Full39023204842 is still running (artifact upload last observed);
+secondary39023207843 succeeded. No replacement installer, Final tag or main merge.
+
 ## 2026-10-17 — Encoded working storage and gamut scratch acceptance
 
 Doc55 records the2026-10-15 implementation and measured evidence, recovered after interruption.

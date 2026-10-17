@@ -9,6 +9,7 @@ import { adjustmentKeys, HistoryCommandQueue, HistoryGestureBoundary, nativeHist
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
+import { decodeNativePreviewPayload } from './nativePreviewPresentation'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -669,6 +670,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
     const frameRequest = window.requestAnimationFrame(async () => {
       const generation = ++previewGeneration.current
       onStatus('正在算圖…')
+      let release: (() => void) | undefined
       try {
         const adjustments = before ? defaultAdjustments : photo.adjustments
         const curvePoints = before ? defaultCurvePoints : photo.curvePoints
@@ -679,7 +681,6 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         let nativeProfile = ''
         let nativeAcceleration: 'gpu' | 'cpuFallback' = 'cpuFallback'
         let nativeResult: NativePreviewResult | null = null
-        let release: (() => void) | undefined
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
           const previewLayers = maskPreview && !before ? [
@@ -711,19 +712,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             nativeDimensions.current = { id: photo.id, width: result.sourceWidth, height: result.sourceHeight }
             setSourceDisplaySize({ width: result.sourceWidth, height: result.sourceHeight })
           }
-          const jpegBuffer = result.jpeg.buffer.slice(
-            result.jpeg.byteOffset,
-            result.jpeg.byteOffset + result.jpeg.byteLength,
-          ) as ArrayBuffer
-          const blobUrl = URL.createObjectURL(new Blob([jpegBuffer], { type: 'image/jpeg' }))
-          release = () => URL.revokeObjectURL(blobUrl)
-          const image = new Image()
-          await new Promise<void>((resolve, reject) => {
-            image.onload = () => resolve()
-            image.onerror = () => reject(new Error('Native preview JPEG could not be decoded.'))
-            image.src = blobUrl
-          })
-          rendered = image
+          const presentation = await decodeNativePreviewPayload(result)
+          release = presentation.release
+          rendered = presentation.image
           renderedWidth = result.width
           renderedHeight = result.height
           nativeProfile = result.cameraProfileId ?? result.inputProfile
@@ -744,14 +735,12 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           || latestPaintIntent.current.before !== before
           || !previewFrameMayPublish(generation, publishedGeneration.current, previewGeneration.current,
             interactionPhase === 'interactive', latestPaintIntent.current.interactive)) {
-          release?.()
           return
         }
         finalPublished = true
         const canvas = canvasRef.current
         const context = canvas.getContext('2d', { willReadFrequently: true })
         if (!context) {
-          release?.()
           throw new Error('Canvas 2D is unavailable.')
         }
         publishedGeneration.current = generation
@@ -780,7 +769,6 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           setAspect(renderedWidth / renderedHeight)
           setTileRegion(null)
         }
-        release?.()
         window.requestAnimationFrame(() => {
           if (!canvasRef.current || publishedGeneration.current !== generation) return
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
@@ -803,6 +791,8 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         if (activePhotoId.current === photo.id && latestPaintIntent.current.before === before
           && generation >= publishedGeneration.current && !(error instanceof PreviewSuperseded)
           && (generation === previewGeneration.current || interactionPhase === 'interactive' && latestPaintIntent.current.interactive)) onStatus(formatUserError(error, '預覽失敗'))
+      } finally {
+        release?.()
       }
     })
 

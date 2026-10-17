@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+mod preview_transport;
+use preview_transport::{
+    PreviewFrameHeader, PreviewPayloadFormat, preview_frame, rgba_preview_frame,
+};
 use sha2::{Digest, Sha256};
 use starroom_advisor::{
     AdvisorResult, AnalysisStats, Suggestion, advise, advise_detailed, analyze_detailed,
@@ -1423,6 +1427,8 @@ struct NativePreviewRequest {
     request_id: String,
     source_path: PathBuf,
     max_edge: u32,
+    #[serde(default)]
+    payload_format: PreviewPayloadFormat,
     #[serde(default = "default_prefer_gpu")]
     prefer_gpu: bool,
     #[serde(default)]
@@ -2059,42 +2065,6 @@ fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
         starroom_color_management::InputProfileSource::RawCameraMatrix => 2,
         starroom_color_management::InputProfileSource::RawGenericProfile => 4,
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PreviewFrameHeader {
-    width: u32,
-    height: u32,
-    source_width: u32,
-    source_height: u32,
-    tile_x: u32,
-    tile_y: u32,
-    flags: u16,
-}
-
-fn preview_frame(
-    header: PreviewFrameHeader,
-    profile_id: &str,
-    jpeg: Vec<u8>,
-) -> Result<Vec<u8>, String> {
-    let profile_len = u16::try_from(profile_id.len()).map_err(|_| "profile ID is too long")?;
-    let payload_len = u32::try_from(jpeg.len()).map_err(|_| "native preview is too large")?;
-    let mut frame = Vec::with_capacity(40 + profile_id.len() + jpeg.len());
-    frame.extend_from_slice(b"SRP3");
-    frame.extend_from_slice(&3_u16.to_le_bytes());
-    frame.extend_from_slice(&header.flags.to_le_bytes());
-    frame.extend_from_slice(&header.width.to_le_bytes());
-    frame.extend_from_slice(&header.height.to_le_bytes());
-    frame.extend_from_slice(&header.source_width.to_le_bytes());
-    frame.extend_from_slice(&header.source_height.to_le_bytes());
-    frame.extend_from_slice(&header.tile_x.to_le_bytes());
-    frame.extend_from_slice(&header.tile_y.to_le_bytes());
-    frame.extend_from_slice(&profile_len.to_le_bytes());
-    frame.extend_from_slice(&0_u16.to_le_bytes());
-    frame.extend_from_slice(&payload_len.to_le_bytes());
-    frame.extend_from_slice(profile_id.as_bytes());
-    frame.extend_from_slice(&jpeg);
-    Ok(frame)
 }
 
 fn validated_viewport(
@@ -3747,6 +3717,9 @@ fn native_preview_inner(
     ai_denoise_runtime: &NativeAiDenoiseRuntime,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
+    request
+        .payload_format
+        .validate(request.interaction_phase == PreviewInteractionPhase::Interactive)?;
     let source_identity = preview_source_identity(&request.source_path)?;
     let requested_denoise_provider = request.settings.ai_denoise_provider;
     let mut settings = request.settings.validated()?;
@@ -3754,6 +3727,13 @@ fn native_preview_inner(
     attach_generated_masks(&mut settings, &request.source_path, ai_mask_runtime)?;
     let gpu_cache_keys = preview_stage_identity(&source_identity, &settings)?;
     let graph_identity = gpu_cache_keys.display.clone();
+    // Encoded frame identity is separate from unchanged creative/source cache identities.
+    let frame_identity = format!(
+        "{graph_identity}:{}",
+        request
+            .payload_format
+            .cache_identity(request.interaction_phase == PreviewInteractionPhase::Interactive)
+    );
     settings.gpu_cache_keys = Some(gpu_cache_keys);
     let requested_edge = preview_requested_edge(request.max_edge, request.interaction_phase);
     let high_resolution = wants_high_resolution(request.resolution_mode, request.interaction_phase);
@@ -3922,7 +3902,7 @@ fn native_preview_inner(
     }
     let render_decoded = decoded.clone();
     let viewport_cache_key = format!(
-        "{source_identity}:{graph_identity}:{}:{}:{}:{}:{tile_optimized}",
+        "{source_identity}:{frame_identity}:{}:{}:{}:{}:{tile_optimized}",
         viewport.x, viewport.y, viewport.width, viewport.height
     );
     if high_resolution {
@@ -3954,7 +3934,7 @@ fn native_preview_inner(
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())?
         .schedule_preview(
             source_identity,
-            graph_identity,
+            frame_identity,
             source_width,
             source_height,
             requested_edge,
@@ -4050,14 +4030,6 @@ fn native_preview_inner(
     } else {
         (rendered.data, rendered.width, rendered.height)
     };
-    let preview_quality = match request.interaction_phase {
-        PreviewInteractionPhase::Interactive => 88,
-        PreviewInteractionPhase::Final => 96,
-    };
-    let jpeg = profiling::measure(ProfileStage::Encode, 0, || {
-        encode_jpeg_rgb8(&tile_data, tile_width, tile_height, preview_quality, None)
-    })
-    .map_err(|error| format!("native preview encode failed: {error}"))?;
     let original_dimensions = match decoded.as_ref() {
         DecodedSourceImage::Rendered(_) => {
             starroom_imageio::encoded_dimensions(&request.source_path)
@@ -4072,19 +4044,28 @@ fn native_preview_inner(
             }
         }
     };
-    let frame = preview_frame(
-        PreviewFrameHeader {
-            width: tile_width,
-            height: tile_height,
-            source_width: original_dimensions.0,
-            source_height: original_dimensions.1,
-            tile_x: if tile_requested { viewport.x } else { 0 },
-            tile_y: if tile_requested { viewport.y } else { 0 },
-            flags,
-        },
-        profile_id,
-        jpeg,
-    )?;
+    let header = PreviewFrameHeader {
+        width: tile_width,
+        height: tile_height,
+        source_width: original_dimensions.0,
+        source_height: original_dimensions.1,
+        tile_x: if tile_requested { viewport.x } else { 0 },
+        tile_y: if tile_requested { viewport.y } else { 0 },
+        flags,
+    };
+    let frame = profiling::measure(ProfileStage::Encode, 0, || match request.payload_format {
+        PreviewPayloadFormat::Rgba8 => rgba_preview_frame(header, profile_id, &tile_data),
+        PreviewPayloadFormat::Jpeg => {
+            let quality = if request.interaction_phase == PreviewInteractionPhase::Interactive {
+                88
+            } else {
+                96
+            };
+            let jpeg = encode_jpeg_rgb8(&tile_data, tile_width, tile_height, quality, None)
+                .map_err(|error| format!("native preview encode failed: {error}"))?;
+            preview_frame(header, profile_id, jpeg)
+        }
+    })?;
     let estimated_vram_bytes = tile_width as usize * tile_height as usize * 8;
     if !high_resolution {
         let completion = scheduler
@@ -5773,6 +5754,123 @@ mod tests {
     }
 
     #[test]
+    fn actual_lossless_preview_matches_decoded_export_and_separates_transport_cache() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let original = source_content_hash(&source).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let scheduler = NativePreviewScheduler::default();
+        let portrait = NativePortraitRuntime::default();
+        let masks = NativeAiMaskRuntime::default();
+        let denoise = NativeAiDenoiseRuntime::default();
+        for (index, exposure) in [0.0, -1.25, 1.5].into_iter().enumerate() {
+            let edit = || {
+                let mut edit: NativeEditSettings = serde_json::from_str(include_str!(
+                    "../../fixtures/contracts/native-default-settings.json"
+                ))
+                .unwrap();
+                edit.exposure = exposure;
+                edit.shadows = 35.0;
+                edit.highlights = -30.0;
+                edit.saturation = 15.0;
+                edit
+            };
+            let render = |format, phase| {
+                let response = native_preview_inner(
+                    &scheduler,
+                    &portrait,
+                    &masks,
+                    &denoise,
+                    NativePreviewRequest {
+                        request_id: format!("actual-payload-{index}-{format:?}-{phase:?}"),
+                        source_path: source.clone(),
+                        max_edge: 512,
+                        prefer_gpu: false,
+                        payload_format: format,
+                        interaction_phase: phase,
+                        resolution_mode: PreviewResolutionMode::Fit,
+                        viewport: None,
+                        settings: edit(),
+                    },
+                )
+                .unwrap();
+                let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                    tauri::ipc::IpcResponse::body(response).unwrap()
+                else {
+                    panic!("binary response required")
+                };
+                frame
+            };
+            let jpeg88 = render(
+                PreviewPayloadFormat::Jpeg,
+                PreviewInteractionPhase::Interactive,
+            );
+            let rgba = render(
+                PreviewPayloadFormat::Rgba8,
+                PreviewInteractionPhase::Interactive,
+            );
+            let jpeg96 = render(PreviewPayloadFormat::Jpeg, PreviewInteractionPhase::Final);
+            assert_eq!(&jpeg88[..4], b"SRP3");
+            assert_eq!(&rgba[..4], b"SRP4");
+            assert_eq!(&jpeg96[..4], b"SRP3");
+            assert_ne!(
+                jpeg88, jpeg96,
+                "final quality must not hit an interactive JPEG cache"
+            );
+            assert_eq!(
+                rgba,
+                render(
+                    PreviewPayloadFormat::Rgba8,
+                    PreviewInteractionPhase::Interactive
+                )
+            );
+            let request = ProfessionalExportRequest {
+                asset_id: 1,
+                source_path: source.clone(),
+                destination_directory: directory.path().into(),
+                original_name: format!("portrait-{index}"),
+                capture_date: None,
+                rating: 0,
+                keywords: vec![],
+                camera: None,
+                look: None,
+                sequence: index as u32,
+                source_fingerprint: original.clone(),
+                edit_state_identity: format!("actual-payload-{index}"),
+                settings: ExportSettings {
+                    format: starroom_export::ExportFormat::Png,
+                    bit_depth: 8,
+                    ..Default::default()
+                },
+            };
+            let exported = export_one(
+                &NativeSharedGraphRenderer,
+                &request,
+                &edit().validated().unwrap(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let decoded = starroom_imageio::decode_rendered(exported.destination.unwrap()).unwrap();
+            assert!(decoded.embedded_icc.is_some());
+            let width = u32::from_le_bytes(rgba[8..12].try_into().unwrap());
+            let height = u32::from_le_bytes(rgba[12..16].try_into().unwrap());
+            assert_eq!((width, height), (decoded.width, decoded.height));
+            let start = 40 + u16::from_le_bytes(rgba[32..34].try_into().unwrap()) as usize;
+            let exported_bytes: Vec<u8> = decoded
+                .rgba
+                .iter()
+                .map(|sample| (sample * 255.0).round() as u8)
+                .collect();
+            assert_eq!(
+                &rgba[start..],
+                exported_bytes,
+                "real binary preview versus decoded PNG export"
+            );
+        }
+        assert_eq!(source_content_hash(&source).unwrap(), original);
+    }
+
+    #[test]
     fn actual_native_preview_reuses_prepared_pixels_across_exposure_requests() {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
@@ -5794,6 +5892,7 @@ mod tests {
                 &denoise,
                 NativePreviewRequest {
                     request_id: format!("prepared-pixels-{index}"),
+                    payload_format: PreviewPayloadFormat::Jpeg,
                     source_path: source.clone(),
                     max_edge: 128,
                     prefer_gpu: false,
@@ -5902,6 +6001,7 @@ mod tests {
                 &NativeAiDenoiseRuntime::default(),
                 NativePreviewRequest {
                     request_id: request_id.into(),
+                    payload_format: PreviewPayloadFormat::Jpeg,
                     source_path: source.clone(),
                     max_edge: 128,
                     prefer_gpu,
@@ -7264,6 +7364,7 @@ mod tests {
                         &denoise,
                         NativePreviewRequest {
                             request_id: request_id.into(),
+                            payload_format: PreviewPayloadFormat::Jpeg,
                             source_path: source.clone(),
                             max_edge: 1800,
                             prefer_gpu: true,
@@ -7304,6 +7405,7 @@ mod tests {
                 NativePreviewRequest {
                     request_id: request_id.into(),
                     source_path: raw_source.clone(),
+                    payload_format: PreviewPayloadFormat::Jpeg,
                     max_edge: 1800,
                     prefer_gpu: true,
                     interaction_phase: PreviewInteractionPhase::Final,

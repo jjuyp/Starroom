@@ -93,6 +93,8 @@ export const targets = {
       ['test', '--locked', '-p', 'starroom-imageio', 'region'],
       ['test', '--locked', '-p', 'starroom-desktop', 'viewport'],
       ['test', '--locked', '-p', 'starroom-desktop', 'binary_preview_contract'],
+      ['test', '--locked', '-p', 'starroom-desktop', 'preview_transport'],
+      ['test', '--locked', '-p', 'starroom-desktop', 'actual_lossless_preview'],
     ],
     web: ['src/nativeRender.test.ts'],
     golden: ['raw', 'detail', 'geometry', 'portrait', 'landscape', 'hdr'],

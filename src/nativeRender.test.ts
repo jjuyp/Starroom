@@ -38,6 +38,49 @@ describe('Library export selection contract', () => {
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
 describe('native preview contract', () => {
+  const rgbaFrame = () => {
+    // Nonzero view offset and odd UTF-8 profile length must not imply aligned pixel storage.
+    const profile = new TextEncoder().encode('相機')
+    const storage = new Uint8Array(3 + 40 + profile.length + 8)
+    const frame = storage.subarray(3)
+    frame.set([83, 82, 80, 52])
+    const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength)
+    view.setUint16(4, 4, true)
+    view.setUint16(6, 8, true)
+    for (const [offset, value] of [[8, 2], [12, 1], [16, 2], [20, 1]]) view.setUint32(offset, value, true)
+    view.setUint16(32, profile.length, true)
+    view.setUint16(34, 1, true)
+    view.setUint32(36, 8, true)
+    frame.set(profile, 40)
+    frame.set([0, 128, 255, 255, 255, 2, 17, 255], 40 + profile.length)
+    return frame
+  }
+  it('parses lossless interactive RGBA8 without copying the response pixel buffer', () => {
+    const frame = rgbaFrame()
+    const result = parseNativePreviewFrame(frame)
+    expect(result.payload.format).toBe('rgba8')
+    expect(result.payload.bytes.buffer).toBe(frame.buffer)
+    expect(Array.from(result.payload.bytes)).toEqual([0, 128, 255, 255, 255, 2, 17, 255])
+    expect(result.cameraProfileId).toBe('相機')
+    expect(result.acceleration).toBe('gpu')
+  })
+  it('rejects invalid RGBA format/version, truncation, source bounds and unbounded frames', () => {
+    for (const corrupt of [
+      (view: DataView) => view.setUint16(4, 3, true),
+      (view: DataView) => view.setUint16(34, 0, true),
+      (view: DataView) => view.setUint32(36, 7, true),
+      (view: DataView) => view.setUint32(8, 0, true),
+      (view: DataView) => view.setUint32(24, 1, true),
+      (view: DataView) => { view.setUint32(8, 1025, true); view.setUint32(16, 1025, true) },
+    ]) {
+      const frame = rgbaFrame()
+      corrupt(new DataView(frame.buffer, frame.byteOffset, frame.byteLength))
+      expect(() => parseNativePreviewFrame(frame)).toThrow()
+    }
+    const frame = rgbaFrame()
+    expect(() => parseNativePreviewFrame(frame.subarray(0, 39))).toThrow()
+    expect(() => parseNativePreviewFrame(frame.subarray(0, frame.length - 1))).toThrow()
+  })
   it('requests full source resolution for 1:1/high zoom while retaining a bounded Fit tier', () => {
     expect(nativePreviewViewportContract('fit', 1, 6000, 4000)).toEqual({ resolutionMode: 'fit', maxEdge: 1800, viewport: null })
     expect(nativePreviewViewportContract('fit', 1, 6000, 4000, undefined, 900)).toEqual({ resolutionMode: 'fit', maxEdge: 1800, viewport: null })
@@ -77,7 +120,7 @@ describe('native preview contract', () => {
       acceleration: 'cpuFallback',
       inputProfile: 'resolved RAW camera profile',
       cameraProfileId: 'dng-forward-matrix:test:camera',
-      jpeg: payload,
+      payload: { format: 'jpeg', bytes: payload },
     })
   })
 

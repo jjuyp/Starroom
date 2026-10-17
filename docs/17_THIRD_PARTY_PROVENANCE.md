@@ -4,6 +4,12 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-17 interactive transport (doc56): Starroom-authored bounded SRP4 packing uses
+the existing shared Native/LCMS output; presentation uses browser-native ImageData and
+ImageBitmap, not a new color/codec dependency or upstream code port. Final JPEG uses
+the unchanged pinned codec. Lockfiles, model distribution and notices are unchanged.
+The measurement reuses the existing CC0 Fujifilm fixture; no new photographic asset.
+
 2026-10-17 encoded storage/gamut scratch review (doc55): existing pinned LittleCMS continues
 all ICC/WB transforms and proofing without algorithm, source, version or license changes.
 Only Starroom-authored Vec ownership and scratch lifetimes change. No dependency/model/code

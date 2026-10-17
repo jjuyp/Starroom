@@ -1,5 +1,25 @@
 # Current Task
 
+2026-10-17 next accepted local group: real interactive PhotoCanvas explicitly requests
+bounded lossless SRP4/RGBA8, maximum1024; Final/HQ retains SRP3/JPEG96 and legacy JPEG88
+remains explicit. Separate frame format/quality identity fixes cache mixing, without changing
+source/prepared/GPU creative cache keys. Native actual portrait binary matches decoded ICC
+PNG export exactly for three edited states, source unchanged. RGBA byte parser validates
+dimensions/format/length/source bounds, borrows pixels; ImageBitmap/URL cleanup is finally-safe.
+Actual RAW Chromium production parser/decoder/canvas has zero byte differences and22/22
+released bitmaps. Doc56 records MSVC Release Native encode/packing15.5737→1.1822ms and
+browser decode/draw/readback7.35→2.8ms arithmetic medians, retained20 samples;14.1x bigger
+payload means Tauri IPC/input-to-present remains unqualified. Native baseline report
+preview-transport-1792232141662 selected upper median; doc corrects via original samples;
+probe definitions now use central-pair mean and actual backend/profile flags.
+Full Rust1792232440212 PASS (460 registered/456 ordinary/four opt-in excluded) and Full
+Web1792232203917 PASS216. Later diagnostic/config changes pass targeted Clippy/ESLint/
+infrastructure. All local processes terminal, both Vite servers and owned browser closed.
+f73745f is current remote: Full39023204842 still artifact-upload last observed, secondary
+39023207843 SUCCESS. Do not cancel a valuable acceptance run with a new push. Focused
+transport commit can be local while continuing independent work. PR#2 Open/Draft; no new
+installer, Final/tag/main merge. All original Production phases and remaining gates stay active.
+
 2026-10-17 resume: current storage/scratch worktree has local Full Rust1792078304648 PASS
 (457 registered/453 ordinary/four opt-in excluded) and Full Web1792077863686 PASS (213 tests).
 Expired handle17584 is terminal/missing, not live; completed report is authoritative. No other

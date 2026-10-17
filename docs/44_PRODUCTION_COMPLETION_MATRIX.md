@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-17 transport group (doc56): actual interactive PhotoCanvas now uses bounded
+lossless SRP4/RGBA8; Final JPEG96 unchanged. Encoded frame cache keys separate format/
+quality. Actual portrait preview equals decoded ICC PNG export; actual RAW Chromium
+canvas is byte exact and resources close. Native packing15.604→1.1843ms; browser
+decode/draw/readback7.4→2.8ms, but payload14.1x larger and Tauri IPC/OS/input-to-present
+not measured. No GPU-residency/completePhase14/16/30, alpha or installed acceptance.
+
 2026-10-17 resumed storage group: interrupted local Full report1792078304648 is terminal/pass,
 457 registered/453 ordinary/four opt-in excluded; Web1792077863686 passes213 tests. Encoded
 one-flat LCMS/WB storage and reused gamut scratch preserve former f32 bits (doc55), with typed

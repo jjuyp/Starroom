@@ -371,7 +371,7 @@ export interface NativePreviewResult {
   acceleration: 'gpu' | 'cpuFallback'
   inputProfile: 'embedded ICC' | 'assumed sRGB' | 'resolved RAW camera profile' | 'Generic RAW Profile'
   cameraProfileId: string | null
-  jpeg: Uint8Array
+  payload: { format: 'jpeg' | 'rgba8'; bytes: Uint8Array }
 }
 export type NativeAdvisorCategory = 'light' | 'whiteBalance' | 'color' | 'detail' | 'portrait'
 export type NativeAdvisorConfidence = 'low' | 'medium' | 'high'
@@ -514,12 +514,19 @@ export function toNativeSettings(adjustments: Adjustments, curve: ToneCurvePoint
 
 export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): NativePreviewResult {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
-  if (bytes.byteLength < HEADER_BYTES || String.fromCharCode(...bytes.subarray(0, 4)) !== 'SRP3') {
+  const magic = String.fromCharCode(...bytes.subarray(0, 4))
+  if (bytes.byteLength < HEADER_BYTES || (magic !== 'SRP3' && magic !== 'SRP4')) {
     throw new Error('Native preview returned an invalid binary frame.')
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const version = view.getUint16(4, true)
-  if (version !== 3) throw new Error(`Unsupported native preview contract version ${version}.`)
+  if ((magic === 'SRP3' && version !== 3) || (magic === 'SRP4' && version !== 4)) {
+    throw new Error(`Unsupported native preview contract version ${version}.`)
+  }
+  const encoding = view.getUint16(34, true)
+  if ((version === 3 && encoding !== 0) || (version === 4 && encoding !== 1)) {
+    throw new Error('Native preview returned an unsupported payload encoding.')
+  }
   const flags = view.getUint16(6, true)
   const width = view.getUint32(8, true)
   const height = view.getUint32(12, true)
@@ -533,6 +540,9 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
     || tileX + width > sourceWidth || tileY + height > sourceHeight
     || HEADER_BYTES + profileLength + payloadLength !== bytes.byteLength) {
     throw new Error('Native preview returned inconsistent dimensions or payload length.')
+  }
+  if (version === 4 && (width > 1024 || height > 1024 || payloadLength !== width * height * 4)) {
+    throw new Error('Native preview returned invalid bounded RGBA8 dimensions or sample count.')
   }
   const profileStart = HEADER_BYTES
   const payloadStart = profileStart + profileLength
@@ -553,7 +563,8 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
       : flags & 2 ? 'resolved RAW camera profile'
         : flags & 1 ? 'embedded ICC' : 'assumed sRGB',
     cameraProfileId,
-    jpeg: bytes.slice(payloadStart),
+    // View the owned binary response; do not copy a full frame merely to parse its envelope.
+    payload: { format: version === 4 ? 'rgba8' : 'jpeg', bytes: bytes.subarray(payloadStart) },
   }
 }
 
@@ -787,7 +798,9 @@ export async function renderNativePreview(
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
   const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
-      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
+      request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport,
+        payloadFormat: interactionPhase === 'interactive' ? 'rgba8' : 'jpeg',
+        settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
     }), () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)

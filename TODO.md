@@ -2,6 +2,13 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Accept bounded lossless interactive Native transport (doc56): actual UI requests
+  SRP4/RGBA8, final/HQ JPEG96 unchanged; encoding+quality cache identity is explicit.
+  Real portrait preview equals actual decoded ICC PNG export; actual RAW browser canvas
+  byte differences0. Native packing15.604→1.1843ms; browser7.4→2.8ms, measured separately.
+  Full Web216 and Full Rust460 registered/456 ordinary pass; remote pending. Larger IPC payload and installed full
+  input-to-present latency remain unqualified; no Final/whole-product completion claim.
+
 - [ ] Remote acceptance for encoded one-flat working pixels and reused gamut scratch (doc55).
   Full local Rust457 registered/453 ordinary and Web213 pass; same f32 bits/typed semantics.
   Packing improves but whole portrait observations regress; no overall speedup claim. Full
