@@ -1,5 +1,19 @@
 # Current Task
 
+2026-10-17 latest: transport21800795df0d120c2803eea593beaec079d51735 is pushed;
+PR#2 Open/Draft. Own Full39025065770 running, secondary39025069734 SUCCESS; do not
+cancel it with another push. Prior f73745f Full39023204842 completed SUCCESS.
+Independent current two-code-file instrumentation adds OutputGamut child without
+changing inclusive ColorTransform/pixels/cache keys. Existing exact profile test
+checks child/parent executions/duration; targeted Clippy passes. Doc57 captures real
+MSVC Release RAW1024 reportcolor-latency-1792232896259-28552: Exposure CMM24.9256ms,
+gamut4.8941ms, residualLCMS/checks20.0315ms; GPUhardware.129024ms. All54 CPU/GPUdelta<=1,
+source unchanged; no full pointer-to-present claim or erasure of doc54>100ms outliers.
+Official LCMS pinned Fast Float source is reviewed only, NOT compiled/registered;
+its sampled matrix-shaper outside-interval TRC return behavior needs independent
+precision/HDR validation before integration. No new dependency/license/runtime change.
+All local test/probe/server/browser sessions terminal. Continue all original phases.
+
 2026-10-17 next accepted local group: real interactive PhotoCanvas explicitly requests
 bounded lossless SRP4/RGBA8, maximum1024; Final/HQ retains SRP3/JPEG96 and legacy JPEG88
 remains explicit. Separate frame format/quality identity fixes cache mixing, without changing

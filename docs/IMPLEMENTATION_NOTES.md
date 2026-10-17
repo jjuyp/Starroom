@@ -1,5 +1,19 @@
 # Implementation Notes
 
+## 2026-10-17 — Actual output color timing decomposition
+
+Doc57 separates existing gamut proof/search as an OutputGamut child, preserving
+the inclusive ColorTransform parent, total wall time and all pixels/cache identities.
+Existing exact-pixel profile regression now verifies both measurements and execution
+counts; targeted test/Clippy pass. Actual MSVC Release RAW1024 Exposure reports
+24.9256ms inclusive CMM,4.8941ms gamut and20.0315ms residual LCMS/checks versus0.129024ms
+hardware GPU pass. This is a bottleneck measurement, not an optimization speed claim.
+All54 requests match CPU delta<=1, original unchanged; earlier >100ms outliers remain.
+Official pinned Fast Float is reviewed but NOT integrated: sampled/unbounded TRC
+behavior requires precision validation; no global plugin or weaker color math added.
+Full acceptance of parent transport commit2180079 is running remotely (39025065770),
+secondary39025069734 succeeded. Parent f73745f Full39023204842 completed SUCCESS.
+
 ## 2026-10-17 — Bounded lossless interactive preview presentation
 
 Doc56 records real PhotoCanvas -> Native SRP4/RGBA8 -> ImageBitmap presentation,

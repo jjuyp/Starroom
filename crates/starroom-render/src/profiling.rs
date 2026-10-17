@@ -23,6 +23,9 @@ pub enum ProfileStage {
     Healing,
     Resize,
     ColorTransform,
+    /// Child of ColorTransform: destination-gamut proof/search only. Do not add it to its
+    /// inclusive parent when aggregating elapsed time; total_cpu_nanoseconds is wall time.
+    OutputGamut,
     Encode,
 }
 

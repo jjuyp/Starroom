@@ -2,6 +2,11 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Use real inclusive-CMM/gamut-child profiling (doc57) to finish the remaining
+  output-transform and full input-to-present latency gate. Actual RAW Exposure's
+  CMM24.9256ms includes gamut4.8941ms, leaving20.0315ms LCMS/checks; GPU hardware.129ms.
+  No weaker TRC/HDR approximation is enabled; older >100ms outliers remain retained.
+
 - [ ] Accept bounded lossless interactive Native transport (doc56): actual UI requests
   SRP4/RGBA8, final/HQ JPEG96 unchanged; encoding+quality cache identity is explicit.
   Real portrait preview equals actual decoded ICC PNG export; actual RAW browser canvas

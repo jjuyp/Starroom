@@ -2173,12 +2173,14 @@ fn render_prepared_working_graph(
     let pixels = output.as_chunks_mut::<3>().0;
     checkpoint()?;
     let output_source = profiling::measure(ProfileStage::ColorTransform, working_bytes, || {
-        starroom_color_management::map_output_gamut(
-            pixels,
-            output_icc,
-            settings.color_management.intent,
-            settings.color_management.black_point_compensation,
-        )?;
+        profiling::measure(ProfileStage::OutputGamut, working_bytes, || {
+            starroom_color_management::map_output_gamut(
+                pixels,
+                output_icc,
+                settings.color_management.intent,
+                settings.color_management.black_point_compensation,
+            )
+        })?;
         LittleCmsProvider.working_to_output(
             pixels,
             output_icc,
@@ -5708,10 +5710,16 @@ mod tests {
             ProfileStage::Detail,
             ProfileStage::Geometry,
             ProfileStage::ColorTransform,
+            ProfileStage::OutputGamut,
         ] {
             assert!(profile.stages.contains_key(&stage), "missing {stage:?}");
         }
         assert!(profile.total_cpu_nanoseconds > 0);
+        let color = &profile.stages[&ProfileStage::ColorTransform];
+        let gamut = &profile.stages[&ProfileStage::OutputGamut];
+        assert_eq!(color.executions, 1);
+        assert_eq!(gamut.executions, 1);
+        assert!(gamut.cpu_nanoseconds <= color.cpu_nanoseconds);
         assert!(profile.peak_working_bytes >= 3 * 3 * size_of::<f32>() as u64);
     }
 
