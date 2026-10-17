@@ -7325,13 +7325,8 @@ mod tests {
         if std::env::var_os("STARROOM_RC2_PERFORMANCE_GATE").is_none() {
             return;
         }
-        let root = std::env::temp_dir().join(format!(
-            "starroom-rc2-preview-performance-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let source = root.join("24mp.jpg");
+        let root = tempfile::tempdir().expect("exclusive performance fixture directory");
+        let source = root.path().join("24mp.jpg");
         let (source_width, source_height) = (6000_u32, 4000_u32);
         let mut rgb = Vec::with_capacity(source_width as usize * source_height as usize * 3);
         for y in 0..source_height {
@@ -7348,6 +7343,15 @@ mod tests {
                 .expect("24 MP fixture encode");
         std::fs::write(&source, encoded).unwrap();
         drop(rgb);
+        let source_hash = source_content_hash(&source).unwrap();
+        let interactive_format = match std::env::var("STARROOM_PREVIEW_PERF_FORMAT").as_deref() {
+            Ok("jpeg") => PreviewPayloadFormat::Jpeg,
+            Ok("rgba8") | Err(_) => PreviewPayloadFormat::Rgba8,
+            Ok(other) => panic!("invalid explicit performance transport {other}"),
+        };
+        eprintln!(
+            "NATIVE_PREVIEW_PAYLOAD_FORMAT interactive={interactive_format:?} final=Jpeg96 scope=native_request_excludes_ipc_and_presentation"
+        );
 
         let scheduler = NativePreviewScheduler::default();
         let portrait = NativePortraitRuntime::default();
@@ -7364,7 +7368,13 @@ mod tests {
                         &denoise,
                         NativePreviewRequest {
                             request_id: request_id.into(),
-                            payload_format: PreviewPayloadFormat::Jpeg,
+                            payload_format: if interaction_phase
+                                == PreviewInteractionPhase::Interactive
+                            {
+                                interactive_format
+                            } else {
+                                PreviewPayloadFormat::Jpeg
+                            },
                             source_path: source.clone(),
                             max_edge: 1800,
                             prefer_gpu: true,
@@ -7375,7 +7385,24 @@ mod tests {
                         },
                     )
                 });
-                result.expect("native preview");
+                let response = result.expect("native preview");
+                let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                    tauri::ipc::IpcResponse::body(response).unwrap()
+                else {
+                    panic!("binary Native response expected")
+                };
+                let magic: &[u8] = if interaction_phase == PreviewInteractionPhase::Interactive
+                    && interactive_format == PreviewPayloadFormat::Rgba8
+                {
+                    b"SRP4"
+                } else {
+                    b"SRP3"
+                };
+                assert_eq!(
+                    &frame[..4],
+                    magic,
+                    "actual requested transport, not stale frame cache"
+                );
                 (started.elapsed(), profile)
             };
 
@@ -7477,7 +7504,7 @@ mod tests {
             "warmed interactive response {interactive:?} must beat cold open {first:?}"
         );
         eprintln!(
-            "GPU_RESIDENT_PREVIEW_PERF jpeg_first_fit_ms={:.3} jpeg_cached_reopen_ms={:.3} raw_first_fit_ms={:.3} raw_cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
+            "NATIVE_REQUEST_PREVIEW_PERF jpeg_first_fit_ms={:.3} jpeg_cached_reopen_ms={:.3} raw_first_fit_ms={:.3} raw_cached_reopen_ms={:.3} interactive_ms={:.3} final_refine_ms={:.3} tile_100_ms={:.3} tile_200_ms={:.3}",
             first.as_secs_f64() * 1000.0,
             reopen.as_secs_f64() * 1000.0,
             raw_first.as_secs_f64() * 1000.0,
@@ -7488,7 +7515,7 @@ mod tests {
             tile_200.as_secs_f64() * 1000.0,
         );
         eprintln!(
-            "GPU_RESIDENT_STAGE_BREAKDOWN interactive={} final={} tile100={} tile200={}",
+            "NATIVE_REQUEST_STAGE_BREAKDOWN interactive={} final={} tile100={} tile200={}",
             serde_json::to_string(&interactive_profile).unwrap(),
             serde_json::to_string(&refine_profile).unwrap(),
             serde_json::to_string(&tile_100_profile).unwrap(),
@@ -7612,7 +7639,7 @@ mod tests {
                 samples[2], samples[4]
             );
         }
-        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(source_content_hash(&source).unwrap(), source_hash);
     }
 
     #[test]

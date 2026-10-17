@@ -1,5 +1,24 @@
 # Current Task
 
+2026-10-17 Native-request benchmark group is locally accepted, doc58: exclusive
+tempfile, explicit diagnosticJPEG versus actual UI-defaultRGBA, binary magic and
+changed-state assertions/source hash, honest non-resident labels, MSVC/compiler/
+key-source hashes and reject source changes during timing. Sequential reports
+native-preview-jpeg-1792233936000 / rgba8-1792233954272 use same compiled binary;
+retain earlier contention reports too. Twenty-seven changed controls measured;
+Exposure64.679/65.771→55.829/57.482ms, but RGBA detail180–430ms remains failure.
+Current remote1b40115 Full39026042794 and secondary39026047189 are SUCCESS (CI1.99
+Clippy slice repair accepted). PR remainsOpen/Draft. Benchmark/docs can be committed
+separately from current uncommitted detail optimization, no immediate push storm.
+Current detail changes use pinned Rayon, exact frozen pre-change oracle (debug and
+MSVCRelease), shared neighbor-address reuse/weights and no-op Off finishing. Latest
+detail/shared/Golden/GPU/format/workspaceClippy milestone1792234814420 PASS; previous
+parallel-only measurement1792234433114 still had100–122ms detail. Latest optimized
+MSVCRelease Native binary compile session88313 is LIVE; no final after-Off timing yet.
+No other local sessions active. Do not change Rust sources during upcoming measured
+run. The original31-phase Production goal, photographic/alpha/monitor/residency/
+100MP/installed and full input-to-present gates remain active; no installer/Final tag.
+
 2026-10-17 latest CI repair: transport2180079 Full39025065770 FAILED on Clippy1.99
 constant-size chunks_exact (local1.97.1). All three uses become as_chunks arrays;
 transport and actual decoded-export regressions plus targeted Clippy pass unchanged.

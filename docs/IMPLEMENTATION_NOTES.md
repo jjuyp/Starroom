@@ -1,5 +1,18 @@
 # Implementation Notes
 
+## 2026-10-17 — Real27-control Native request benchmark
+
+Doc58 records both retained first/contention observations and sequential same-binary
+JPEG/RGBA results on an actual generated24MP source. Native exposure64.679/65.771ms
+median/p95→55.829/57.482ms; full27-control table retained, including RGBA spatial
+180–430ms failures of the100ms target. No mock/no identical-frame cache speed claim.
+The explicit release runner saves full output/failure/revision/dirty/compiler/source
+hashes, enforces MSVC and rejects key source changes during timing. Test now uses
+exclusive tempfile/source immutability/binary format assertions and honest Native
+request labels. Default matches actual UI RGBA; Final/HQ remains JPEG96. No IPC/OS
+presentation acceptance is implied. Corrected transport1b40115 Full39026042794 and
+secondary39026047189 completed SUCCESS; previous Clippy failure is retained.
+
 ## 2026-10-17 — CI1.99 fixed-size slice compatibility
 
 Transport2180079 Full39025065770 failed at warning-denied Clippy1.99 (local1.97.1):
