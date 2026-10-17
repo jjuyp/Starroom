@@ -1,5 +1,20 @@
 # Current Task
 
+2026-10-17 latest: RAW unbounded resampling group doc60 is locally accepted. Full
+Rust1792237107318 PASS466registered/462ordinary/four opt-in excluded, Web1792236859080
+PASS218/30files, license561/6/269. New3 sampler units + actual LibRaw->16x16 blue>3
+pass; real RAW MSVCRelease report1792236711783-13592 has54 CPU/GPU comparisons delta<=1,
+unchanged source, Native nine-control medians45.839–53.152ms/p95<=58.990ms. Original
+upstream clamp diagnostic retained; mature image0.25.10 Lanczos3 adapted underMIT,
+policyv8 invalidates prior derived pixels. Commit this focused batch, own remote
+pending. Current remoteHEADddbdef8 Full39028054270 remains running only cache post-step,
+secondary39028057407 SUCCESS; PR#2Open/Draft. Do not cancel a useful run with push.
+All local test/probe sessions terminal, no app/browser/server launched. Next: capture
+first-interactive cold-tier decode in existing Native benchmark BEFORE changing cache,
+then derive bounded lower interactive tiers from immutable higher cached previews,
+keeping Final/export independent, profile semantics and honest full-quality refinement.
+Full original31-phase Production goal remains active; no new installer/Final claim.
+
 2026-10-17 latest: detail/Off worktree has complete local ordinary acceptance, doc59.
 Full Rust1792235622485 PASS format/workspaceClippy/tests/doc-tests (462 registered/458
 ordinary/four opt-in excluded); Full Web1792235436963 PASS216, all license gates pass.

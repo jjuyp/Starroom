@@ -10,6 +10,14 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-17 RAW resize group (doc60): real upstream float sampler clamped negative/>1
+working RGB. Adapted mature Lanczos3 preserves unbounded RAW values, checked/fallible
+buffers and original weights/order. Actual authored sensor->16x16 retains blue>3;
+sampler bounded bits match upstream. RAW/shared/photographic/GPU milestone passes;
+MSVCRelease real RAW54 comparisons delta<=1, unchanged source. Full ordinary Rust462/
+Web218/license pass; own remote pending.
+No completePhase1/6/10/14/16/19/20/25/26/30, alpha or installed acceptance is implied.
+
 2026-10-17 detail group (doc59): original spatial algorithms now use existing Rayon and
 shared neighbor addresses/weights, verified against a frozen serial reference bit-for-bit
 across588 cases/1-2-4threads and MSVCRelease. Grain/vignette Off is a real no-op with finite

@@ -16,7 +16,8 @@ const categoryFor = (diagnostic: string): ErrorCategory => {
     || value.includes('cropallocation') || value.includes('crop allocation exceeded available memory')
     || value.includes('rawworkingallocation') || value.includes('raw working allocation exceeded available memory')
     || value.includes('encodedworkingallocation') || value.includes('encoded working allocation exceeded available memory')
-    || value.includes('previewtransportallocation')) return 'Memory'
+    || value.includes('previewtransportallocation') || value.includes('resizeallocation')
+    || value.includes('resize allocation exceeded available memory')) return 'Memory'
   if (value.includes('permission') || value.includes('access denied')) return 'Permission'
   if (value.includes('curvepreview') || value.includes('native_curve_preview') || value.includes('littlecms')) return 'Color'
   if (['whitebalance', 'white-balance', 'neutral-picker', 'chromatic adaptation', 'invalidwhitepoint'].some((term) => value.includes(term))) return 'Color'

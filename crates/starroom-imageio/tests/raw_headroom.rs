@@ -324,6 +324,29 @@ fn actual_libraw_analog_balance_reaches_camera_transform_and_metadata_round_trip
 }
 
 #[test]
+fn real_sensor_headroom_survives_actual_imageio_preview_downsampling() {
+    use starroom_imageio::{DecodedSourceImage, decode_source_preview};
+    let fixture = fixture::controlled_fixture().unwrap();
+    let original = std::fs::read(&fixture.0).unwrap();
+    let decoded = starroom_raw::decode_raw_preview(&fixture.0).unwrap();
+    assert!(decoded.width > 16 && decoded.height > 16);
+    let DecodedSourceImage::Raw(preview) = decode_source_preview(&fixture.0, 16).unwrap() else {
+        panic!("sensor input must remain sensor-derived RAW")
+    };
+    assert_eq!((preview.width, preview.height), (16, 16));
+    assert_eq!(preview.metadata, decoded.metadata);
+    assert_eq!(preview.preview_half_size, decoded.preview_half_size);
+    assert!(preview.rgb.iter().all(|sample| sample.is_finite()));
+    let last_blue =
+        preview.rgb[((preview.height / 2 * preview.width + preview.width - 1) * 3 + 2) as usize];
+    assert!(
+        last_blue > 3.0,
+        "actual RAW preview must not plateau at1: {last_blue}"
+    );
+    assert_eq!(original, std::fs::read(&fixture.0).unwrap());
+}
+
+#[test]
 fn real_libraw_preserves_unsaturated_sensor_wb_headroom_and_declared_white_level() {
     let fixture = fixture::controlled_fixture().unwrap();
     let original = std::fs::read(&fixture.0).unwrap();

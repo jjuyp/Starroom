@@ -13,6 +13,8 @@ describe('typed production error presentation', () => {
     'RAW working allocation exceeded available memory (300000000 float samples)',
     'EncodedWorkingAllocation: 300000000 float samples',
     'PreviewTransportAllocation: insufficient memory for binary preview frame',
+    'ResizeAllocation: 300000000 float samples',
+    'native preview decode failed: unbounded preview resize allocation exceeded available memory (300000000 float samples)',
     'encoded working allocation exceeded available memory (300000000 float samples)'])('classifies crop memory failure before RAW wrapping without losing detail: %s', (diagnostic) => {
     expect(presentError(diagnostic, '預覽失敗')).toEqual({ category: 'Memory', diagnostic,
       message: 'Starroom 沒有足夠的記憶體執行這項操作。' })

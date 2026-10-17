@@ -2,6 +2,14 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Complete local/remote acceptance of unbounded RAW preview resampling (doc60).
+  Real upstream counterexample clips[-.25,1.5,4] to[0,1,1]; adapted pinned Lanczos3
+  preserves scene-linear values, typed errors and unchanged sensor/profile semantics.
+  Actual authored DNG16x16 blue>3, real RAW54 CPU/GPU comparisons delta<=1, sampler
+  bit-exact bounded oracles and RAW/shared/Golden milestone pass. Full Rust462 ordinary
+  and Web218/license gates pass; own remote acceptance pending.
+  This precedes cached lower-tier derivation; no new photographic/Final claim.
+
 - [ ] Remote acceptance of exact detail scheduling/Off finishing (doc59). Existing Rayon,
   frozen serial588 function comparisons in1/2/4 threads, MSVC Release exact bits, same
   algorithms/precision. Actual24MP Native sharpen180.705→70.964ms, lumaNR421.432→100.008ms

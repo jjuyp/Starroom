@@ -3870,6 +3870,7 @@ dependencies = [
  "crc32fast",
  "image",
  "kamadak-exif",
+ "rayon",
  "serde",
  "serde_json",
  "starroom-color-management",

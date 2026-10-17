@@ -4,6 +4,23 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-17 RAW resample review: `crates/starroom-imageio/src/unbounded_resize.rs` directly
+adapts the mature sinc/Lanczos3 and vertical/horizontal sampler from image-rs/image0.25.10,
+source commit `76e57184f22772dad1138e96954e57945406b15e`, `src/imageops/sample.rs`
+SHA256 `f5dd7c0697010b8f5e8dd6d92b82294dd38ed364b8df6a575ca0b5fa8c212641`.
+Upstream: https://github.com/image-rs/image/tree/76e57184f22772dad1138e96954e57945406b15e .
+Purpose: retain negative/>1 scene-linear RAW RGB during preview downsampling; actual
+upstream8x8→2x2 proof changes[-.25,1.5,4] to[0,1,1]. **Direct adaptation / binary: yes**.
+MIT selected from MIT OR Apache-2.0; no new upstream package/version or network runtime.
+The source retains license text and THIRD_PARTY_NOTICES identifies changes; existing
+bundled image license texts cover redistribution. Low risk with notices/source retained.
+Adapter changes only opaqueRGB/f32 final clamp policy, typed shape/finite/allocation
+guards, shared weights and independent row scheduling; not a new/weaker filter. Input
+format parsing, LibRaw sensor/WB/demosaic/camera matrices remain untouched. Decode policy
+v8 invalidates prior preview/library/export identities explicitly. Existing Rayon1.12.0
+is added as an imageio dependency edge; regenerated lockfile license report verifies
+561Rust/6npm/269notice texts.
+
 2026-10-17 detail scheduling: `starroom-detail` now directly uses the already pinned
 Rayon1.12.0 public parallel iterators (same MIT OR Apache-2.0 row below). No new upstream
 package/version/source, pixel algorithm or image engine. Only independent row/pixel

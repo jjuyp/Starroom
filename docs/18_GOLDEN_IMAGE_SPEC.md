@@ -1,5 +1,16 @@
 # Golden Image regression specification
 
+## Unbounded RAW preview resampling (2026-10-17)
+
+The existing authored sensor manifest additionally registers `unboundedPreviewResampling`.
+Actual `decode_source_preview` must retain >3.0 working blue after LibRaw half decode and
+16x16 downsampling, preserve metadata and leave original DNG bytes unchanged. Unit tests
+compare the adapted mature Lanczos3 sampler bit-for-bit with pinned image0.25.10 where
+no clamp is required; negative/HDR constant fields and exposure scaling remain unbounded.
+The original upstream clamp counterexample is retained as an executable diagnostic.
+This closes one intermediate clipping defect, not all RAW photographic IQ, alpha,
+monitor, HDR display, proxy-versus-full spatial equivalence or whole-product acceptance.
+
 ## Primary DNG inverse-white oracle (2026-10-11)
 
 CameraNeutral now drives a bounded CC/CM inverse-white/CCT iteration instead of an assumed

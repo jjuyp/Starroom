@@ -3,13 +3,13 @@
 //! encoded sample values, and exposes embedded metadata so color management can happen explicitly.
 
 use image::{
-    DynamicImage, ExtendedColorType, ImageBuffer, ImageDecoder, ImageEncoder, ImageFormat,
-    ImageReader, Rgb,
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader,
 };
 use serde::{Deserialize, Serialize};
 use starroom_raw::{DecodedRawImage, RawDecodeError, RawFormat, decode_raw, decode_raw_preview};
 use std::{io::Cursor, path::Path};
 use thiserror::Error;
+mod unbounded_resize;
 
 #[derive(Debug, Error)]
 pub enum ImageIoError {
@@ -25,6 +25,14 @@ pub enum ImageIoError {
     InvalidCrop,
     #[error("image crop allocation exceeded available memory ({samples} float samples)")]
     CropAllocation { samples: usize },
+    #[error(
+        "unbounded preview resize allocation exceeded available memory ({samples} float samples)"
+    )]
+    ResizeAllocation { samples: usize },
+    #[error("preview resize dimensions are empty or overflow")]
+    InvalidResizeDimensions,
+    #[error("preview resize requires finite input, weights and output")]
+    NonFiniteResize,
     #[error("TIFF metadata encoder failed: {0}")]
     TiffMetadata(String),
     #[error("container metadata encoder failed: {0}")]
@@ -289,26 +297,23 @@ pub fn is_raw_source(path: impl AsRef<Path>) -> bool {
     raw_format(path.as_ref())
 }
 
-fn resize_raw_preview(mut image: DecodedRawImage, max_edge: u32) -> DecodedRawImage {
+fn resize_raw_preview(
+    mut image: DecodedRawImage,
+    max_edge: u32,
+) -> Result<DecodedRawImage, ImageIoError> {
     let max_edge = max_edge.max(1);
     if image.width <= max_edge && image.height <= max_edge {
-        return image;
+        return Ok(image);
     }
     let scale = max_edge as f64 / f64::from(image.width.max(image.height));
     let width = (f64::from(image.width) * scale).round().max(1.0) as u32;
     let height = (f64::from(image.height) * scale).round().max(1.0) as u32;
-    let source = ImageBuffer::<Rgb<f32>, Vec<f32>>::from_raw(image.width, image.height, image.rgb)
-        .expect("validated LibRaw RGB buffer");
-    let resized = image::imageops::resize(
-        &source,
-        width,
-        height,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let resized =
+        unbounded_resize::resize_rgb(&image.rgb, image.width, image.height, width, height)?;
     image.width = width;
     image.height = height;
-    image.rgb = resized.into_raw();
-    image
+    image.rgb = resized;
+    Ok(image)
 }
 
 pub fn decode_source(path: impl AsRef<Path>) -> Result<DecodedSourceImage, ImageIoError> {
@@ -335,7 +340,7 @@ pub fn decode_source_preview(
         return Ok(DecodedSourceImage::Raw(Box::new(resize_raw_preview(
             decode_raw_preview(path)?,
             max_edge,
-        ))));
+        )?)));
     }
     Ok(DecodedSourceImage::Rendered(decode_rendered_preview(
         path, max_edge,

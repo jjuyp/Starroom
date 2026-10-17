@@ -1,5 +1,20 @@
 # Implementation Notes
 
+## 2026-10-17 — Unbounded scene-linear RAW preview sampler
+
+Doc60 records actual image0.25.10 clamp counterexample, licensed mature Lanczos3
+adaptation, typed/fallible buffers and policyv8 cache invalidation. Sensor decode,
+camera matrices/WB and export originals are unchanged; no final0..1 clamp is applied
+to intermediate RAW RGB. Three sampler units plus real LibRaw->16x16 headroom>3,
+metadata/source immutability pass. RAW/shared/photographic/GPU milestone1792236627764
+passes;31 error presentation cases pass. MSVCRelease RAW report1792236711783-13592
+has54 actual CPU/GPU comparisons delta<=1 and unchanged source; nine Native control
+medians45.839–53.152ms, largestp9558.990ms, decode220.912ms. Not full presentation
+latency/photographic IQ/alpha/100MP/installed acceptance. Full Rust1792237107318 passes
+format/strict workspace Clippy/tests/doc-tests:466registered/462ordinary/four opt-in
+excluded. Web1792236859080 passes218 tests/30files/lint/TS/build/JSON/Golden/packaging;
+license561Rust/6npm/269notices passes. Own remote acceptance remains pending.
+
 ## 2026-10-17 — Exact detail scheduling and true Off finishing acceptance
 
 Doc59 records pinned-Rayon independent row/pixel work, shared neighbor addresses and

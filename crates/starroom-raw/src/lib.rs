@@ -19,7 +19,7 @@ use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
 use thiserror::Error;
 
 pub const LIBRAW_PINNED_VERSION: &str = "0.22.2";
-pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v7-physical-wb-calibration";
+pub const RAW_DECODE_POLICY_VERSION: &str = "starroom-libraw-v8-unbounded-preview-resample";
 pub const LIBRAW_TAG_OBJECT: &str = "24fa7e5463cbf8b8615dbd2b16c933a294d52400";
 pub const LIBRAW_COMMIT: &str = "b93f6e45c194f5df9b02a43b1af9a54b4f41f33f";
 

@@ -1,5 +1,13 @@
 # Starroom third-party notices
 
+The unbounded RAW preview Lanczos3 adapter in `starroom-imageio/src/unbounded_resize.rs`
+is adapted from image-rs/image0.25.10 `src/imageops/sample.rs`, source commit
+`76e57184f22772dad1138e96954e57945406b15e`, by the image-rs contributors. MIT is selected
+from its MIT OR Apache-2.0 licensing. The source retains the permission/disclaimer;
+the original image license texts are included in `THIRD_PARTY_LICENSES.txt`. Changes
+remove the bounded final float RGB clamp, specialize opaque RGB/f32, add checked
+allocations and parallel independent rows; interpolation/accumulation math is retained.
+
 The Native Robertson (1968) correlated-temperature code is derived from Colour Developers,
 colour-science/colour v0.4.7, under BSD-3-Clause. Copyright 2013 Colour Developers; no endorsement
 is implied. The full source notice is retained at
