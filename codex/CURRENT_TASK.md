@@ -1,5 +1,26 @@
 # Current Task
 
+2026-10-18 latest: actual private field-original Native probe group is accepted locally
+(doc62). Test-only explicit source branch NEVER creates/replaces local original; source
+dimensions/GPU flags/hash required,137 actual CPU/export frame comparisons outside
+timing. RAW1792293970819 +JPEG1792294043135 each pass maxdelta1/unchanged source/key
+hashes; same-binary generated replay1792294151200 PASS27controls (first105.916ms still
+fails100ms). RAW first67.443/warm48.909ms, JPEG103.773/51.784ms; NR>100ms, RAW first1:1
+2981.589ms and JPEG viewport/refine remain failures. Initial RAW1792293708335 failure
+was exact JPEG-only cache-count assumption; now exact4RAW/3encoded plus separate
+full-sensor-tier assertion. No thresholds relaxed/private assets redistributed.
+Targeted warning-denied Clippy/format/Node syntax pass. Current Native production code
+is unchanged fromcd5d8d3; next code group is removal of unused native_export_jpeg and
+its unused frontend helper/types/picker. Actual UI uses professional batch commands.
+Old endpoint is sync/std::fs::write/JPEG-only/no ICC or atomic policy. Keep same_file
+helper: Reference Match also uses it. Add ownership regression and run targeted export
+plus Full before committing production removal. Currentcd5d8d3 Full39092968506 running,
+secondary39092972326 SUCCESS; PR#2Open/Draft. Don't cancel useful CI with new push.
+No local sessions/browser/app active. Full original31-phase goal remains ACTIVE, no
+installer/Final claim. First-drag/scheduler/priming/NR/RAW1:1/GPU resident and all other
+matrix requirements remain unqualified. Source paths should be resolved locally from
+read-only Library, not stored in public docs.
+
 2026-10-18 latest: first-drag cache group doc61 is locally accepted. New Native derived
 tiers borrow bounded nearest original previews (not full sensor/derived children),
 separate source/policy/parent lineage from direct Final, deduplicate LRU tiers. No new
@@ -13,9 +34,10 @@ refine/viewport/spatial regressions retained. Universal100ms still fails. Commit
 batch with own Full CI; previous925c721 Full39030002986 and secondary39030007692 are
 SUCCESS; PR#2Open/Draft. All local sessions terminal, no app/browser/server launched.
 Next relevant evidence: user's screenshot source actually exists. Read-only local
-Starroom DB at LOCALAPPDATA/Starroom/starroom-library.sqlite found _DSC8369.NEF +JPG
-in C:/Users/shang/Desktop/122ND750, dimensions6032x4032 and6016x4016; original files
-remain untouched. Never push/private-photo fixture or filename data. Add explicit
+Starroom DB at LOCALAPPDATA/Starroom/starroom-library.sqlite found the reported RAW
+and paired JPEG, dimensions6032x4032 and6016x4016; original files remain untouched.
+Resolve their paths locally/read-only; keep private paths out of repository notes.
+Never push private-photo fixtures. Add explicit
 private read-only source option to existing Native opt-in probe (must not overwrite
 it in synthetic-fixture setup; validate supplied dimensions against actual frame).
 Measure actual user RAW/JPEG, then finish remaining cache/priming/adaptive/CMM work.

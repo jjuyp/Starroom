@@ -1,5 +1,18 @@
 # Implementation Notes
 
+## 2026-10-18 — Real private-original Native performance/parity evidence
+
+Doc62 records explicit read-only local-source support in the existing MSVC opt-in
+probe, with source creation confined to the separate synthetic branch. Actual Native
+dimensions, GPU-path flags,137 CPU/export frame comparisons and source hashes are
+required; CPU reference work is outside measured intervals. The paired original
+Nikon D750 RAW/JPEG runs1792293970819/1792294043135 pass137 comparisons each, max delta1,
+unchanged source and key-source hashes. First RAW67.443ms/JPEG103.773ms; warm exposure
+48.909/51.784ms. Retain failures: NR>100ms, RAW first1:1=2981.589ms and initial failed
+probe's JPEG-only cache-count assumption (fixed with exact3/4 plus full-tier checks).
+No private photos/paths become public fixtures; no dependency/license change or Final
+claim. This does not replace actual UI/installed/100MP/absolute photographic IQ gates.
+
 ## 2026-10-18 — Interactive pyramid / first-drag cache
 
 Doc61 records the actual new Native path: nearest original bounded preview -> immutable

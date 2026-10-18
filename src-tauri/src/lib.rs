@@ -7580,23 +7580,46 @@ mod tests {
             return;
         }
         let root = tempfile::tempdir().expect("exclusive performance fixture directory");
-        let source = root.path().join("24mp.jpg");
-        let (source_width, source_height) = (6000_u32, 4000_u32);
-        let mut rgb = Vec::with_capacity(source_width as usize * source_height as usize * 3);
-        for y in 0..source_height {
-            for x in 0..source_width {
-                rgb.extend_from_slice(&[
-                    ((x * 255) / (source_width - 1)) as u8,
-                    ((y * 255) / (source_height - 1)) as u8,
-                    (((x + y) * 255) / (source_width + source_height - 2)) as u8,
-                ]);
+        let local_source = std::env::var_os("STARROOM_PREVIEW_PERF_SOURCE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let (source, source_width, source_height) = if let Some(source) = &local_source {
+            let dimensions = std::env::var("STARROOM_PREVIEW_PERF_DIMENSIONS")
+                .expect("explicit local source requires authoritative widthxheight");
+            let (width, height) = dimensions.split_once('x').expect("widthxheight");
+            let width: u32 = width.parse().expect("integer source width");
+            let height: u32 = height.parse().expect("integer source height");
+            assert!(
+                source.is_file(),
+                "local source must already exist; never create/replace it"
+            );
+            assert!(
+                (20_000_000..=30_000_000).contains(&(u64::from(width) * u64::from(height)))
+                    && width >= 3600
+                    && height >= 2400,
+                "this explicit probe covers landscape24MP sources"
+            );
+            (source.clone(), width, height)
+        } else {
+            let source = root.path().join("24mp.jpg");
+            let (source_width, source_height) = (6000_u32, 4000_u32);
+            let mut rgb = Vec::with_capacity(source_width as usize * source_height as usize * 3);
+            for y in 0..source_height {
+                for x in 0..source_width {
+                    rgb.extend_from_slice(&[
+                        ((x * 255) / (source_width - 1)) as u8,
+                        ((y * 255) / (source_height - 1)) as u8,
+                        (((x + y) * 255) / (source_width + source_height - 2)) as u8,
+                    ]);
+                }
             }
-        }
-        let encoded =
-            starroom_imageio::encode_jpeg_rgb8(&rgb, source_width, source_height, 95, None)
-                .expect("24 MP fixture encode");
-        std::fs::write(&source, encoded).unwrap();
-        drop(rgb);
+            let encoded =
+                starroom_imageio::encode_jpeg_rgb8(&rgb, source_width, source_height, 95, None)
+                    .expect("24 MP fixture encode");
+            std::fs::write(&source, encoded).unwrap();
+            drop(rgb);
+            (source, source_width, source_height)
+        };
         let source_hash = source_content_hash(&source).unwrap();
         let interactive_format = match std::env::var("STARROOM_PREVIEW_PERF_FORMAT").as_deref() {
             Ok("jpeg") => PreviewPayloadFormat::Jpeg,
@@ -7606,59 +7629,128 @@ mod tests {
         eprintln!(
             "NATIVE_PREVIEW_PAYLOAD_FORMAT interactive={interactive_format:?} final=Jpeg96 scope=native_request_excludes_ipc_and_presentation"
         );
+        if local_source.is_some() {
+            assert_eq!(
+                interactive_format,
+                PreviewPayloadFormat::Rgba8,
+                "local actual-photo CPU parity requires lossless transport"
+            );
+        }
+        let compared_frames = std::cell::Cell::new(0_u32);
+        let max_rgb_delta = std::cell::Cell::new(0_u8);
 
         let scheduler = NativePreviewScheduler::default();
         let portrait = NativePortraitRuntime::default();
         let masks = NativeAiMaskRuntime::default();
         let denoise = NativeAiDenoiseRuntime::default();
-        let render =
-            |request_id: &str, interaction_phase, resolution_mode, viewport, edit_settings| {
-                let started = std::time::Instant::now();
-                let (result, profile) = profiling::capture(|| {
-                    native_preview_inner(
-                        &scheduler,
-                        &portrait,
-                        &masks,
-                        &denoise,
-                        NativePreviewRequest {
-                            request_id: request_id.into(),
-                            payload_format: if interaction_phase
-                                == PreviewInteractionPhase::Interactive
-                            {
-                                interactive_format
-                            } else {
-                                PreviewPayloadFormat::Jpeg
-                            },
-                            source_path: source.clone(),
-                            max_edge: 1800,
-                            prefer_gpu: true,
-                            interaction_phase,
-                            resolution_mode,
-                            viewport,
-                            settings: edit_settings,
+        let render = |request_id: &str,
+                      interaction_phase,
+                      resolution_mode,
+                      viewport,
+                      edit_settings: NativeEditSettings| {
+            let cpu_settings = local_source.as_ref().map(|_| edit_settings.clone());
+            let started = std::time::Instant::now();
+            let (result, profile) = profiling::capture(|| {
+                native_preview_inner(
+                    &scheduler,
+                    &portrait,
+                    &masks,
+                    &denoise,
+                    NativePreviewRequest {
+                        request_id: request_id.into(),
+                        payload_format: if interaction_phase == PreviewInteractionPhase::Interactive
+                        {
+                            interactive_format
+                        } else {
+                            PreviewPayloadFormat::Jpeg
                         },
-                    )
-                });
-                let response = result.expect("native preview");
-                let tauri::ipc::InvokeResponseBody::Raw(frame) =
-                    tauri::ipc::IpcResponse::body(response).unwrap()
-                else {
-                    panic!("binary Native response expected")
-                };
-                let magic: &[u8] = if interaction_phase == PreviewInteractionPhase::Interactive
-                    && interactive_format == PreviewPayloadFormat::Rgba8
-                {
-                    b"SRP4"
-                } else {
-                    b"SRP3"
-                };
-                assert_eq!(
-                    &frame[..4],
-                    magic,
-                    "actual requested transport, not stale frame cache"
-                );
-                (started.elapsed(), profile)
+                        source_path: source.clone(),
+                        max_edge: 1800,
+                        prefer_gpu: true,
+                        interaction_phase,
+                        resolution_mode,
+                        viewport,
+                        settings: edit_settings,
+                    },
+                )
+            });
+            let response = result.expect("native preview");
+            let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                tauri::ipc::IpcResponse::body(response).unwrap()
+            else {
+                panic!("binary Native response expected")
             };
+            let magic: &[u8] = if interaction_phase == PreviewInteractionPhase::Interactive
+                && interactive_format == PreviewPayloadFormat::Rgba8
+            {
+                b"SRP4"
+            } else {
+                b"SRP3"
+            };
+            assert_eq!(
+                &frame[..4],
+                magic,
+                "actual requested transport, not stale frame cache"
+            );
+            assert_eq!(
+                u32::from_le_bytes(frame[16..20].try_into().unwrap()),
+                source_width
+            );
+            assert_eq!(
+                u32::from_le_bytes(frame[20..24].try_into().unwrap()),
+                source_height
+            );
+            let elapsed = started.elapsed();
+            // Local originals remain private/read-only. Compare the actual GPU/display
+            // bytes with the same Native CPU/export graph outside the measured interval.
+            if interaction_phase == PreviewInteractionPhase::Interactive
+                && let Some(cpu_settings) = cpu_settings
+            {
+                let identity = preview_source_identity(&source).unwrap();
+                let decoded = cached_decoded_source(&scheduler, &identity, 1024)
+                    .unwrap()
+                    .or_else(|| {
+                        cached_derived_interactive_preview(&scheduler, &identity, 1024)
+                            .unwrap()
+                            .map(|(image, _)| image)
+                    })
+                    .expect("actual interactive pixels must be retained");
+                let reference =
+                    render_source_export_to_srgb8(&decoded, &cpu_settings.validated().unwrap())
+                        .unwrap();
+                let profile_len = u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize;
+                let pixels = &frame[40 + profile_len..];
+                assert_eq!(pixels.len(), reference.data.len() / 3 * 4);
+                let delta = pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(reference.data.as_chunks::<3>().0)
+                    .map(|(a, b)| {
+                        assert_eq!(a[3], 255);
+                        a[..3]
+                            .iter()
+                            .zip(b)
+                            .map(|(x, y)| x.abs_diff(*y))
+                            .max()
+                            .unwrap()
+                    })
+                    .max()
+                    .unwrap();
+                assert_ne!(
+                    u16::from_le_bytes(frame[6..8].try_into().unwrap()) & 0x0008,
+                    0,
+                    "local GPU-path measurement must not hide CPU fallback"
+                );
+                assert!(
+                    delta <= 1,
+                    "actual local photo CPU/GPU delta={delta} for {request_id}"
+                );
+                max_rgb_delta.set(max_rgb_delta.get().max(delta));
+                compared_frames.set(compared_frames.get() + 1);
+            }
+            (elapsed, profile)
+        };
 
         let (first, _) = render(
             "first-fit",
@@ -7756,7 +7848,22 @@ mod tests {
             }),
             dragged,
         );
-        assert_eq!(scheduler.decoded.lock().unwrap().len(), 3);
+        let raw_full_tier = is_raw_source(&source);
+        assert_eq!(
+            scheduler.decoded.lock().unwrap().len(),
+            if raw_full_tier { 4 } else { 3 }
+        );
+        assert_eq!(
+            cached_decoded_source(
+                &scheduler,
+                &preview_source_identity(&source).unwrap(),
+                u32::MAX
+            )
+            .unwrap()
+            .is_some(),
+            raw_full_tier,
+            "only RAW viewport decode retains a separate full sensor tier"
+        );
         assert!(!scheduler.viewport_frames.lock().unwrap().is_empty());
         assert!(
             interactive < first,
@@ -7899,6 +8006,14 @@ mod tests {
             );
         }
         assert_eq!(source_content_hash(&source).unwrap(), source_hash);
+        if local_source.is_some() {
+            assert_eq!(compared_frames.get(), 137);
+            eprintln!(
+                "NATIVE_LOCAL_PARITY compared_frames={} max_rgb8_delta={} cpu_reference_outside_measured_interval=true source_unchanged=true",
+                compared_frames.get(),
+                max_rgb_delta.get()
+            );
+        }
     }
 
     #[test]

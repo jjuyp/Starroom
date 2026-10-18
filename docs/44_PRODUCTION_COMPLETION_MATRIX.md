@@ -10,6 +10,13 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 actual private field originals (doc62): explicit read-only RAW/JPEG mode in
+existing opt-in probe validates dimensions, GPU flags, immutable hashes and137 actual
+CPU/export comparisons each, max RGB8 delta1. No private source is redistributed or
+reclassified as a public fixture. RAW first67.443ms/JPEG103.773ms, warm48.909/51.784ms,
+but denoise>100ms and first RAW1:1=2981.589ms remain failures. These are Native intervals,
+not absolute photographic IQ/full UI/installed/100MP acceptance or complete phases.
+
 2026-10-18 first-drag pyramid (doc61): separate interactive source/parent-tier identities
 derive bounded immutable originals outside the cache mutex; never full sensor or derived
 children, never Final/export. Actual smallPNG/largeJPEG/RAW tests prove counters and exact

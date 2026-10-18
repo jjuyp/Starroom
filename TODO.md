@@ -2,6 +2,12 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Real private field-original Native diagnostics (doc62): explicit read-only source,
+  actual dimensions/GPU flags/hash guards,137 CPU/export comparisons per RAW/JPEG run,
+  max RGB8 delta1. Paths/photos remain outside public fixtures/reports. This is scoped
+  evidence, not overall realtime acceptance: JPEG first103.773ms, denoise>100ms and
+  RAW first1:1=2981.589ms remain required optimization targets.
+
 - [ ] Finish first-drag Native pyramid acceptance (doc61): bounded immutable higher
   previews produce separate interactive-only tiers outside the cache lock; Final/export
   remain direct. No duplicate Before/After tier entries or derived-child resampling.

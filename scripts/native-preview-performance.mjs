@@ -2,9 +2,21 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { extname } from 'node:path'
 
 const format = process.argv.find((argument) => argument.startsWith('--format='))?.slice(9) ?? 'rgba8'
 if (!['jpeg', 'rgba8'].includes(format)) throw new Error('Choose --format=jpeg or --format=rgba8')
+const localSourceArgument = process.argv.find((argument) => argument.startsWith('--source='))
+const localSource = localSourceArgument?.slice(9)
+const dimensions = process.argv.find((argument) => argument.startsWith('--dimensions='))?.slice(13)
+if (localSourceArgument && (!localSource || format !== 'rgba8' || !/^\d+x\d+$/.test(dimensions ?? ''))) {
+  throw new Error('Read-only local source requires --format=rgba8 and explicit --dimensions=WIDTHxHEIGHT')
+}
+const privateIdentity = () => localSource ? {
+  kind: 'private-local-original-never-redistributed', format: extname(localSource).toLowerCase(), dimensions,
+  sha256: createHash('sha256').update(readFileSync(localSource)).digest('hex'),
+} : { kind: 'generated24MP' }
+const sourcePhoto = privateIdentity()
 const compiler = execFileSync('rustc', ['-vV'], { encoding: 'utf8' }).trim()
 if (process.platform !== 'win32' || !/host: .*windows-msvc/.test(compiler)) {
   throw new Error('This production timing gate requires Windows MSVC; secondary targets are not equivalent')
@@ -23,7 +35,9 @@ const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' 
 const args = ['test', '--locked', '--release', '-p', 'starroom-desktop',
   'rc2_release_preview_cache_interaction_and_viewport_timings', '--', '--ignored', '--nocapture']
 const result = spawnSync('cargo', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
-  env: { ...process.env, STARROOM_RC2_PERFORMANCE_GATE: '1', STARROOM_PREVIEW_PERF_FORMAT: format } })
+  env: { ...process.env, STARROOM_RC2_PERFORMANCE_GATE: '1', STARROOM_PREVIEW_PERF_FORMAT: format,
+    ...(localSource ? { STARROOM_PREVIEW_PERF_SOURCE: localSource, STARROOM_PREVIEW_PERF_DIMENSIONS: dimensions }
+      : { STARROOM_PREVIEW_PERF_SOURCE: '', STARROOM_PREVIEW_PERF_DIMENSIONS: '' }) } })
 const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
 process.stdout.write(output)
 const controls = [...output.matchAll(/NATIVE_CONTROL_PERF control=(\S+) changed_samples=(\d+) edge=(\d+) median_ms=([\d.]+) p95_ms=([\d.]+)/g)]
@@ -31,14 +45,19 @@ const controls = [...output.matchAll(/NATIVE_CONTROL_PERF control=(\S+) changed_
     medianMs: Number(match[4]), p95Ms: Number(match[5]) }))
 const firstMatch = output.match(/NATIVE_FIRST_INTERACTIVE cold_tier_ms=([\d.]+) profile=(\{[^\r\n]+\})/)
 const firstInteractive = firstMatch ? { elapsedMs: Number(firstMatch[1]), profile: JSON.parse(firstMatch[2]) } : null
+const parityMatch = output.match(/NATIVE_LOCAL_PARITY compared_frames=(\d+) max_rgb8_delta=(\d+)/)
+const localParity = parityMatch ? { comparedFrames: Number(parityMatch[1]), maxRgb8Delta: Number(parityMatch[2]) } : null
 const changedDuringRun = JSON.stringify(sources) !== JSON.stringify(sourceIdentity())
 const failure = changedDuringRun ? 'Source changed during compilation/measurement; retain report but do not accept it'
+  : JSON.stringify(sourcePhoto) !== JSON.stringify(privateIdentity()) ? 'Original source bytes changed'
   : result.error?.message ?? (result.status !== 0 ? `cargo exit ${result.status}`
   : controls.length !== 27 ? `Expected27 controls, received${controls.length}`
-    : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement' : null)
+    : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement'
+      : localSource && (!localParity || localParity.comparedFrames !== 137 || localParity.maxRgb8Delta > 1)
+        ? 'Actual local photo CPU/GPU parity did not complete' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
-  sources, changedDuringRun,
-  scope: 'Real MSVC Release Native requests on24MP synthetic source, excludes Tauri IPC/browser/OS presentation',
+  sources, changedDuringRun, sourcePhoto, localParity,
+  scope: `Real MSVC Release Native requests on24MP ${localSource ? 'private read-only original' : 'synthetic source'}, excludes Tauri IPC/browser/OS presentation`,
   command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, output }
 mkdirSync('.starroom-reports', { recursive: true })
 const path = `.starroom-reports/native-preview-${format}-${Date.now()}.json`
