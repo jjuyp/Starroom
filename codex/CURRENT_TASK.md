@@ -1,5 +1,19 @@
 # Current Task
 
+2026-10-18 latest: bounded Native interactive cache priming (doc64) is locally accepted.
+Real Final/Fit IPC completion launches optional idle-only/epoch-checked preparation,
+not a new render, decode, GPU job or publication. Shared real upstream builder and
+owned/budget bypass preserve pixels. New3 tests pass actual PNG/JPEG/RAW, priority,
+status/error and exact CPU/export/source identity. Full Rust1792296168945 PASS473
+registered/469ordinary/four opt-in excluded; Web1792295985908 PASS219/30files/all gates.
+License561/6/269/infrastructure pass. Ready-cache private RAW50.393/JPEG53.475ms first
+interaction plus separately18.265/49.708ms preparation;274 comparisons delta<=1,
+originals unchanged. Work moved, not eliminated. Immediate drag/races/end-to-end,
+NR>100ms, RAW1:1~3s and all original31-phase requirements remain OPEN; no installer,
+app launch, Final/tag/merge claim. Previousec91f3a Full39094550691 and secondary
+39094553551 SUCCESS. Commit/push this focused group, inspect exact own remote CI,
+then continue independent latency work without redoing M1-M29.
+
 2026-10-18 latest: dormant direct JPEG path removed and locally accepted (doc63).
 Actual UI uses professional batch; old sync/std::fs::write/no ICC endpoint, registration,
 request/result/frontend wrapper/picker are deleted, with red->green ownership guard.

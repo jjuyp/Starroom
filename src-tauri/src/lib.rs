@@ -70,7 +70,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Condvar, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -1514,6 +1514,26 @@ struct NativePreviewScheduler {
     prepared: SourcePreparationCache,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<GpuRenderer, String>>>,
+    request_epoch: AtomicU64,
+    priming: Mutex<PreviewPrimingStatus>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewPrimingStatus {
+    running: bool,
+    completed: u64,
+    skipped: u64,
+    failed: u64,
+    last_elapsed_nanoseconds: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Serialize)]
+struct NativePreviewSchedulerStatus {
+    #[serde(flatten)]
+    scheduler: SchedulerStatus,
+    priming: PreviewPrimingStatus,
 }
 
 /// A small process-wide worker pool bounds memory without serializing the complete lifetime of
@@ -1556,6 +1576,19 @@ impl PreviewWorkerPool {
         *active += 1;
         Ok(PreviewWorkerPermit(self))
     }
+
+    /// Optional background work never queues ahead of an active preview/Before-After.
+    fn try_acquire_idle(&self) -> Result<Option<PreviewWorkerPermit<'_>>, String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "PreviewWorkerFailed: poisoned worker pool".to_owned())?;
+        if *active != 0 {
+            return Ok(None);
+        }
+        *active = 1;
+        Ok(Some(PreviewWorkerPermit(self)))
+    }
 }
 
 impl Drop for PreviewWorkerPermit<'_> {
@@ -1569,6 +1602,71 @@ impl Drop for PreviewWorkerPermit<'_> {
 
 const DECODE_CACHE_BUDGET: u64 = 512 * 1024 * 1024;
 const DERIVED_PREVIEW_POLICY: &str = ":interactive-lanczos-v1:from=";
+
+/// CPU-only cache preparation, with no disk pixel decode, GPU work or render publication.
+/// This same function is used by the real async command and real-image regression tests.
+fn prime_cached_interactive_preview(
+    scheduler: &NativePreviewScheduler,
+    source: &Path,
+    settings: NativeEditSettings,
+    epoch: u64,
+) -> Result<bool, String> {
+    if scheduler.request_epoch.load(Ordering::Acquire) != epoch {
+        if let Ok(mut status) = scheduler.priming.lock() {
+            status.skipped += 1;
+        }
+        return Ok(false);
+    }
+    let Some(_permit) = scheduler.workers.try_acquire_idle()? else {
+        if let Ok(mut status) = scheduler.priming.lock() {
+            status.skipped += 1;
+        }
+        return Ok(false);
+    };
+    if let Ok(mut status) = scheduler.priming.lock() {
+        status.running = true;
+    }
+    let started = Instant::now();
+    let result = (|| {
+        if scheduler.request_epoch.load(Ordering::Acquire) != epoch {
+            return Ok(false);
+        }
+        let identity = preview_source_identity(source)?;
+        let decoded = cached_decoded_source(scheduler, &identity, 1024)?;
+        let decoded = if let Some(decoded) = decoded {
+            Some(decoded)
+        } else {
+            cached_derived_interactive_preview(scheduler, &identity, 1024)?.map(|(image, _)| image)
+        };
+        let Some(decoded) = decoded else {
+            return Ok(false);
+        };
+        if scheduler.request_epoch.load(Ordering::Acquire) != epoch {
+            return Ok(false);
+        }
+        scheduler
+            .prepared
+            .prime(&decoded, &settings.validated()?)
+            .map_err(|error| format!("PreviewPrimingFailed: {error}"))
+    })();
+    if let Ok(mut status) = scheduler.priming.lock() {
+        status.running = false;
+        status.last_elapsed_nanoseconds =
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        match &result {
+            Ok(true) => {
+                status.completed += 1;
+                status.last_error = None;
+            }
+            Ok(false) => status.skipped += 1,
+            Err(error) => {
+                status.failed += 1;
+                status.last_error = Some(error.clone());
+            }
+        }
+    }
+    result
+}
 
 /// Only bounded interactive proxies may derive from a higher immutable preview.
 /// Full sensor/export pixels and derived children are never pyramid parents. Pixel
@@ -1848,6 +1946,8 @@ impl Default for NativePreviewScheduler {
             prepared: SourcePreparationCache::default(),
             viewport_frames: Mutex::new(VecDeque::new()),
             gpu: Mutex::new(None),
+            request_epoch: AtomicU64::new(0),
+            priming: Mutex::new(PreviewPrimingStatus::default()),
         }
     }
 }
@@ -3543,12 +3643,21 @@ fn ai_mask_cancel(runtime: State<'_, NativeAiMaskRuntime>, request_id: String) -
 #[tauri::command]
 fn native_preview_scheduler_status(
     scheduler: State<'_, NativePreviewScheduler>,
-) -> Result<SchedulerStatus, String> {
-    scheduler
+) -> Result<NativePreviewSchedulerStatus, String> {
+    let status = scheduler
         .scheduler
         .lock()
         .map_err(|_| "native preview scheduler lock was poisoned".to_owned())
-        .map(|scheduler| scheduler.status())
+        .map(|scheduler| scheduler.status())?;
+    let priming = scheduler
+        .priming
+        .lock()
+        .map_err(|_| "PreviewPrimingFailed: poisoned diagnostic status".to_owned())?
+        .clone();
+    Ok(NativePreviewSchedulerStatus {
+        scheduler: status,
+        priming,
+    })
 }
 
 #[tauri::command]
@@ -3593,6 +3702,14 @@ async fn native_preview(
     app: tauri::AppHandle,
     request: NativePreviewRequest,
 ) -> Result<Response, String> {
+    let epoch = app
+        .state::<NativePreviewScheduler>()
+        .request_epoch
+        .fetch_add(1, Ordering::AcqRel)
+        + 1;
+    let priming_request = (request.interaction_phase == PreviewInteractionPhase::Final
+        && request.resolution_mode == PreviewResolutionMode::Fit)
+        .then(|| (request.source_path.clone(), request.settings.clone()));
     let request_id = request.request_id.clone();
     let token = app
         .state::<NativePreviewScheduler>()
@@ -3650,6 +3767,23 @@ async fn native_preview(
                 .lock()
                 .map_err(|_| "native preview profile lock was poisoned".to_owned())? =
                 Some(profile);
+        }
+        drop(_permit);
+        if result.is_ok()
+            && !token.load(Ordering::Acquire)
+            && let Some((source, settings)) = priming_request
+        {
+            let app = app.clone();
+            // Response does not await this optional cache work. It cannot schedule/publish
+            // a frame, and a newer request invalidates its opportunity to start/prepare.
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = prime_cached_interactive_preview(
+                    &app.state::<NativePreviewScheduler>(),
+                    &source,
+                    settings,
+                    epoch,
+                );
+            });
         }
         result
     })
@@ -6721,6 +6855,141 @@ mod tests {
     }
 
     #[test]
+    fn optional_preview_priming_never_queues_ahead_of_foreground_and_retains_typed_diagnostics() {
+        let scheduler = NativePreviewScheduler::default();
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing.jpg");
+        let foreground = scheduler.workers.acquire(&AtomicBool::new(false)).unwrap();
+        assert!(
+            !prime_cached_interactive_preview(&scheduler, &missing, neutral_settings(), 0).unwrap()
+        );
+        assert!(scheduler.workers.try_acquire_idle().unwrap().is_none());
+        let before_after = scheduler.workers.acquire(&AtomicBool::new(false)).unwrap();
+        assert_eq!(*scheduler.workers.active.lock().unwrap(), 2);
+        drop((foreground, before_after));
+        scheduler.request_epoch.store(1, Ordering::Release);
+        assert!(
+            !prime_cached_interactive_preview(&scheduler, &missing, neutral_settings(), 0).unwrap()
+        );
+        assert_eq!(scheduler.prepared.stats().unwrap().builds, 0);
+        let error = prime_cached_interactive_preview(&scheduler, &missing, neutral_settings(), 1)
+            .unwrap_err();
+        assert!(error.contains("metadata failed"));
+        let status = scheduler.priming.lock().unwrap().clone();
+        assert!(!status.running);
+        assert_eq!(status.skipped, 2);
+        assert_eq!(status.failed, 1);
+        assert_eq!(status.last_error.as_deref(), Some(error.as_str()));
+        assert_eq!(*scheduler.workers.active.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn actual_native_priming_removes_first_drag_source_work_without_publishing_or_changing_pixels()
+    {
+        for relative in [
+            "fixtures/golden/sources/astronaut-eileen-collins.png",
+            "fixtures/golden/sources/neon-streets-nikon-d7100.jpg",
+            "fixtures/raw/sources/nikon-d1.nef",
+        ] {
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(relative);
+            let original = source_content_hash(&source).unwrap();
+            let scheduler = NativePreviewScheduler::default();
+            let portrait = NativePortraitRuntime::default();
+            let masks = NativeAiMaskRuntime::default();
+            let denoise = NativeAiDenoiseRuntime::default();
+            let render = |request_id: &str, phase, exposure| {
+                let mut settings = neutral_settings();
+                settings.exposure = exposure;
+                native_preview_inner(
+                    &scheduler,
+                    &portrait,
+                    &masks,
+                    &denoise,
+                    NativePreviewRequest {
+                        request_id: request_id.into(),
+                        source_path: source.clone(),
+                        payload_format: if phase == PreviewInteractionPhase::Interactive {
+                            PreviewPayloadFormat::Rgba8
+                        } else {
+                            PreviewPayloadFormat::Jpeg
+                        },
+                        max_edge: 1800,
+                        prefer_gpu: false,
+                        interaction_phase: phase,
+                        resolution_mode: PreviewResolutionMode::Fit,
+                        viewport: None,
+                        settings,
+                    },
+                )
+                .unwrap()
+            };
+            render("fit", PreviewInteractionPhase::Final, 0.0);
+            let before = scheduler.scheduler.lock().unwrap().status();
+            let (primed, profile) = profiling::capture(|| {
+                prime_cached_interactive_preview(&scheduler, &source, neutral_settings(), 0)
+            });
+            assert!(primed.unwrap());
+            assert_eq!(
+                scheduler.scheduler.lock().unwrap().status(),
+                before,
+                "cache preparation must never publish a frame/change generation"
+            );
+            for stage in [
+                ProfileStage::RawDecode,
+                ProfileStage::Tone,
+                ProfileStage::ColorTransform,
+                ProfileStage::Encode,
+            ] {
+                assert!(!profile.stages.contains_key(&stage));
+            }
+            let (response, profile) = profiling::capture(|| {
+                render(
+                    "first-changed-drag",
+                    PreviewInteractionPhase::Interactive,
+                    0.25,
+                )
+            });
+            assert!(!profile.stages.contains_key(&ProfileStage::RawDecode));
+            assert!(!profile.stages.contains_key(&ProfileStage::Resize));
+            if let Some(input) = profile.stages.get(&ProfileStage::CameraTransform) {
+                assert_eq!(input.executions, 0);
+            }
+            let identity = preview_source_identity(&source).unwrap();
+            let decoded = cached_decoded_source(&scheduler, &identity, 1024)
+                .unwrap()
+                .or_else(|| {
+                    cached_derived_interactive_preview(&scheduler, &identity, 1024)
+                        .unwrap()
+                        .map(|(image, _)| image)
+                })
+                .unwrap();
+            let mut edit = neutral_settings();
+            edit.exposure = 0.25;
+            let expected =
+                render_source_export_to_srgb8(&decoded, &edit.validated().unwrap()).unwrap();
+            let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                tauri::ipc::IpcResponse::body(response).unwrap()
+            else {
+                panic!("binary frame expected")
+            };
+            let profile_len = u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize;
+            for (pixel, expected) in frame[40 + profile_len..]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(expected.data.as_chunks::<3>().0)
+            {
+                assert_eq!(&pixel[..3], expected);
+                assert_eq!(pixel[3], 255);
+            }
+            assert_eq!(scheduler.priming.lock().unwrap().completed, 1);
+            assert_eq!(source_content_hash(&source).unwrap(), original);
+        }
+    }
+
+    #[test]
     fn queued_preview_worker_observes_superseding_cancellation() {
         let pool = Arc::new(PreviewWorkerPool::new(1));
         let active_token = AtomicBool::new(false);
@@ -7710,6 +7979,14 @@ mod tests {
         };
         let raw_first = render_raw("raw-first-fit");
         let raw_reopen = render_raw("raw-cached-reopen");
+        if std::env::var("STARROOM_PREVIEW_PERF_PRIME").as_deref() == Ok("1") {
+            let started = Instant::now();
+            assert!(prime_cached_interactive_preview(&scheduler, &source, settings(), 0).unwrap());
+            eprintln!(
+                "NATIVE_PRIMING_READY elapsed_ms={:.3} scope=completed_native_cache_preparation_not_ui_scheduling",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         let (first_interactive, first_interactive_profile) = render(
             "interactive-warm",
             PreviewInteractionPhase::Interactive,

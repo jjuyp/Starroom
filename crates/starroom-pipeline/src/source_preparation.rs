@@ -101,6 +101,19 @@ impl SourcePreparationCache {
             budget,
         }
     }
+    /// Populate only the existing immutable input/WB/lens/geometry preparation.
+    /// No creative stage, display transform, encode, GPU dispatch or frame publication.
+    /// Returns false when this optional preparation cannot fit the same cache budget.
+    pub fn prime(
+        &self,
+        decoded: &Arc<DecodedSourceImage>,
+        settings: &RenderSettings,
+    ) -> Result<bool, PipelineError> {
+        Ok(matches!(
+            prepare_cached_source(decoded, settings, self)?,
+            CachedPreparation::Retained(_)
+        ))
+    }
     pub fn stats(&self) -> Result<SourcePreparationCacheStats, PipelineError> {
         self.inner
             .lock()
@@ -114,12 +127,17 @@ impl SourcePreparationCache {
     }
 }
 
-pub fn render_source_preview_with_preparation_cache_to_srgb8(
+enum CachedPreparation {
+    Bypass,
+    Owned(Box<PreparedRenderSource>),
+    Retained(Arc<PreparedRenderSource>),
+}
+
+fn prepare_cached_source(
     decoded: &Arc<DecodedSourceImage>,
     settings: &RenderSettings,
-    gpu: Option<&GpuRenderer>,
     cache: &SourcePreparationCache,
-) -> Result<RenderedRgb8, PipelineError> {
+) -> Result<CachedPreparation, PipelineError> {
     checkpoint()?;
     if settings.white_balance.mode == WhiteBalanceMode::NeutralPicker
         && settings
@@ -138,8 +156,7 @@ pub fn render_source_preview_with_preparation_cache_to_srgb8(
         let mut inner = cache.lock()?;
         inner.stats.bypasses = inner.stats.bypasses.saturating_add(1);
         drop(inner);
-        return render_shared_source_graph(decoded, settings, None, gpu)
-            .map(RenderedRgbF32::into_rgb8);
+        return Ok(CachedPreparation::Bypass);
     }
     let source = Arc::downgrade(decoded);
     let state = PreparationState::new(settings);
@@ -187,16 +204,14 @@ pub fn render_source_preview_with_preparation_cache_to_srgb8(
         prepared
     } else {
         profiling::record_cache(false);
-        let mut prepared = prepare_render_source(decoded, settings, false)?;
+        let prepared = prepare_render_source(decoded, settings, false)?;
         let bytes = image_bytes(&prepared);
         let mut inner = cache.lock()?;
         inner.stats.builds = inner.stats.builds.saturating_add(1);
         if bytes > cache.budget {
             inner.stats.bypasses = inner.stats.bypasses.saturating_add(1);
             drop(inner);
-            apply_visible_white_balance(&mut prepared.image, settings)?;
-            return render_prepared_source(prepared, settings, None, gpu)
-                .map(RenderedRgbF32::into_rgb8);
+            return Ok(CachedPreparation::Owned(Box::new(prepared)));
         }
         // Concurrent cold builds may complete in either order; keep only one exact stage entry.
         if let Some(entry) = inner
@@ -222,6 +237,28 @@ pub fn render_source_preview_with_preparation_cache_to_srgb8(
         }
     };
     checkpoint()?;
+    Ok(CachedPreparation::Retained(prepared))
+}
+
+pub fn render_source_preview_with_preparation_cache_to_srgb8(
+    decoded: &Arc<DecodedSourceImage>,
+    settings: &RenderSettings,
+    gpu: Option<&GpuRenderer>,
+    cache: &SourcePreparationCache,
+) -> Result<RenderedRgb8, PipelineError> {
+    let prepared = match prepare_cached_source(decoded, settings, cache)? {
+        CachedPreparation::Bypass => {
+            return render_shared_source_graph(decoded, settings, None, gpu)
+                .map(RenderedRgbF32::into_rgb8);
+        }
+        CachedPreparation::Owned(prepared) => {
+            let mut prepared = *prepared;
+            apply_visible_white_balance(&mut prepared.image, settings)?;
+            return render_prepared_source(prepared, settings, None, gpu)
+                .map(RenderedRgbF32::into_rgb8);
+        }
+        CachedPreparation::Retained(prepared) => prepared,
+    };
     // Processing still owns its mutable working image; the immutable cached stage is untouched.
     let mut image = prepared.image.clone();
     apply_visible_white_balance(&mut image, settings)?;
@@ -251,6 +288,50 @@ mod tests {
             embedded_icc: None,
             exif: None,
         }))
+    }
+
+    #[test]
+    fn source_preparation_priming_uses_real_upstream_cache_without_rendering_or_source_mutation() {
+        let source = source();
+        let original = source.as_ref().clone();
+        let cache = SourcePreparationCache::default();
+        let mut settings = RenderSettings::default();
+        settings.geometry.rotation_degrees = 90.0;
+        let (primed, profile) = profiling::capture(|| cache.prime(&source, &settings));
+        assert!(primed.unwrap());
+        for stage in [
+            ProfileStage::Tone,
+            ProfileStage::Curve,
+            ProfileStage::ColorMixer,
+            ProfileStage::ColorGrading,
+            ProfileStage::ColorTransform,
+            ProfileStage::Encode,
+        ] {
+            assert!(
+                !profile.stages.contains_key(&stage),
+                "priming must not render {stage:?}"
+            );
+        }
+        assert_eq!(cache.stats().unwrap().builds, 1);
+        settings.tone.exposure_ev = 0.75;
+        let (rendered, profile) = profiling::capture(|| {
+            render_source_preview_with_preparation_cache_to_srgb8(&source, &settings, None, &cache)
+        });
+        assert_eq!(
+            rendered.unwrap(),
+            render_source_export_to_srgb8(&source, &settings).unwrap()
+        );
+        assert_eq!(profile.stages[&ProfileStage::CameraTransform].executions, 0);
+        assert_eq!(cache.stats().unwrap().builds, 1);
+        settings.geometry.rotation_degrees = 180.0;
+        assert!(cache.prime(&source, &settings).unwrap());
+        assert_eq!(cache.stats().unwrap().builds, 2);
+        assert_eq!(source.as_ref(), &original);
+        let tiny = SourcePreparationCache::new(1);
+        assert!(!tiny.prime(&source, &settings).unwrap());
+        assert_eq!(tiny.stats().unwrap().entries, 0);
+        settings.white_balance.mode = WhiteBalanceMode::NeutralPicker;
+        assert!(cache.prime(&source, &settings).is_err());
     }
 
     #[test]

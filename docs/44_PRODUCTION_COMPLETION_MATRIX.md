@@ -10,6 +10,18 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 optional priming (doc64): real Native Final/Fit completion starts bounded
+idle-only/epoch-checked input preparation, without delaying response, decoding files,
+rendering or publishing/GPU work. One shared cache builder preserves real CMM/geometry
+semantics and budget/owned bypass. Actual real-image/priority/error tests pass. Ready-
+cache firstRAW50.393/JPEG53.475ms, prep18.265/49.708ms is explicitly separate/moved work,
+not an eliminated cost or proven UI scheduling.274 CPU/export comparisons delta<=1;
+NR>100ms/zoom/actual UI/races/100MP/full Production remain OPEN. Full Rust1792296168945
+PASS473registered/469ordinary/four opt-in excluded; Web1792295985908 PASS219/30files
+with all ordinary gates; own remote CI pending. This is component evidence only.
+The prior dormant-export retirementec91f3a Full39094550691/secondary39094553551 SUCCESS
+does not imply broader Phase21/23/24/30 completion.
+
 2026-10-18 legacy export audit (doc63): unused sync/direct JPEG writer without current
 atomic/ICC policy is removed with its unused bridge/types/picker/registration. Actual
 UI already invokes professional batch; no format/profile/project capability is removed.

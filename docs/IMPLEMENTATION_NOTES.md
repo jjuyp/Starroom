@@ -1,5 +1,23 @@
 # Implementation Notes
 
+## 2026-10-18 — Optional Native interactive preparation
+
+Doc64 records real Native-command integration, not only a new API. Final/Fit success
+returns without awaiting bounded idle-only/epoch-checked cache work. Existing input/
+WB/lens/geometry preparation has one shared lookup/build implementation; priming
+does not decode files, render creative stages, use GPU, alter generations or publish.
+Optional failures are retained in scheduler diagnostics without replacing valid frames.
+Pipeline cache-budget/identity/pixel tests plus actual PNG/JPEG/RAW and foreground/
+diagnostic tests pass. MSVCRelease ready-cache reports1792295704541/1792295804475 pass
+137 CPU/export frame comparisons each, delta<=1, unchanged originals/key hashes.
+JPEG first103.773 ->53.475ms with separate49.708ms prep; RAW67.443 ->50.393ms with18.265ms
+prep. Work is moved, not removed; actual UI scheduling/immediate-drag races and NR>100ms/
+RAW first1:1~3s remain failures. No new algorithm/dependency/quality downgrade or Final
+claim. Full Rust1792296168945 PASS473registered/469ordinary/four opt-in excluded;
+Web1792295985908 PASS219tests/30files/all ordinary gates; license561/6/269 and test
+infrastructure pass. Own remote pending. Previousec91f3a Full39094550691 and secondary39094553551
+are SUCCESS, verified today; Draft PR#2 remains unmerged.
+
 ## 2026-10-18 — Retire dormant direct JPEG route
 
 Doc63 records removal of unused native_export_jpeg and its request/result/bridge/picker:

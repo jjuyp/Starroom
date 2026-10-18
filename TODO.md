@@ -2,6 +2,14 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Complete bounded Native cache-priming acceptance (doc64): real Final/Fit command
+  launches optional idle-only/epoch-checked source preparation, no decode/render/GPU/
+  publication. Exact real PNG/JPEG/RAW and priority/error tests pass. Ready-cache JPEG
+  first103.773 ->53.475ms, RAW67.443 ->50.393ms, separate prep49.708/18.265ms;274 actual
+  CPU/export comparisons pass. This moves work earlier; races/full UI/NR/zoom remain OPEN.
+  Full Rust1792296168945 PASS473registered/469ordinary/four opt-in excluded;
+  Web1792295985908 PASS219tests/30files and all ordinary gates. Own remote pending.
+
 - [ ] Finish acceptance of unused direct JPEG export retirement (doc63): no actual UI
   caller, sync/direct write/no ICC weaker policy. Remove only legacy IPC/types/bridge/
   picker; preserve professional batch, Reference Match helper and all regressions.
