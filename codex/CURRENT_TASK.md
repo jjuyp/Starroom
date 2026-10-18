@@ -1,5 +1,32 @@
 # Current Task
 
+2026-10-18 latest: owned detail +grain parity (docs66/67) locally accepted. Actual
+denoise/local/sharpen/finishing consume one RGB allocation, frozen original kernels
+retain every f32 bit;96combination/pointer tests pass. Source-bound settings now feed
+both actual Native Preview and professional Export even when AI disabled; previously
+Export missed the grain identity. Existing3 PNG cases remain plus fourth grain/texture/
+vignette exact decoded export and old-unbound counterexample. Recipev3 invalidates
+old output identity. Failed combined report1792298907070 retained; corrected actual
+private RAW1792325829982 passes157CPU/export frames delta<=1, immutable source/key hashes.
+Combined DenoiseSharpen107.894/110.939ms, ToneDenoiseDetail130.348/134.703ms still fail;
+no universal speed,100MP memory or UI presentation claim. Source paths remain local.
+Detail milestone1792298548619, Export1792325961859(27ordinary), Full Rust1792326254186
+PASS478registered/474ordinary/four opt-in excluded; selectedWeb52/JSON/license561/6/269/
+infrastructure pass. Frontend source/locks unchanged from37387e3's Full222 baseline;
+own same-SHA Full CI pending. Prior37387e3 Full39097422697/secondary39097426197 SUCCESS.
+Commit/push this focused group, inspect own CI, continue full original31-phase scope.
+No processes/browser/server/app launched remain; all relevant local gates terminal.
+Next verified audit: ai_availability_status, native_optics_status, native_sample_color,
+native_reference_match are synchronous Tauri handlers doing model hashes/decode/image
+work. Local tauri-macros2.6.3 wrapper.rs defaults Blocking and directly calls them.
+Move these actual handlers to async +spawn_blocking with same typed results/math,
+worker-fault propagation and real-command tests. Do not claim UI input-to-present
+without measuring it. More complex AI generate/detect/model-install handlers also
+need audit/cancellation-safe scheduling; do not blindly change cancellation registries.
+Full GPU detail/combined latency, residency/tiles, color/alpha/monitor, all photographic/
+100MP/installed/Final gates remain OPEN. No phase VERIFIED, no new installer, no main
+merge or Final tag. User will open final desktop; do not launch it yourself.
+
 2026-10-18 latest: doc65 NR addressing and Native histogram ownership locally accepted.
 NR math unchanged; row/column addresses hoisted,588frozen+63border/HDR/signedzero cases
 bit-exact Debug/MSVCRelease. Actual RAW1792296899249 has137CPU/export comparisons

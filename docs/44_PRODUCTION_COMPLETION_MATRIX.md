@@ -10,6 +10,19 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 owned detail +source binding (docs66/67): shared real stages reuse one
+working RGB allocation with frozen-bit and96combination/pointer tests, not a full
+100MP memory qualification. Actual combined RAW validation found and repaired the
+AI-disabled professional Export grain identity mismatch; actual PNG/source/runtime
+portability tests pass, recipev3 binds changed output. Corrected report1792325829982
+passes157 CPU/export comparisons delta<=1/original/key hashes unchanged. DenoiseSharpen
+107.894ms and heavy combined130.348ms remain100ms failures. Full Rust1792326254186
+PASS478registered/474ordinary/four opt-in excluded, Export1792325961859 PASS27ordinary,
+selectedWeb52/JSON/license/infrastructure pass; unchanged frontend Full222 baseline
+is explicit, own same-SHA remote Full pending;
+no complete phase, UI timing, alpha/monitor, memory lifecycle or installed acceptance.
+Prior37387e3 Full39097422697/secondary39097426197 SUCCESS.
+
 2026-10-18 detail/display group (doc65): exact address-only NR reuse retains all588
 frozen comparisons plus63 new borders/signed-zero/HDR; real RAW137 CPU/export frames
 delta<=1/original unchanged. Luma median107.830->97.721ms but p95111.158ms still fails.

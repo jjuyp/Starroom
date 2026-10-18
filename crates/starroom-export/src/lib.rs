@@ -23,7 +23,7 @@ use std::{
 use thiserror::Error;
 
 pub const EXPORT_PRESET_SCHEMA_VERSION: u32 = 1;
-pub const EXPORT_ENGINE_VERSION: &str = "starroom-export-v2-profile-trc";
+pub const EXPORT_ENGINE_VERSION: &str = "starroom-export-v3-source-bound-grain";
 const MAX_WORKING_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const F32_BYTES: u64 = 4;
 

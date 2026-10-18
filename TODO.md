@@ -2,6 +2,16 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Accept owned working detail buffers and source-bound grain repair (docs66/67):
+  actual shared stages retain pointer/capacity, frozen f32 oracles pass;96 combination
+  cases and real PNG export/source-binding tests pass. New combined RAW run1792325829982
+  passes157 CPU/export frames, delta<=1, immutable source. Grain failure8 retained and
+  repaired in actual professional Export, v3 recipe identity. Denoise+Sharpen107.894ms/
+  heavy combined130.348ms still fail100ms. Full Rust1792326254186 PASS478registered/
+  474ordinary/four opt-in excluded; Export1792325961859/selectedWeb52/license/JSON pass.
+  Frontend sources unchanged from Full222 baseline; own remote pending. All broader
+  UI/GPU-residency/alpha/monitor/100MP/installed/Final requirements remain OPEN.
+
 - [ ] Finish doc65 exact NR address/display-readback acceptance: all frozen f32 bits
   preserved; actual RAW137 CPU/export comparisons pass. Luma median107.830->97.721ms
   but p95111.158ms still fails. Real Chromium equal pixels/histograms,44/44 releases,

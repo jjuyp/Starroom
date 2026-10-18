@@ -23,9 +23,11 @@ use starroom_color_management::{
     relative_white_balance_adaptation,
 };
 use starroom_detail::{
-    DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise,
-    local_detail, sharpen,
+    DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise_owned,
+    local_detail_owned, sharpen_owned,
 };
+#[cfg(test)]
+use starroom_detail::{denoise, local_detail, sharpen};
 use starroom_geometry::{
     CropRect, GeometryParameters, Matrix3, Point2, UprightMode, analyze_upright, apply_geometry,
     apply_upright, constrain_crop_aspect,
@@ -33,7 +35,9 @@ use starroom_geometry::{
 use starroom_grading::{GradingParameters, apply_grading};
 use starroom_heal::{HealPoint, HealingOperation, apply_operation};
 use starroom_imageio::{DecodedRenderedImage, DecodedSourceImage, lens_metadata};
-use starroom_look::{GrainSettings, LookError, VignetteSettings, apply_finishing_effects};
+#[cfg(test)]
+use starroom_look::apply_finishing_effects;
+use starroom_look::{GrainSettings, LookError, VignetteSettings, apply_finishing_effects_owned};
 use starroom_optics::{
     LensCorrection, LensIdentity, LensProfileResolution, LensProfileStatus, LensfunProvider,
     NormalizedPoint, OpticsSettings, apply_lens_correction, distort,
@@ -2221,11 +2225,11 @@ fn apply_detail_stage(
     if detail_stage_is_identity(settings) {
         return Ok(image);
     }
-    let denoised = denoise(&image, settings.denoise);
-    let locally_adjusted = local_detail(&denoised, settings.local_detail);
-    let detailed = sharpen(&locally_adjusted, settings.sharpen);
-    apply_finishing_effects(
-        &detailed,
+    let image = denoise_owned(image, settings.denoise);
+    let image = local_detail_owned(image, settings.local_detail);
+    let image = sharpen_owned(image, settings.sharpen);
+    apply_finishing_effects_owned(
+        image,
         settings.grain,
         settings.vignette,
         &settings.image_identity,
@@ -5721,6 +5725,69 @@ mod tests {
         assert_eq!(gamut.executions, 1);
         assert!(gamut.cpu_nanoseconds <= color.cpu_nanoseconds);
         assert!(profile.peak_working_bytes >= 3 * 3 * size_of::<f32>() as u64);
+    }
+
+    #[test]
+    fn owned_detail_chain_keeps_one_working_allocation_for_every_active_stage_combination() {
+        for (width, height) in [(0, 0), (1, 1), (19, 11)] {
+            let values = [-0.0, 0.0, -0.2, 0.18, 0.7, 1.0, 1.5, 9.0];
+            let source = LinearImage::new(
+                width,
+                height,
+                (0..width * height * 3)
+                    .map(|i| values[(i * 13 + i / 3) % values.len()])
+                    .collect(),
+            )
+            .unwrap();
+            let original = source.clone();
+            for enabled in 0..32 {
+                let mut settings = RenderSettings::default();
+                if enabled & 1 != 0 {
+                    settings.denoise.luminance = 0.4;
+                    settings.denoise.chroma = 0.5;
+                }
+                if enabled & 2 != 0 {
+                    settings.local_detail.texture = 0.4;
+                    settings.local_detail.clarity = -0.3;
+                    settings.local_detail.dehaze = 0.2;
+                }
+                if enabled & 4 != 0 {
+                    settings.sharpen.amount = 0.5;
+                }
+                if enabled & 8 != 0 {
+                    settings.grain.amount = 0.4;
+                }
+                if enabled & 16 != 0 {
+                    settings.vignette.amount = -0.3;
+                }
+                let input = source.clone();
+                let pointer = input.data.as_ptr();
+                let capacity = input.data.capacity();
+                let actual = apply_detail_stage(input, &settings).unwrap();
+                let noise = denoise(&source, settings.denoise);
+                let local = local_detail(&noise, settings.local_detail);
+                let sharpened = sharpen(&local, settings.sharpen);
+                let expected = apply_finishing_effects(
+                    &sharpened,
+                    settings.grain,
+                    settings.vignette,
+                    &settings.image_identity,
+                )
+                .unwrap();
+                assert_eq!(actual.data.as_ptr(), pointer, "stage combination {enabled}");
+                assert_eq!(actual.data.capacity(), capacity);
+                assert_eq!(
+                    actual.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                    expected
+                        .data
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
+                    "{width}x{height}, stage combination {enabled}"
+                );
+                assert_eq!(source, original);
+            }
+        }
     }
 
     #[test]

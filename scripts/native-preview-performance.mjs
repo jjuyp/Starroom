@@ -6,6 +6,7 @@ import { extname } from 'node:path'
 
 const format = process.argv.find((argument) => argument.startsWith('--format='))?.slice(9) ?? 'rgba8'
 const prime = process.argv.includes('--prime')
+const combined = process.argv.includes('--combined')
 if (!['jpeg', 'rgba8'].includes(format)) throw new Error('Choose --format=jpeg or --format=rgba8')
 const localSourceArgument = process.argv.find((argument) => argument.startsWith('--source='))
 const localSource = localSourceArgument?.slice(9)
@@ -13,6 +14,7 @@ const dimensions = process.argv.find((argument) => argument.startsWith('--dimens
 if (localSourceArgument && (!localSource || format !== 'rgba8' || !/^\d+x\d+$/.test(dimensions ?? ''))) {
   throw new Error('Read-only local source requires --format=rgba8 and explicit --dimensions=WIDTHxHEIGHT')
 }
+if (combined && !localSource) throw new Error('--combined requires an explicit read-only original and CPU/export comparison')
 const privateIdentity = () => localSource ? {
   kind: 'private-local-original-never-redistributed', format: extname(localSource).toLowerCase(), dimensions,
   sha256: createHash('sha256').update(readFileSync(localSource)).digest('hex'),
@@ -39,11 +41,15 @@ const args = ['test', '--locked', '--release', '-p', 'starroom-desktop',
 const result = spawnSync('cargo', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   env: { ...process.env, STARROOM_RC2_PERFORMANCE_GATE: '1', STARROOM_PREVIEW_PERF_FORMAT: format,
     STARROOM_PREVIEW_PERF_PRIME: prime ? '1' : '',
+    STARROOM_PREVIEW_PERF_COMBINED: combined ? '1' : '',
     ...(localSource ? { STARROOM_PREVIEW_PERF_SOURCE: localSource, STARROOM_PREVIEW_PERF_DIMENSIONS: dimensions }
       : { STARROOM_PREVIEW_PERF_SOURCE: '', STARROOM_PREVIEW_PERF_DIMENSIONS: '' }) } })
 const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
 process.stdout.write(output)
 const controls = [...output.matchAll(/NATIVE_CONTROL_PERF control=(\S+) changed_samples=(\d+) edge=(\d+) median_ms=([\d.]+) p95_ms=([\d.]+)/g)]
+  .map((match) => ({ control: match[1], changedSamples: Number(match[2]), edge: Number(match[3]),
+    medianMs: Number(match[4]), p95Ms: Number(match[5]) }))
+const combinedControls = [...output.matchAll(/NATIVE_COMBINED_PERF control=(\S+) changed_samples=(\d+) edge=(\d+) median_ms=([\d.]+) p95_ms=([\d.]+)/g)]
   .map((match) => ({ control: match[1], changedSamples: Number(match[2]), edge: Number(match[3]),
     medianMs: Number(match[4]), p95Ms: Number(match[5]) }))
 const firstMatch = output.match(/NATIVE_FIRST_INTERACTIVE cold_tier_ms=([\d.]+) profile=(\{[^\r\n]+\})/)
@@ -57,14 +63,15 @@ const failure = changedDuringRun ? 'Source changed during compilation/measuremen
   : JSON.stringify(sourcePhoto) !== JSON.stringify(privateIdentity()) ? 'Original source bytes changed'
   : result.error?.message ?? (result.status !== 0 ? `cargo exit ${result.status}`
   : controls.length !== 27 ? `Expected27 controls, received${controls.length}`
+    : combinedControls.length !== (combined ? 4 : 0) ? 'Combined control timing did not complete'
     : prime && !priming ? 'Missing completed Native priming evidence'
     : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement'
-      : localSource && (!localParity || localParity.comparedFrames !== 137 || localParity.maxRgb8Delta > 1)
+      : localSource && (!localParity || localParity.comparedFrames !== (combined ? 157 : 137) || localParity.maxRgb8Delta > 1)
         ? 'Actual local photo CPU/GPU parity did not complete' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
   sources, changedDuringRun, sourcePhoto, localParity, priming,
   scope: `Real MSVC Release Native requests on24MP ${localSource ? 'private read-only original' : 'synthetic source'}, excludes Tauri IPC/browser/OS presentation`,
-  command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, output }
+  command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, combinedControls, output }
 mkdirSync('.starroom-reports', { recursive: true })
 const path = `.starroom-reports/native-preview-${format}-${Date.now()}.json`
 writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })

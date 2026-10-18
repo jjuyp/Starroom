@@ -1,5 +1,29 @@
 # Implementation Notes
 
+## 2026-10-18 — Owned detail frames and source-bound grain consistency
+
+Docs66/67 record real shared-graph ownership, not key-only caches: denoise/local/
+sharpen/finishing consume the working RGB allocation; neighbour intermediates stay
+immutable, all original math remains bit-exact against frozen detail/finishing loops.
+96 active-stage combinations retain pointer/capacity; malformed/overflow/NaN errors
+stay explicit. Detail milestone1792298548619 passes77pipeline/39render/actual RAW/
+photographic/strict workspace-Clippy gates. Actual Native run1792298387106 passes137
+CPU/export frames; no universal performance or measured100MP memory claim.
+Combined validation1792298907070 exposed missing grain identity: reference was unbound,
+and real professional Export also omitted it whenever AI Denoise was disabled. Both
+actual Preview/Export now validate/bind runtime source identity; portable state stays
+path-free. Output recipe versionv3 prevents aliasing corrected pixels with v2.
+Original three PNG/Native tests remain; fourth grain+texture+vignette matches exact
+decoded ICC-PNG and retains the old unbound counterexample. Corrected real RAW
+1792325829982 passes157 actual CPU/export comparisons delta<=1, unchanged originals/
+key hashes, strict tolerance unchanged. DenoiseSharpen107.894/110.939ms and heavy
+combined130.348/134.703ms remain failures; warm/refine regressions retained. Full Rust
+1792326254186 PASS478registered/474ordinary/four opt-in excluded, strict Clippy/format/
+tests/doc-tests; Export1792325961859 PASS27ordinary. Frontend source/locks unchanged
+from37387e3's Full222 baseline;52 selected Native tests/JSON/license561/6/269/
+infrastructure pass again. Own remote pending. Previous37387e3 Full39097422697/
+secondary39097426197 SUCCESS.
+
 ## 2026-10-18 — Exact NR address reuse and display histogram ownership
 
 Doc65 records row/column address reuse with unchanged NR weights/accumulation and

@@ -452,30 +452,54 @@ fn random_unit(seed: u64, x: u64, y: u64, c: u64) -> f32 {
     z = z.wrapping_mul(0x94D049BB133111EB);
     ((z ^ (z >> 31)) >> 40) as f32 / 16_777_215.0
 }
+fn valid_finishing_layout(image: &LinearImage) -> bool {
+    image
+        .width
+        .checked_mul(image.height)
+        .and_then(|pixels| pixels.checked_mul(3))
+        == Some(image.data.len())
+}
+
 pub fn apply_finishing_effects(
     image: &LinearImage,
     grain: GrainSettings,
     vignette: VignetteSettings,
     image_identity: &str,
 ) -> Result<LinearImage, LookError> {
-    if image.data.len() != image.width * image.height * 3 {
+    if !valid_finishing_layout(image) {
         return Err(LookError::InvalidImage);
     }
+    apply_finishing_effects_owned(image.clone(), grain, vignette, image_identity)
+}
+
+/// Same deterministic finishing kernel, consuming the mutable working buffer instead of copying it.
+pub fn apply_finishing_effects_owned(
+    image: LinearImage,
+    grain: GrainSettings,
+    vignette: VignetteSettings,
+    image_identity: &str,
+) -> Result<LinearImage, LookError> {
+    if !valid_finishing_layout(&image) {
+        return Err(LookError::InvalidImage);
+    }
+    let LinearImage {
+        width,
+        height,
+        mut data,
+    } = image;
     // Off must not execute per-pixel vignette, noise hashes and grain arithmetic merely
     // because another detail control is enabled. Retain the same finite/shape validation.
     if grain.amount == 0.0 && vignette.amount == 0.0 {
-        return LinearImage::new(image.width, image.height, image.data.clone())
-            .map_err(|_| LookError::InvalidImage);
+        return LinearImage::new(width, height, data).map_err(|_| LookError::InvalidImage);
     }
     let identity = Sha256::digest(image_identity.as_bytes());
     let seed = grain.seed ^ u64::from_le_bytes(identity[..8].try_into().unwrap());
-    let mut data = image.data.clone();
-    let cx = (image.width.saturating_sub(1)) as f32 * 0.5;
-    let cy = (image.height.saturating_sub(1)) as f32 * 0.5;
-    let aspect = image.width as f32 / image.height.max(1) as f32;
-    for y in 0..image.height {
-        for x in 0..image.width {
-            let i = (y * image.width + x) * 3;
+    let cx = (width.saturating_sub(1)) as f32 * 0.5;
+    let cy = (height.saturating_sub(1)) as f32 * 0.5;
+    let aspect = width as f32 / height.max(1) as f32;
+    for y in 0..height {
+        for x in 0..width {
+            let i = (y * width + x) * 3;
             let dx = (x as f32 - cx) / cx.max(1.0);
             let dy = (y as f32 - cy) / cy.max(1.0);
             let roundness = (vignette.roundness.clamp(-1.0, 1.0) + 1.0) * 0.5;
@@ -511,12 +535,117 @@ pub fn apply_finishing_effects(
             }
         }
     }
-    LinearImage::new(image.width, image.height, data).map_err(|_| LookError::InvalidImage)
+    LinearImage::new(width, height, data).map_err(|_| LookError::InvalidImage)
 }
+
+#[cfg(test)]
+#[path = "../tests/oracles/borrowed_finishing_v1.rs"]
+mod borrowed_finishing_reference;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owned_finishing_preserves_allocation_exact_frozen_bits_and_typed_validation() {
+        for (width, height) in [(0, 0), (1, 1), (1, 17), (31, 19)] {
+            let values = [-0.0, 0.0, -0.3, 0.18, 0.7, 1.0, 1.5, 9.0];
+            let source = LinearImage::new(
+                width,
+                height,
+                (0..width * height * 3)
+                    .map(|i| values[(i * 13 + i / 3) % values.len()])
+                    .collect(),
+            )
+            .unwrap();
+            for amount in [0.0, 0.5, 1.0] {
+                for vig in [-1.0, 0.0, 1.0] {
+                    let grain = GrainSettings {
+                        amount,
+                        color: 0.7,
+                        roughness: 0.3,
+                        ..Default::default()
+                    };
+                    let vignette = VignetteSettings {
+                        amount: vig,
+                        highlight_protect: 0.8,
+                        ..Default::default()
+                    };
+                    let input = source.clone();
+                    let pointer = input.data.as_ptr();
+                    let capacity = input.data.capacity();
+                    let actual =
+                        apply_finishing_effects_owned(input, grain, vignette, "owned-reference")
+                            .unwrap();
+                    let expected = borrowed_finishing_reference::finishing(
+                        &source,
+                        grain,
+                        vignette,
+                        "owned-reference",
+                    )
+                    .unwrap();
+                    assert_eq!(actual.data.as_ptr(), pointer);
+                    assert_eq!(actual.data.capacity(), capacity);
+                    assert_eq!(
+                        actual.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                        expected
+                            .data
+                            .iter()
+                            .map(|v| v.to_bits())
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+        for invalid in [
+            LinearImage {
+                width: usize::MAX,
+                height: 2,
+                data: vec![],
+            },
+            LinearImage {
+                width: 1,
+                height: 1,
+                data: vec![0.0, f32::NAN, 0.0],
+            },
+            LinearImage {
+                width: 1,
+                height: 1,
+                data: vec![0.0, f32::INFINITY, 0.0],
+            },
+            LinearImage {
+                width: 1,
+                height: 1,
+                data: vec![0.0],
+            },
+        ] {
+            for amount in [0.0, 0.5] {
+                assert_eq!(
+                    apply_finishing_effects(
+                        &invalid,
+                        GrainSettings {
+                            amount,
+                            ..Default::default()
+                        },
+                        VignetteSettings::default(),
+                        "invalid"
+                    ),
+                    Err(LookError::InvalidImage)
+                );
+                assert_eq!(
+                    apply_finishing_effects_owned(
+                        invalid.clone(),
+                        GrainSettings {
+                            amount,
+                            ..Default::default()
+                        },
+                        VignetteSettings::default(),
+                        "invalid"
+                    ),
+                    Err(LookError::InvalidImage)
+                );
+            }
+        }
+    }
     #[test]
     fn off_finishing_is_exact_hdr_identity_and_preserves_validation() {
         let source =

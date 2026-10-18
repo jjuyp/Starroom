@@ -2339,6 +2339,17 @@ fn preview_source_identity(path: &Path) -> Result<String, String> {
     Ok(format!("{}:{}:{modified}", path.display(), metadata.len()))
 }
 
+/// Bind runtime-only deterministic effects identically for Native Preview and Export.
+/// Portable edit settings never serialize a local path/mtime or substitute a random grain seed.
+fn source_bound_render_settings(
+    edit: NativeEditSettings,
+    source_identity: &str,
+) -> Result<RenderSettings, String> {
+    let mut settings = edit.validated()?;
+    settings.image_identity = source_identity.to_owned();
+    Ok(settings)
+}
+
 fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
     match decoded {
         DecodedSourceImage::Rendered(image) => (image.width, image.height),
@@ -3903,7 +3914,7 @@ fn native_preview_inner(
         .validate(request.interaction_phase == PreviewInteractionPhase::Interactive)?;
     let source_identity = preview_source_identity(&request.source_path)?;
     let requested_denoise_provider = request.settings.ai_denoise_provider;
-    let mut settings = request.settings.validated()?;
+    let mut settings = source_bound_render_settings(request.settings, &source_identity)?;
     attach_portrait_masks(&mut settings, &request.source_path, portrait_runtime)?;
     attach_generated_masks(&mut settings, &request.source_path, ai_mask_runtime)?;
     let gpu_cache_keys = preview_stage_identity(&source_identity, &settings)?;
@@ -4622,7 +4633,10 @@ async fn native_export_batch(
         }
         let prepared = (|| -> Result<RenderSettings, String> {
             let requested_provider = item.edit_settings.ai_denoise_provider;
-            let mut settings = item.edit_settings.validated()?;
+            let mut settings = source_bound_render_settings(
+                item.edit_settings,
+                &preview_source_identity(&item.source_path)?,
+            )?;
             attach_portrait_masks(&mut settings, &item.source_path, &portrait_runtime)?;
             attach_generated_masks(&mut settings, &item.source_path, &ai_mask_runtime)?;
             // The production FullResolutionRenderer owns the one normal source decode. The M26
@@ -5887,6 +5901,27 @@ mod tests {
     }
 
     #[test]
+    fn native_source_binding_is_runtime_only_and_deterministic_with_ai_denoise_off() {
+        let mut edit = neutral_settings();
+        edit.grain.amount = 0.2;
+        let portable = serde_json::to_value(&edit).unwrap();
+        assert!(!portable.as_object().unwrap().contains_key("imageIdentity"));
+        assert!(!edit.ai_denoise.enabled);
+        let bound = source_bound_render_settings(edit.clone(), "same-source-revision").unwrap();
+        assert_eq!(bound.image_identity, "same-source-revision");
+        assert_eq!(bound.grain, edit.grain);
+        assert!(edit.clone().validated().unwrap().image_identity.is_empty());
+        assert_eq!(serde_json::to_value(&edit).unwrap(), portable);
+        assert_eq!(
+            bound,
+            source_bound_render_settings(edit.clone(), "same-source-revision").unwrap()
+        );
+        let mut invalid = edit;
+        invalid.exposure = f32::NAN;
+        assert!(source_bound_render_settings(invalid, "same-source-revision").is_err());
+    }
+
+    #[test]
     fn actual_lossless_preview_matches_decoded_export_and_separates_transport_cache() {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
@@ -5896,7 +5931,7 @@ mod tests {
         let portrait = NativePortraitRuntime::default();
         let masks = NativeAiMaskRuntime::default();
         let denoise = NativeAiDenoiseRuntime::default();
-        for (index, exposure) in [0.0, -1.25, 1.5].into_iter().enumerate() {
+        for (index, exposure) in [0.0, -1.25, 1.5, 0.75].into_iter().enumerate() {
             let edit = || {
                 let mut edit: NativeEditSettings = serde_json::from_str(include_str!(
                     "../../fixtures/contracts/native-default-settings.json"
@@ -5906,6 +5941,11 @@ mod tests {
                 edit.shadows = 35.0;
                 edit.highlights = -30.0;
                 edit.saturation = 15.0;
+                if index == 3 {
+                    edit.grain.amount = 0.2;
+                    edit.local_detail.texture = 0.3;
+                    edit.vignette.amount = -0.2;
+                }
                 edit
             };
             let render = |format, phase| {
@@ -5979,7 +6019,8 @@ mod tests {
             let exported = export_one(
                 &NativeSharedGraphRenderer,
                 &request,
-                &edit().validated().unwrap(),
+                &source_bound_render_settings(edit(), &preview_source_identity(&source).unwrap())
+                    .unwrap(),
                 &AtomicBool::new(false),
             )
             .unwrap();
@@ -5999,6 +6040,29 @@ mod tests {
                 exported_bytes,
                 "real binary preview versus decoded PNG export"
             );
+            if index == 3 {
+                // Preserve the demonstrated pre-fix counterexample: the professional
+                // renderer given unbound portable settings used a different grain seed.
+                let unbound = render_source_export_to_srgb8(
+                    &decode_source(&source).unwrap(),
+                    &edit().validated().unwrap(),
+                )
+                .unwrap();
+                assert!(
+                    unbound
+                        .data
+                        .iter()
+                        .zip(
+                            exported_bytes
+                                .as_chunks::<4>()
+                                .0
+                                .iter()
+                                .flat_map(|pixel| pixel[..3].iter())
+                        )
+                        .any(|(a, b)| a.abs_diff(*b) > 1),
+                    "unbound export must expose the original deterministic-grain mismatch"
+                );
+            }
         }
         assert_eq!(source_content_hash(&source).unwrap(), original);
     }
@@ -7902,9 +7966,11 @@ mod tests {
                             .map(|(image, _)| image)
                     })
                     .expect("actual interactive pixels must be retained");
-                let reference =
-                    render_source_export_to_srgb8(&decoded, &cpu_settings.validated().unwrap())
-                        .unwrap();
+                let reference = render_source_export_to_srgb8(
+                    &decoded,
+                    &source_bound_render_settings(cpu_settings, &identity).unwrap(),
+                )
+                .unwrap();
                 let profile_len = u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize;
                 let pixels = &frame[40 + profile_len..];
                 assert_eq!(pixels.len(), reference.data.len() / 3 * 4);
@@ -8200,9 +8266,69 @@ mod tests {
                 samples[2], samples[4]
             );
         }
+        let combined = std::env::var("STARROOM_PREVIEW_PERF_COMBINED").as_deref() == Ok("1");
+        if combined {
+            assert!(
+                local_source.is_some(),
+                "combined timing requires an explicit read-only original and CPU/export oracle"
+            );
+            let combinations: [(&str, ControlMutation); 4] = [
+                ("ToneColor", |s, v| {
+                    s.exposure = v / 50.0;
+                    s.shadows = v;
+                    s.saturation = v / 2.0;
+                    s.color_mixer.bands[0].hue_degrees = v / 5.0;
+                    s.grading.global.chroma = 0.03;
+                    s.grading.global.hue_degrees = 220.0;
+                }),
+                ("DenoiseSharpen", |s, v| {
+                    s.denoise_settings.luminance = v / 100.0;
+                    s.denoise_settings.chroma = 0.25;
+                    s.sharpen_settings.amount = v / 50.0;
+                }),
+                ("LocalDetailFinishing", |s, v| {
+                    s.exposure = 0.4;
+                    s.local_detail.texture = v / 100.0;
+                    s.local_detail.clarity = -0.2;
+                    s.local_detail.dehaze = 0.2;
+                    s.grain.amount = 0.2;
+                    s.vignette.amount = -0.2;
+                }),
+                ("ToneDenoiseDetail", |s, v| {
+                    s.exposure = 0.4;
+                    s.highlights = -25.0;
+                    s.denoise_settings.luminance = v / 100.0;
+                    s.denoise_settings.chroma = 0.25;
+                    s.local_detail.texture = 0.3;
+                    s.local_detail.clarity = -0.2;
+                    s.sharpen_settings.amount = 0.5;
+                }),
+            ];
+            for (name, mutate) in combinations {
+                let mut samples = Vec::with_capacity(5);
+                for index in 0..5 {
+                    let mut edit = neutral_settings();
+                    mutate(&mut edit, 32.0 + index as f32 * 3.0);
+                    let (duration, profile) = render(
+                        &format!("combined-{name}-{index}"),
+                        PreviewInteractionPhase::Interactive,
+                        PreviewResolutionMode::Fit,
+                        None,
+                        edit,
+                    );
+                    assert!(profile.stages.contains_key(&ProfileStage::Encode));
+                    samples.push(duration.as_secs_f64() * 1000.0);
+                }
+                samples.sort_by(f64::total_cmp);
+                eprintln!(
+                    "NATIVE_COMBINED_PERF control={name} changed_samples=5 edge=1024 median_ms={:.3} p95_ms={:.3}",
+                    samples[2], samples[4]
+                );
+            }
+        }
         assert_eq!(source_content_hash(&source).unwrap(), source_hash);
         if local_source.is_some() {
-            assert_eq!(compared_frames.get(), 137);
+            assert_eq!(compared_frames.get(), if combined { 157 } else { 137 });
             eprintln!(
                 "NATIVE_LOCAL_PARITY compared_frames={} max_rgb8_delta={} cpu_reference_outside_measured_interval=true source_unchanged=true",
                 compared_frames.get(),
