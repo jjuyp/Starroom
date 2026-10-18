@@ -10,6 +10,17 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-19 cancellation(doc69): real Native token explicitly captured by NR Rayon
+workers, latched abort with no partial success;252 frozen-bit/pointer cases and actual
+graph token test pass. Queue pending updates no longer issue orphan Native cancel:
+RED1000 callbacks ->GREEN0, existing drag/latest/final/isolation tests preserved.
+Actual RAW1792328897844 passes157GPU/CPU/export frames delta<=1/source immutable;
+heavy combination140.603/154.663ms STILL fails100ms. Kernel cancellation1.195ms median
+is not wholeUI. Full Rust1792342269311 PASS488registered/484ordinary/four optins.
+Web224/lint/JSON/Golden pass in1792342056231, Vite fast-fail retained, identical isolated
+canonical build/TS/package retry PASS. License/infra pass; own remote pending. Prior
+8a9ff84 Full39129301054/secondary39129305989 SUCCESS. All unqualified scope stays OPEN.
+
 2026-10-18 doc68: four real Native file/CPU IPC handlers now async+spawn_blocking,
 same result/core error semantics and executable worker/actual PNG/Reference tests.
 Actual Reference exposed33-point Native limit and signed hue-offset wrapping defects;

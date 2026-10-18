@@ -48,10 +48,12 @@ export class LatestPreviewQueue<T> {
     })
   }
 
-  private supersede(request: Request<T>) {
+  private supersede(request: Request<T>, cancelRunning = this.active === request) {
     if (request.settled) return
     request.settled = true
-    request.cancel()
+    // Pending work has never reached Native. Cancelling it creates orphan early-cancel
+    // tokens/timings and unnecessary IPC traffic on every replaced pointer update.
+    if (cancelRunning) request.cancel()
     request.reject(new PreviewSuperseded())
   }
 
@@ -63,7 +65,7 @@ export class LatestPreviewQueue<T> {
         || request.interactiveKey !== undefined && request.interactiveKey === this.interactiveKey)) {
         request.settled = true
         request.resolve(value)
-      } else if (!request.settled) this.supersede(request)
+      } else if (!request.settled) this.supersede(request, false)
     } catch (error) {
       if (!request.settled) { request.settled = true; request.reject(error) }
     }

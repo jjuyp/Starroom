@@ -8,6 +8,28 @@ const deferred = <T,>() => {
 }
 
 describe('LatestPreviewQueue', () => {
+  it('never sends Native cancel commands for work that was never dispatched', async () => {
+    for (const interactiveKey of [undefined, 'same-source']) {
+      const queue = new LatestPreviewQueue<number>()
+      const active = deferred<number>()
+      const activeCancel = vi.fn()
+      const pendingCancel = vi.fn()
+      const pendingRun = vi.fn(async () => 2)
+      const requests: Promise<unknown>[] = [queue.submit(() => active.promise, activeCancel, interactiveKey)
+        .catch((error: unknown) => error)]
+      for (let index = 0; index < 1000; index++) {
+        requests.push(queue.submit(pendingRun, pendingCancel, interactiveKey).catch((error: unknown) => error))
+      }
+      queue.cancelAll()
+      active.resolve(1)
+      const results = await Promise.all(requests)
+      expect(results.every((result) => result instanceof PreviewSuperseded)).toBe(true)
+      expect(activeCancel).toHaveBeenCalledTimes(1)
+      expect(pendingCancel.mock.calls.length).toBe(0)
+      expect(pendingRun).not.toHaveBeenCalled()
+      await expect(queue.submit(async () => 3, () => {})).resolves.toBe(3)
+    }
+  })
   it('cancels unmounted surfaces without running their pending work and remains reusable', async () => {
     const queue = new LatestPreviewQueue<number>(); const active = deferred<number>(); let pendingRuns = 0
     const first = queue.submit(() => active.promise, () => {}, 'a').catch((error: unknown) => error)

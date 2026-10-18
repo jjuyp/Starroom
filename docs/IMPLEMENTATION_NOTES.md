@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## 2026-10-19 — Cancellation reaches the actual NR workers and pending UI lifecycle
+
+Doc69 adds request-scoped, latched cancellation inside unchanged mature NR math,
+explicitly propagating the token into Rayon rather than relying on caller TLS.
+No partial image escapes; baseline/export has same kernel and allocation.252 frozen
+cases and actual shared-stage scope/parity pass. Native timing now exercises actual
+token branch,157 real RAW CPU/export frames pass, delta<=1/source immutable. Combined
+heavy140.603/154.663ms remains failure, no universal speedup. Initial kernel overhead
+4.5% retained; structural64pixel blocks remove that measured regression, final kernel
+baseline342.485ms/controlled333.503ms, cancel settle median1.195/p951.461ms, notUI/RSS.
+Executable RED proved1000 cancel callbacks for never-dispatched updates; real queue
+now rejects pending locally and only cancels active work;63 focused tests pass.
+Full Rust1792342269311 PASS488registered/484ordinary/four optins; Web attempt1792342056231
+has224tests/31files/lint/JSON/Golden pass, transientVite3221226505 retained and identical
+targeted build/TypeScript/package retry passes. License561/6/269/infra19 pass. Prior
+8a9ff84 Full39129301054 and secondary39129305989 SUCCESS. Own remote still required.
+Inner Gaussian/local/sharpen/finishing, decode/CMM/GPU cancellation remain open, as do
+all broader original phases. No desktop launch/new installer/Final/tag/main merge.
+
 ## 2026-10-18 — Async Native IPC and executable Reference Match repair
 
 Doc68: actual availability/optics/color-sample/reference handlers now async, existing

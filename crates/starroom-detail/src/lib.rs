@@ -4,6 +4,7 @@
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearImage {
@@ -125,6 +126,9 @@ pub enum DetailError {
     InvalidBufferLength,
     NonFiniteInput,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DetailCancelled;
 
 fn gaussian_kernel(radius: f32) -> Vec<f32> {
     let sigma = radius.max(0.25);
@@ -324,6 +328,49 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
 
 /// Immutable neighbour components stay separate; output reuses the consumed RGB allocation.
 pub fn denoise_owned(image: LinearImage, parameters: DenoiseParameters) -> LinearImage {
+    denoise_owned_impl(image, parameters, &|| false)
+}
+
+/// Request cancellation never exposes a partially processed image. Uncancelled math and
+/// allocation ownership are identical to `denoise_owned`; no process-global token is used.
+pub fn denoise_owned_cancellable(
+    image: LinearImage,
+    parameters: DenoiseParameters,
+    cancelled: &AtomicBool,
+) -> Result<LinearImage, DetailCancelled> {
+    try_denoise_owned(image, parameters, &|| cancelled.load(Ordering::Acquire))
+}
+
+fn try_denoise_owned(
+    image: LinearImage,
+    parameters: DenoiseParameters,
+    requested: &(impl Fn() -> bool + Sync),
+) -> Result<LinearImage, DetailCancelled> {
+    let observed = AtomicBool::new(false);
+    let probe = || {
+        if requested() {
+            observed.store(true, Ordering::Release);
+            true
+        } else {
+            observed.load(Ordering::Acquire)
+        }
+    };
+    let output = denoise_owned_impl(image, parameters, &probe);
+    if probe() {
+        Err(DetailCancelled)
+    } else {
+        Ok(output)
+    }
+}
+
+fn denoise_owned_impl(
+    image: LinearImage,
+    parameters: DenoiseParameters,
+    cancelled: &(impl Fn() -> bool + Sync),
+) -> LinearImage {
+    if cancelled() {
+        return image;
+    }
     let iso_boost = parameters.high_iso.clamp(0.0, 1.0);
     let luminance_strength = (parameters.luminance + iso_boost * 0.35).clamp(0.0, 1.0);
     let chroma_strength = (parameters.chroma + iso_boost * 0.55).clamp(0.0, 1.0);
@@ -335,10 +382,18 @@ pub fn denoise_owned(image: LinearImage, parameters: DenoiseParameters) -> Linea
     }
 
     let mut components = image.data.clone();
-    components.par_chunks_mut(3).for_each(|pixel| {
-        let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
-        pixel.copy_from_slice(&[y, cb, cr]);
+    components.par_chunks_mut(image.width * 3).for_each(|row| {
+        if cancelled() {
+            return;
+        }
+        for pixel in row.as_chunks_mut::<3>().0 {
+            let (y, cb, cr) = rgb_to_ycbcr(pixel[0], pixel[1], pixel[2]);
+            pixel.copy_from_slice(&[y, cb, cr]);
+        }
     });
+    if cancelled() {
+        return image;
+    }
     let component_image = LinearImage {
         width: image.width,
         height: image.height,
@@ -376,47 +431,57 @@ pub fn denoise_owned(image: LinearImage, parameters: DenoiseParameters) -> Linea
         .par_chunks_mut(component_image.width.max(1) * 3)
         .enumerate()
         .for_each(|(y_index, output_row)| {
+            if cancelled() {
+                return;
+            }
             let rows: [usize; 17] = std::array::from_fn(|index| {
                 (y_index as isize + index as isize - half)
                     .clamp(0, component_image.height as isize - 1) as usize
                     * component_image.width
                     * 3
             });
-            for (x_index, output_pixel) in output_row.as_chunks_mut::<3>().0.iter_mut().enumerate()
-            {
-                let pixel_index = y_index * component_image.width + x_index;
-                let base = pixel_index * 3;
-                let original_y = component_image.data[base];
-                let original_cb = component_image.data[base + 1];
-                let original_cr = component_image.data[base + 2];
-                let mut sum = [0.0_f32; 3];
-                let mut weight_sum = 0.0;
-                for (row, weights) in rows[..diameter]
-                    .iter()
-                    .zip(spatial_kernel.chunks_exact(diameter))
-                {
-                    for (column, &(_, _, spatial)) in
-                        columns[x_index][..diameter].iter().zip(weights)
-                    {
-                        let source_base = row + column;
-                        let sample_y = component_image.data[source_base];
-                        let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
-                        let weight = spatial * range;
-                        for (channel, accumulated) in sum.iter_mut().enumerate() {
-                            *accumulated += component_image.data[source_base + channel] * weight;
-                        }
-                        weight_sum += weight;
-                    }
+            for (block_index, block) in output_row.chunks_mut(64 * 3).enumerate() {
+                if cancelled() {
+                    return;
                 }
-                let filtered = sum.map(|value| value / weight_sum.max(f32::EPSILON));
-                let y = original_y
-                    + (filtered[0] - original_y)
-                        * luminance_strength
-                        * (1.0 - detail_protection * 0.7);
-                let cb = original_cb + (filtered[1] - original_cb) * chroma_strength;
-                let cr = original_cr + (filtered[2] - original_cr) * chroma_strength;
-                let (r, g, b) = ycbcr_to_rgb(y, cb, cr);
-                output_pixel.copy_from_slice(&[r, g, b]);
+                for (offset, output_pixel) in block.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                    let x_index = block_index * 64 + offset;
+                    let pixel_index = y_index * component_image.width + x_index;
+                    let base = pixel_index * 3;
+                    let original_y = component_image.data[base];
+                    let original_cb = component_image.data[base + 1];
+                    let original_cr = component_image.data[base + 2];
+                    let mut sum = [0.0_f32; 3];
+                    let mut weight_sum = 0.0;
+                    for (row, weights) in rows[..diameter]
+                        .iter()
+                        .zip(spatial_kernel.chunks_exact(diameter))
+                    {
+                        for (column, &(_, _, spatial)) in
+                            columns[x_index][..diameter].iter().zip(weights)
+                        {
+                            let source_base = row + column;
+                            let sample_y = component_image.data[source_base];
+                            let range =
+                                (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
+                            let weight = spatial * range;
+                            for (channel, accumulated) in sum.iter_mut().enumerate() {
+                                *accumulated +=
+                                    component_image.data[source_base + channel] * weight;
+                            }
+                            weight_sum += weight;
+                        }
+                    }
+                    let filtered = sum.map(|value| value / weight_sum.max(f32::EPSILON));
+                    let y = original_y
+                        + (filtered[0] - original_y)
+                            * luminance_strength
+                            * (1.0 - detail_protection * 0.7);
+                    let cb = original_cb + (filtered[1] - original_cb) * chroma_strength;
+                    let cr = original_cr + (filtered[2] - original_cr) * chroma_strength;
+                    let (r, g, b) = ycbcr_to_rgb(y, cb, cr);
+                    output_pixel.copy_from_slice(&[r, g, b]);
+                }
             }
         });
     output
@@ -483,6 +548,105 @@ mod serial_reference;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellable_denoise_retains_allocation_and_frozen_serial_bits() {
+        for threads in [1, 2, 4] {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| {
+                    for (width, height) in
+                        [(0, 0), (0, 5), (5, 0), (1, 1), (1, 7), (7, 1), (37, 23)]
+                    {
+                        let source = LinearImage::new(
+                            width,
+                            height,
+                            (0..width * height * 3)
+                                .map(|index| [-0.0, 0.0, -0.25, 0.01, 0.18, 1.0, 4.0][index % 7])
+                                .collect(),
+                        )
+                        .unwrap();
+                        for radius in [0.6, 1.25, 4.0] {
+                            for (luminance, chroma) in
+                                [(0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (1.0, 1.0)]
+                            {
+                                let parameters = DenoiseParameters {
+                                    radius,
+                                    luminance,
+                                    chroma,
+                                    ..Default::default()
+                                };
+                                let input = source.clone();
+                                let pointer = input.data.as_ptr();
+                                let capacity = input.data.capacity();
+                                let actual = denoise_owned_cancellable(
+                                    input,
+                                    parameters,
+                                    &AtomicBool::new(false),
+                                )
+                                .unwrap();
+                                let expected = serial_reference::denoise(&source, parameters);
+                                assert_eq!(actual.data.as_ptr(), pointer);
+                                assert_eq!(actual.data.capacity(), capacity);
+                                assert_eq!(
+                                    actual.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                    expected
+                                        .data
+                                        .iter()
+                                        .map(|v| v.to_bits())
+                                        .collect::<Vec<_>>()
+                                );
+                            }
+                        }
+                    }
+                });
+        }
+    }
+
+    #[test]
+    fn denoise_cancellation_is_latched_during_conversion_and_filtering_without_partial_success() {
+        use std::sync::atomic::AtomicUsize;
+        let source = LinearImage::new(
+            65,
+            9,
+            (0..65 * 9 * 3)
+                .map(|index| (index % 97) as f32 / 31.0 - 0.2)
+                .collect(),
+        )
+        .unwrap();
+        let original = source.clone();
+        let parameters = DenoiseParameters {
+            luminance: 0.7,
+            chroma: 0.8,
+            ..Default::default()
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            // Deterministic checkpoints in entry, conversion and the actual NR loop.
+            // Request returns false again afterward: observed cancellation must still latch.
+            for trigger in [1, 4, 30] {
+                let calls = AtomicUsize::new(0);
+                let result = try_denoise_owned(source.clone(), parameters, &|| {
+                    calls.fetch_add(1, Ordering::AcqRel) + 1 == trigger
+                });
+                assert_eq!(result, Err(DetailCancelled));
+                assert!(calls.load(Ordering::Acquire) >= trigger);
+            }
+        });
+        assert_eq!(
+            denoise_owned_cancellable(source.clone(), parameters, &AtomicBool::new(true)),
+            Err(DetailCancelled)
+        );
+        let subsequent =
+            denoise_owned_cancellable(source.clone(), parameters, &AtomicBool::new(false)).unwrap();
+        assert_eq!(subsequent, serial_reference::denoise(&source, parameters));
+        assert_eq!(source, original);
+    }
 
     #[test]
     fn owned_detail_stages_retain_the_same_allocation_and_exact_serial_pixels() {

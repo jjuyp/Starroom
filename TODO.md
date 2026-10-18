@@ -2,6 +2,18 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Local cancellation batch (doc69): Native request token explicitly reaches real
+  Rayon NR rows/64-pixel blocks; cancellation latches, never returns partial success.
+ 252 new frozen-bit/pointer cases and actual graph token test pass. Queue RED showed
+ 1000 cancel IPC callbacks for undispatched updates; actual queue now emits zero for
+  pending work, retains one active cancel and reuse/continuous-drag semantics. Actual
+  RAW1792328897844 passes157 frames/delta<=1/original unchanged, but heavy140.603ms/
+  p95154.663ms still fails. Kernel cancel settle1.195ms median is NOT UI latency.
+  Full Rust1792342269311 PASS488registered/484ordinary/four optins. Web224/lint/JSON/
+  Golden pass in1792342056231; transient Vite fast-fail retained, identical targeted
+  canonical build/TS/package retry passed. Licenses/infra pass. Own remote required;
+  all uninterruptible stages/GPU/monitor/alpha/100MP/installed/Final scope stays OPEN.
+
 - [x] Local focused async-command/Reference acceptance (doc68): four actual IPC
   commands use Tauri blocking workers with preserved wire results/errors; real PNG/
   Reference tests exposed and repair33-point curve rejection and wrapped negative

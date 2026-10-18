@@ -26,6 +26,7 @@ if (process.platform !== 'win32' || !/host: .*windows-msvc/.test(compiler)) {
 }
 const sourceFiles = ['Cargo.lock', 'src-tauri/src/lib.rs', 'src-tauri/src/preview_transport.rs',
   'crates/starroom-pipeline/src/lib.rs', 'crates/starroom-pipeline/src/source_preparation.rs',
+  'crates/starroom-pipeline/src/cancellation.rs',
   'scripts/native-preview-performance.mjs', 'crates/starroom-detail/src/lib.rs',
   'crates/starroom-look/src/lib.rs', 'crates/starroom-render/src/profiling.rs',
   'crates/starroom-imageio/src/lib.rs', 'crates/starroom-imageio/src/unbounded_resize.rs',

@@ -24,7 +24,7 @@ use starroom_color_management::{
 };
 use starroom_detail::{
     DenoiseParameters, LinearImage, LocalDetailParameters, SharpenParameters, denoise_owned,
-    local_detail_owned, sharpen_owned,
+    denoise_owned_cancellable, local_detail_owned, sharpen_owned,
 };
 #[cfg(test)]
 use starroom_detail::{denoise, local_detail, sharpen};
@@ -2225,9 +2225,17 @@ fn apply_detail_stage(
     if detail_stage_is_identity(settings) {
         return Ok(image);
     }
-    let image = denoise_owned(image, settings.denoise);
+    let image = if let Some(token) = cancellation::current_token() {
+        denoise_owned_cancellable(image, settings.denoise, &token)
+            .map_err(|_| PipelineError::Cancelled)?
+    } else {
+        denoise_owned(image, settings.denoise)
+    };
+    checkpoint()?;
     let image = local_detail_owned(image, settings.local_detail);
+    checkpoint()?;
     let image = sharpen_owned(image, settings.sharpen);
+    checkpoint()?;
     apply_finishing_effects_owned(
         image,
         settings.grain,
@@ -5684,6 +5692,42 @@ mod tests {
         for (float, quantized) in high.data.iter().zip(eight.data.iter()) {
             assert_eq!((float.clamp(0.0, 1.0) * 255.0).round() as u8, *quantized);
         }
+    }
+
+    #[test]
+    fn actual_detail_stage_propagates_request_token_and_keeps_uncancelled_pixels_exact() {
+        use std::sync::{Arc, atomic::AtomicBool};
+        let image = LinearImage::new(
+            17,
+            11,
+            (0..17 * 11 * 3)
+                .map(|index| (index % 113) as f32 / 63.0 - 0.1)
+                .collect(),
+        )
+        .unwrap();
+        let mut settings = RenderSettings::default();
+        settings.denoise.luminance = 0.6;
+        settings.denoise.chroma = 0.7;
+        settings.local_detail.texture = 0.2;
+        settings.sharpen.amount = 0.3;
+        let reference = apply_detail_stage(image.clone(), &settings).unwrap();
+        let cancelled = cancellation::with_cancellation(Arc::new(AtomicBool::new(true)), || {
+            apply_detail_stage(image.clone(), &settings)
+        });
+        assert!(matches!(cancelled, Err(PipelineError::Cancelled)));
+        let actual = cancellation::with_cancellation(Arc::new(AtomicBool::new(false)), || {
+            apply_detail_stage(image, &settings)
+        })
+        .unwrap();
+        assert_eq!(
+            actual.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            reference
+                .data
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert!(cancellation::current_token().is_none());
     }
 
     #[test]

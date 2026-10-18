@@ -37,6 +37,12 @@ pub fn checkpoint() -> Result<(), PipelineError> {
     }
 }
 
+/// Clone the request token before entering Rayon. Thread-local state itself does not
+/// propagate to Rayon workers; the atomic token must be explicitly captured by a kernel.
+pub(crate) fn current_token() -> Option<Arc<AtomicBool>> {
+    TOKEN.with(|slot| slot.borrow().clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

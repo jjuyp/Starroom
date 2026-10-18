@@ -1,5 +1,31 @@
 # Current Task
 
+2026-10-19 latest: cancellation/doc69 group locally accepted. Real Native request TLS
+token is explicitly captured for Rayon NR via denoise_owned_cancellable, latched abort
+never exposes partial data; NoCancel/export samekernel.252 frozen-bit/pointer tests,
+real shared-stage token scope pass. Initialkernel4.5% overhead report1792328547764
+retained; structural64pixelblock report1792328615934 baseline342.485/controlled333.503ms,
+cancelsettle1.195/p951.461ms notUI. Recovered real Native report1792328897844PASS157/
+delta<=1/original unchanged withactualtokenbranch; combinedheavy140.603/154.663ms still
+fails, firstRAW1:13166.224ms. Expired15204handle is TERMINAL, do not restart it.
+Actual LatestPreviewQueue RED1000cancel callbacks for1000undispatchedupdates fixed
+tozero pending IPC/one activecancel; no native earlycancel semantics weakened.63focused
+tests/lintTS pass. Full Rust1792342269311PASS488registered/484ordinary/four optins.
+Web1792342056231has224/31files/lint/JSON/GoldenPASS; Vite3221226505fastfail retained,
+identicalcanonical npmrunbuild+TS+package retry PASS. No product code changed for it.
+License561/6/269/infra19PASS. Prior8a9ff84Full39129301054+secondary39129305989SUCCESS.
+Inventory-only88476 is terminal and confirms488registered; all localtest/bench sessions
+terminal. Commit/push thisbatch, inspect exactownFull withoutCIpushstorm.
+Then advance actualGPUspatial NR, not more algorithm replacement: current apply_creative
+persists f32 source/output but immediately readbacks before CPU NR. Preserve CPUoracle,
+processing order afterMask/Skin/Healing, explicitGPUerrorfallback, creative cacheidentity,
+HDRprecision. Prefer compatible GPU passes before single readback when tail permits;
+keep CPUcancellable path for complex unsupported tail. No standalone shader/stub counts
+as production; must wire actual sharedgraph and actualNative performance/RAW parity.
+Other innerfilters/LibRaw/LCMS/GPUcancel, bounded arbitrary-IPC cancellation registries,
+fullresidency/directpresentation, alpha/monitor/100MP/photographic/installed gates remain
+OPEN. All original31phasesactive. No desktop launch/installer/Final/tag/main merge.
+
 2026-10-18 latest: async Native command/real Reference group(doc68) locally accepted.
 Four actual handlers availability/optics/sample/reference use native_worker spawn_blocking;
 same wire/core errors. Worker tests prove yielded first poll/other async progress/

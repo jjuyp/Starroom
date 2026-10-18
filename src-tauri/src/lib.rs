@@ -8103,26 +8103,32 @@ mod tests {
             let cpu_settings = local_source.as_ref().map(|_| edit_settings.clone());
             let started = std::time::Instant::now();
             let (result, profile) = profiling::capture(|| {
-                native_preview_inner(
-                    &scheduler,
-                    &portrait,
-                    &masks,
-                    &denoise,
-                    NativePreviewRequest {
-                        request_id: request_id.into(),
-                        payload_format: if interaction_phase == PreviewInteractionPhase::Interactive
-                        {
-                            interactive_format
-                        } else {
-                            PreviewPayloadFormat::Jpeg
-                        },
-                        source_path: source.clone(),
-                        max_edge: 1800,
-                        prefer_gpu: true,
-                        interaction_phase,
-                        resolution_mode,
-                        viewport,
-                        settings: edit_settings,
+                starroom_pipeline::cancellation::with_cancellation(
+                    Arc::new(AtomicBool::new(false)),
+                    || {
+                        native_preview_inner(
+                            &scheduler,
+                            &portrait,
+                            &masks,
+                            &denoise,
+                            NativePreviewRequest {
+                                request_id: request_id.into(),
+                                payload_format: if interaction_phase
+                                    == PreviewInteractionPhase::Interactive
+                                {
+                                    interactive_format
+                                } else {
+                                    PreviewPayloadFormat::Jpeg
+                                },
+                                source_path: source.clone(),
+                                max_edge: 1800,
+                                prefer_gpu: true,
+                                interaction_phase,
+                                resolution_mode,
+                                viewport,
+                                settings: edit_settings,
+                            },
+                        )
                     },
                 )
             });
