@@ -321,6 +321,9 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
     if luminance_strength <= f32::EPSILON && chroma_strength <= f32::EPSILON {
         return image.clone();
     }
+    if image.width == 0 || image.height == 0 {
+        return image.clone();
+    }
 
     let mut components = image.data.clone();
     components.par_chunks_mut(3).for_each(|pixel| {
@@ -347,39 +350,65 @@ pub fn denoise(image: &LinearImage, parameters: DenoiseParameters) -> LinearImag
             spatial_kernel.push((dx, dy, spatial));
         }
     }
+    // Clamp each column/row once, not once per accepted neighbour of every pixel.
+    // The maximum radius is4 ->17 samples per axis. Only addresses are hoisted;
+    // dy/dx accumulation order, all range exponentials and f32 math stay unchanged.
+    let diameter = (half * 2 + 1) as usize;
+    let columns: Vec<[usize; 17]> = (0..image.width)
+        .map(|x| {
+            std::array::from_fn(|index| {
+                (x as isize + index as isize - half).clamp(0, image.width as isize - 1) as usize * 3
+            })
+        })
+        .collect();
     let mut output = image.clone();
     output
         .data
-        .par_chunks_mut(3)
+        .par_chunks_mut(image.width.max(1) * 3)
         .enumerate()
-        .for_each(|(pixel_index, output_pixel)| {
-            let y_index = pixel_index / image.width;
-            let x_index = pixel_index % image.width;
-            let base = pixel_index * 3;
-            let original_y = component_image.data[base];
-            let original_cb = component_image.data[base + 1];
-            let original_cr = component_image.data[base + 2];
-            let mut sum = [0.0_f32; 3];
-            let mut weight_sum = 0.0;
-            for &(dx, dy, spatial) in &spatial_kernel {
-                let source_x = (x_index as isize + dx).clamp(0, image.width as isize - 1) as usize;
-                let source_y = (y_index as isize + dy).clamp(0, image.height as isize - 1) as usize;
-                let source_base = (source_y * image.width + source_x) * 3;
-                let sample_y = component_image.data[source_base];
-                let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
-                let weight = spatial * range;
-                for (channel, accumulated) in sum.iter_mut().enumerate() {
-                    *accumulated += component_image.data[source_base + channel] * weight;
+        .for_each(|(y_index, output_row)| {
+            let rows: [usize; 17] = std::array::from_fn(|index| {
+                (y_index as isize + index as isize - half).clamp(0, image.height as isize - 1)
+                    as usize
+                    * image.width
+                    * 3
+            });
+            for (x_index, output_pixel) in output_row.as_chunks_mut::<3>().0.iter_mut().enumerate()
+            {
+                let pixel_index = y_index * image.width + x_index;
+                let base = pixel_index * 3;
+                let original_y = component_image.data[base];
+                let original_cb = component_image.data[base + 1];
+                let original_cr = component_image.data[base + 2];
+                let mut sum = [0.0_f32; 3];
+                let mut weight_sum = 0.0;
+                for (row, weights) in rows[..diameter]
+                    .iter()
+                    .zip(spatial_kernel.chunks_exact(diameter))
+                {
+                    for (column, &(_, _, spatial)) in
+                        columns[x_index][..diameter].iter().zip(weights)
+                    {
+                        let source_base = row + column;
+                        let sample_y = component_image.data[source_base];
+                        let range = (-0.5 * ((sample_y - original_y) / range_sigma).powi(2)).exp();
+                        let weight = spatial * range;
+                        for (channel, accumulated) in sum.iter_mut().enumerate() {
+                            *accumulated += component_image.data[source_base + channel] * weight;
+                        }
+                        weight_sum += weight;
+                    }
                 }
-                weight_sum += weight;
+                let filtered = sum.map(|value| value / weight_sum.max(f32::EPSILON));
+                let y = original_y
+                    + (filtered[0] - original_y)
+                        * luminance_strength
+                        * (1.0 - detail_protection * 0.7);
+                let cb = original_cb + (filtered[1] - original_cb) * chroma_strength;
+                let cr = original_cr + (filtered[2] - original_cr) * chroma_strength;
+                let (r, g, b) = ycbcr_to_rgb(y, cb, cr);
+                output_pixel.copy_from_slice(&[r, g, b]);
             }
-            let filtered = sum.map(|value| value / weight_sum.max(f32::EPSILON));
-            let y = original_y
-                + (filtered[0] - original_y) * luminance_strength * (1.0 - detail_protection * 0.7);
-            let cb = original_cb + (filtered[1] - original_cb) * chroma_strength;
-            let cr = original_cr + (filtered[2] - original_cr) * chroma_strength;
-            let (r, g, b) = ycbcr_to_rgb(y, cb, cr);
-            output_pixel.copy_from_slice(&[r, g, b]);
         });
     output
 }
@@ -440,6 +469,48 @@ mod serial_reference;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn denoise_hoisted_addresses_preserve_serial_bits_at_all_borders_and_signed_zero() {
+        for (width, height) in [(0, 7), (7, 0), (1, 1), (1, 19), (19, 1), (3, 2), (17, 17)] {
+            let values = [-0.0, 0.0, -0.25, 0.18, 1.0, 4.0, -8000.0, 8000.0];
+            let image = LinearImage::new(
+                width,
+                height,
+                (0..width * height * 3)
+                    .map(|i| values[(i * 13 + i / 3) % values.len()])
+                    .collect(),
+            )
+            .unwrap();
+            let original: Vec<_> = image.data.iter().map(|v| v.to_bits()).collect();
+            for radius in [0.6, 1.25, 4.0] {
+                for (luminance, chroma) in [(0.5, 0.0), (0.0, 0.5), (1.0, 1.0)] {
+                    let parameters = DenoiseParameters {
+                        radius,
+                        luminance,
+                        chroma,
+                        ..Default::default()
+                    };
+                    let actual = denoise(&image, parameters);
+                    let expected = serial_reference::denoise(&image, parameters);
+                    assert!(actual.data.iter().all(|v| v.is_finite()));
+                    assert_eq!(
+                        actual.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                        expected
+                            .data
+                            .iter()
+                            .map(|v| v.to_bits())
+                            .collect::<Vec<_>>(),
+                        "{width}x{height} radius{radius} luminance{luminance} chroma{chroma}"
+                    );
+                }
+            }
+            assert_eq!(
+                image.data.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                original
+            );
+        }
+    }
 
     #[test]
     fn parallel_detail_matches_frozen_serial_bits_for_hdr_edges_and_thread_counts() {

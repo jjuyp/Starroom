@@ -10,6 +10,17 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 detail/display group (doc65): exact address-only NR reuse retains all588
+frozen comparisons plus63 new borders/signed-zero/HDR; real RAW137 CPU/export frames
+delta<=1/original unchanged. Luma median107.830->97.721ms but p95111.158ms still fails.
+Actual PreviewCanvas uses display payload histogram, no duplicate interactive canvas
+readback. Actual Chromium zero byte/histogram differences,44/44 released bitmaps,
+repeat median10.90->8.45ms (unfavorable outliers retained), not whole UI/IPC/OS latency.
+Full Rust1792297836553 PASS474registered/470ordinary/four opt-in excluded; Web1792297636338
+PASS222/31files/all ordinary gates; license561/6/269/infrastructure pass. Own CI pending.
+Prior38f153b Full39096072721
+and secondary39096075743 SUCCESS. Every original broader requirement remains OPEN.
+
 2026-10-18 optional priming (doc64): real Native Final/Fit completion starts bounded
 idle-only/epoch-checked input preparation, without delaying response, decoding files,
 rendering or publishing/GPU work. One shared cache builder preserves real CMM/geometry

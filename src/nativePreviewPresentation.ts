@@ -1,4 +1,15 @@
 import type { NativePreviewResult } from './nativeRender'
+import { calculateDisplayHistogram, type DisplayPixels } from './previewPresentation'
+
+/** Analyze already-transformed display bytes without a second full canvas readback.
+ * JPEG retains the explicit decoded-canvas path; no pixel transform is performed here. */
+export function nativePreviewDisplayHistogram(result: NativePreviewResult, readback: () => DisplayPixels) {
+  const bytes = result.payload.bytes
+  return calculateDisplayHistogram(result.payload.format === 'rgba8' ? {
+    data: new Uint8ClampedArray(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength),
+    width: result.width, height: result.height, colorSpace: 'srgb',
+  } : readback())
+}
 
 /** Presentation of already transformed sRGB pixels, never image-processing/color math. */
 export async function decodeNativePreviewPayload(result: NativePreviewResult): Promise<{

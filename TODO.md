@@ -2,6 +2,13 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Finish doc65 exact NR address/display-readback acceptance: all frozen f32 bits
+  preserved; actual RAW137 CPU/export comparisons pass. Luma median107.830->97.721ms
+  but p95111.158ms still fails. Real Chromium equal pixels/histograms,44/44 releases,
+  presentation median10.90->8.45ms in recorded repeat (outliers retained). Full Rust
+  1792297836553 PASS474registered/470ordinary/four opt-in excluded; Web1792297636338
+  PASS222/31files/all ordinary gates. Own CI pending; no whole Production claim.
+
 - [ ] Complete bounded Native cache-priming acceptance (doc64): real Final/Fit command
   launches optional idle-only/epoch-checked source preparation, no decode/render/GPU/
   publication. Exact real PNG/JPEG/RAW and priority/error tests pass. Ready-cache JPEG

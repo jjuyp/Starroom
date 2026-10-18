@@ -9,7 +9,7 @@ import { adjustmentKeys, HistoryCommandQueue, HistoryGestureBoundary, nativeHist
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
-import { decodeNativePreviewPayload } from './nativePreviewPresentation'
+import { decodeNativePreviewPayload, nativePreviewDisplayHistogram } from './nativePreviewPresentation'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -739,7 +739,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         }
         finalPublished = true
         const canvas = canvasRef.current
-        const context = canvas.getContext('2d', { willReadFrequently: true })
+        const context = canvas.getContext('2d')
         if (!context) {
           throw new Error('Canvas 2D is unavailable.')
         }
@@ -779,7 +779,9 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         if (metric) {
           if (!nativeResult?.isTile) window.requestAnimationFrame(() => {
             if (activePhotoId.current === photo.id && canvasRef.current === canvas && publishedGeneration.current === generation) {
-              onHistogram(calculateDisplayHistogram(context.getImageData(0, 0, canvas.width, canvas.height)))
+              const readback = () => context.getImageData(0, 0, canvas.width, canvas.height)
+              onHistogram(nativeResult ? nativePreviewDisplayHistogram(nativeResult, readback)
+                : calculateDisplayHistogram(readback()))
             }
           })
           onDimensions(nativeResult ? `${nativeResult.sourceWidth} × ${nativeResult.sourceHeight}` : `${renderedWidth} × ${renderedHeight}`)

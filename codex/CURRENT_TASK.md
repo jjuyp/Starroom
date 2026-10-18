@@ -1,5 +1,26 @@
 # Current Task
 
+2026-10-18 latest: doc65 NR addressing and Native histogram ownership locally accepted.
+NR math unchanged; row/column addresses hoisted,588frozen+63border/HDR/signedzero cases
+bit-exact Debug/MSVCRelease. Actual RAW1792296899249 has137CPU/export comparisons
+delta<=1/source unchanged; Luma median107.830->97.721ms but p95111.158ms still fails,
+first RAW1:1=3179.207ms. Actual PreviewCanvas uses Native RGBA payload histogram,
+no repeated interactive canvas readback/forced read-heavy context; JPEG explicit path
+unchanged. Real Chromium RAW frame1792297295054 haszero pixels/histogram differences,
+44/44releases; repeat browser report1792297399398 median10.90->8.45ms, outliers retained,
+not UI/IPC/OS timing. Targeted milestone1792297062837 and Full Rust1792297836553 PASS
+474registered/470ordinary/four opt-in excluded. Full Web1792297636338 PASS222/31files/
+all gates; license561/6/269/infrastructure pass. Prior38f153b Full39096072721 and secondary
+39096075743 SUCCESS. Commit/push this batch, own CI next. All local sessions terminal,
+owned browser/server closed, no app launch/new installer/Final/merge claim.
+Next: partial detail ownership; apply_detail_stage currently retains/clones full RGB
+buffers through denoise/local/sharpen/finishing even when individual stages Off. Add
+consuming APIs around exact existing math, zero-copy Off and in-place pointwise output,
+preserve borrowed CPU/reference APIs, finite validation and frozen oracle. Then actual
+memory/Native timing and targeted/shared gates. Do not replace algorithms, loosen
+tolerances or count address/ownership microbenchmarks as full100MP/UI acceptance.
+All original Phases0-30 remain ACTIVE; no phase VERIFIED or installed release claim.
+
 2026-10-18 latest: bounded Native interactive cache priming (doc64) is locally accepted.
 Real Final/Fit IPC completion launches optional idle-only/epoch-checked preparation,
 not a new render, decode, GPU job or publication. Shared real upstream builder and

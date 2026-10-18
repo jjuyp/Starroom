@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 
 describe('Native engine source ownership and immutable migration corpus', () => {
+  it('uses payload histograms in the real preview without forcing a CPU-readback canvas', () => {
+    const app = readFileSync(new URL('../../src/App.tsx', import.meta.url), 'utf8')
+    expect(app).toContain('nativePreviewDisplayHistogram(nativeResult, readback)')
+    expect(app).not.toContain('willReadFrequently: true')
+  })
   it('has no unused direct JPEG writer bypassing professional export policy', () => {
     const native = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
     const bridge = readFileSync(new URL('../../src/nativeRender.ts', import.meta.url), 'utf8')

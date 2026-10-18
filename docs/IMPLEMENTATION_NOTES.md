@@ -1,5 +1,22 @@
 # Implementation Notes
 
+## 2026-10-18 — Exact NR address reuse and display histogram ownership
+
+Doc65 records row/column address reuse with unchanged NR weights/accumulation and
+bounded width-only scratch. Existing588 +new63 serial-oracle comparisons pass Debug/
+MSVCRelease. Detail milestone1792297062837 passes shared/actual RAW/photographic/GPU/
+workspace-Clippy gates. Actual field RAW report1792296899249 passes137 CPU/export
+frames delta<=1/source unchanged; Luma median107.830->97.721ms but p95111.158ms and
+RAW first1:1=3179.207ms still fail. No universal speedup claimed. Real PreviewCanvas
+uses actual display payload histogram without duplicate RGBA canvas readback or forced
+read-heavy context; JPEG retains decoded readback. New ownership/offset/error tests
+pass; real Chromium zero pixel/histogram differences,44/44 bitmap releases. Recorded
+repeat1792297399398 browser median10.90->8.45ms, all samples/outliers retained; excludes
+IPC/input/OS timing. Full Rust1792297836553 PASS474registered/470ordinary/four opt-in
+excluded; Web1792297636338 PASS222/31files/all ordinary gates, license561/6/269 and
+infrastructure pass. Own remote pending. Prior38f153b Full39096072721 and secondary
+39096075743 SUCCESS. No new dependencies, quality changes, app launch or Final claim.
+
 ## 2026-10-18 — Optional Native interactive preparation
 
 Doc64 records real Native-command integration, not only a new API. Final/Fit success
