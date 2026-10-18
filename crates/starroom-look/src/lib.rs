@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 pub const LOOK_SCHEMA: &str = "https://starroom.app/schemas/look/v1";
+/// Portable look schema limit, also used by the Native edit boundary.
+pub const MAX_CURVE_POINTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -262,7 +264,7 @@ fn valid_wheel(wheel: ColorWheel) -> bool {
         && signed(wheel.lightness)
 }
 fn valid_curve(points: &[CurvePoint]) -> bool {
-    points.len() <= 256
+    points.len() <= MAX_CURVE_POINTS
         && points.iter().all(|point| {
             point.x.is_finite() && point.y.is_finite() && unit(point.x) && unit(point.y)
         })
@@ -326,10 +328,11 @@ pub fn blend(
     let mut mixer = ColorMixer::default();
     for i in 0..8 {
         mixer.bands[i] = BandAdjustment {
-            hue_degrees: hue_lerp(
+            // Mixer values are signed angular OFFSETS in -30..30, not absolute
+            // wheel hues. Wrapping a negative offset into 0..360 makes it invalid.
+            hue_degrees: l(
                 a.color_mixer.bands[i].hue_degrees,
                 b.color_mixer.bands[i].hue_degrees,
-                t,
             ),
             chroma: l(a.color_mixer.bands[i].chroma, b.color_mixer.bands[i].chroma),
             lightness: l(
@@ -710,6 +713,33 @@ mod tests {
                 || blend(&c, &b, 0.5, "x").grading.global.hue_degrees > 359.9
         );
     }
+    #[test]
+    fn mixer_blends_signed_offsets_without_wrapping_into_absolute_hues() {
+        for a_offset in [-30.0, -10.0, 0.0, 10.0, 30.0] {
+            for b_offset in [-30.0, -10.0, 0.0, 10.0, 30.0] {
+                for amount in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let mut a = PortableLook::default();
+                    let mut b = a.clone();
+                    b.id = "signed-offset-target".into();
+                    for band in &mut a.color_mixer.bands {
+                        band.hue_degrees = a_offset;
+                    }
+                    for band in &mut b.color_mixer.bands {
+                        band.hue_degrees = b_offset;
+                    }
+                    a.validate().unwrap();
+                    b.validate().unwrap();
+                    let result = blend(&a, &b, amount, "signed offsets");
+                    result.validate().unwrap();
+                    for band in result.color_mixer.bands {
+                        assert_eq!(band.hue_degrees, a_offset + (b_offset - a_offset) * amount);
+                        assert!((-30.0..=30.0).contains(&band.hue_degrees));
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn style_mixer_normalizes_seventy_thirty_weights() {
         let mut a = PortableLook::default();

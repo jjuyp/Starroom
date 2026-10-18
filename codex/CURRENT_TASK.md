@@ -1,5 +1,25 @@
 # Current Task
 
+2026-10-18 latest: async Native command/real Reference group(doc68) locally accepted.
+Four actual handlers availability/optics/sample/reference use native_worker spawn_blocking;
+same wire/core errors. Worker tests prove yielded first poll/other async progress/
+panic isolation. Actual Reference initially failed33points then wrapped negative hue;
+share existing Look256 limit/all fivechannels finite/bounds, blend signed mixeroffsets
+not absolutecircle, keep wheelcircularregression.125combinations and real33pointshared
+Preview/Export equality/source bytes pass. Full Rust1792327964107 PASS485registered/
+481ordinary/four optins; Web1792327796192 PASS223/31files/lintTSbuildJSONGolden/package;
+license561/6/269/infrastructure19 pass. Prior65ad6aa own Full39127505993 +secondary
+39127509627 SUCCESS. Commit/push this focused group and inspect exact newCI.
+No live local test/server/browser sessions; all terminal. Do NOT launch desktop.
+Next audit: Native cancellation::checkpoint is stage-only; CPU detail row loops do
+not see request cancellation and a stale full-quality NR/detail job may keep worker/
+CPU occupied. Need real reproduction and cancellation-safe propagation, no partial
+output publication/cache and unchanged uncancelled frozen bits. Also remaining actual
+portrait/AI-mask/Advisor/model-install synchronous handlers; AI mask registers token
+only after hash/decode/providerlock, must not introduce early-cancel races by blind
+async conversion. Full original31phase goal remains, no wholeUI speed/GPUresidency/
+100MP/monitor/alpha/installed/Final acceptance. No new installer or merge/tag.
+
 2026-10-18 latest: owned detail +grain parity (docs66/67) locally accepted. Actual
 denoise/local/sharpen/finishing consume one RGB allocation, frozen original kernels
 retain every f32 bit;96combination/pointer tests pass. Source-bound settings now feed

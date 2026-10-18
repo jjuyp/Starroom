@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+mod native_worker;
 mod preview_transport;
 use preview_transport::{
     PreviewFrameHeader, PreviewPayloadFormat, preview_frame, rgba_preview_frame,
@@ -34,8 +35,8 @@ use starroom_library::{
     ImportResult, Library, LibraryQuery, SmartCollectionRuleV1, ThumbnailSize,
 };
 use starroom_look::{
-    GrainSettings, PortableCurves, PortableLook, PortableRelativeColor, VignetteSettings, blend,
-    mix_weighted,
+    GrainSettings, MAX_CURVE_POINTS, PortableCurves, PortableLook, PortableRelativeColor,
+    VignetteSettings, blend, mix_weighted,
 };
 use starroom_optics::{LensProfileResolution, OpticsSettings};
 use starroom_pipeline::{
@@ -1034,7 +1035,11 @@ fn ai_mask_availability(
 }
 
 #[tauri::command]
-fn ai_availability_status() -> AiAvailabilityStatus {
+async fn ai_availability_status() -> Result<AiAvailabilityStatus, String> {
+    native_worker::run("AiAvailability", || Ok(ai_availability_status_inner())).await
+}
+
+fn ai_availability_status_inner() -> AiAvailabilityStatus {
     let masks = local_ai_mask_models();
     let denoise = match verify_ai_denoise_model(local_nafnet_model()) {
         Ok(()) => AiFeatureAvailability {
@@ -1207,8 +1212,26 @@ impl NativeEditSettings {
         {
             return Err("native grain/vignette settings are out of range".into());
         }
-        if self.curve.len() > 32 {
-            return Err("native tone curve accepts at most 32 points".into());
+        for points in [
+            &self.curve,
+            &self.curves.master,
+            &self.curves.red,
+            &self.curves.green,
+            &self.curves.blue,
+        ] {
+            if points.len() > MAX_CURVE_POINTS {
+                return Err(format!(
+                    "native tone curve accepts at most {MAX_CURVE_POINTS} points per channel"
+                ));
+            }
+            if points.iter().any(|point| {
+                !point.x.is_finite()
+                    || !point.y.is_finite()
+                    || !(0.0..=1.0).contains(&point.x)
+                    || !(0.0..=1.0).contains(&point.y)
+            }) {
+                return Err("native tone curve points must be finite and stay inside 0..1".into());
+            }
         }
         if self.layers.len() > 64 {
             return Err("native layer stack accepts at most 64 layers".into());
@@ -2094,7 +2117,13 @@ struct NativeOpticsStatusRequest {
 }
 
 #[tauri::command]
-fn native_optics_status(
+async fn native_optics_status(
+    request: NativeOpticsStatusRequest,
+) -> Result<LensProfileResolution, String> {
+    native_worker::run("NativeOptics", move || native_optics_status_inner(request)).await
+}
+
+fn native_optics_status_inner(
     request: NativeOpticsStatusRequest,
 ) -> Result<LensProfileResolution, String> {
     let settings = request.settings.validated()?;
@@ -2105,7 +2134,16 @@ fn native_optics_status(
 }
 
 #[tauri::command]
-fn native_sample_color(
+async fn native_sample_color(
+    request: NativeColorSampleRequest,
+) -> Result<Option<starroom_color::ColorBand>, String> {
+    native_worker::run("NativeColorSample", move || {
+        native_sample_color_inner(request)
+    })
+    .await
+}
+
+fn native_sample_color_inner(
     request: NativeColorSampleRequest,
 ) -> Result<Option<starroom_color::ColorBand>, String> {
     if !(256..=4096).contains(&request.max_edge) {
@@ -2494,7 +2532,7 @@ fn portrait_models_install_local(
             .map_err(|error| format!("could not activate local model: {error}"))?;
     }
     target.verify().map_err(|error| error.to_string())?;
-    Ok(ai_availability_status())
+    Ok(ai_availability_status_inner())
 }
 
 fn local_ai_mask_models() -> AiMaskModelRegistry {
@@ -2774,7 +2812,16 @@ fn apply_reference_recipe(
 }
 
 #[tauri::command]
-fn native_reference_match(
+async fn native_reference_match(
+    request: NativeReferenceMatchRequest,
+) -> Result<NativeReferenceMatchResponse, String> {
+    native_worker::run("NativeReference", move || {
+        native_reference_match_inner(request)
+    })
+    .await
+}
+
+fn native_reference_match_inner(
     request: NativeReferenceMatchRequest,
 ) -> Result<NativeReferenceMatchResponse, String> {
     if same_file(&request.source_path, &request.reference_path) {
@@ -5000,7 +5047,7 @@ pub fn release_self_test(root: &Path) -> Result<ReleaseSelfTestReport, String> {
         return Err("release workflow modified source pixels".into());
     }
 
-    let availability = ai_availability_status();
+    let availability = ai_availability_status_inner();
     let face_skin = release_ai_state(availability.face_skin)?;
     let subject_background = release_ai_state(availability.subject_background)?;
     let sky = release_ai_state(availability.sky)?;
@@ -5517,6 +5564,159 @@ mod tests {
     }
 
     #[test]
+    fn native_worker_availability_command_preserves_verified_model_states() {
+        let expected = serde_json::to_value(ai_availability_status_inner()).unwrap();
+        let actual = tauri::async_runtime::block_on(ai_availability_status()).unwrap();
+        assert_eq!(serde_json::to_value(actual).unwrap(), expected);
+        for name in ["faceSkin", "subjectBackground", "sky", "denoise"] {
+            assert!(matches!(
+                expected[name]["state"].as_str().unwrap(),
+                "ready" | "modelNotInstalled" | "invalid" | "error"
+            ));
+        }
+    }
+
+    #[test]
+    fn native_curve_boundary_matches_portable_limit_without_resampling() {
+        for channel in 0..5 {
+            for count in [32, 33, MAX_CURVE_POINTS] {
+                let points: Vec<_> = (0..count)
+                    .map(|index| {
+                        let x = index as f32 / (count - 1) as f32;
+                        CurvePoint { x, y: x * x }
+                    })
+                    .collect();
+                let mut settings = neutral_settings();
+                match channel {
+                    0 => settings.curve = points.clone(),
+                    1 => settings.curves.master = points.clone(),
+                    2 => settings.curves.red = points.clone(),
+                    3 => settings.curves.green = points.clone(),
+                    _ => settings.curves.blue = points.clone(),
+                }
+                let result = settings.clone().validated().unwrap();
+                let actual = match channel {
+                    0 => result.curve,
+                    1 => result.curves.master,
+                    2 => result.curves.red,
+                    3 => result.curves.green,
+                    _ => result.curves.blue,
+                };
+                assert_eq!(actual, points);
+                let target = match channel {
+                    0 => &mut settings.curve,
+                    1 => &mut settings.curves.master,
+                    2 => &mut settings.curves.red,
+                    3 => &mut settings.curves.green,
+                    _ => &mut settings.curves.blue,
+                };
+                target.resize(MAX_CURVE_POINTS + 1, CurvePoint { x: 1.0, y: 1.0 });
+                assert!(
+                    settings
+                        .validated()
+                        .unwrap_err()
+                        .contains("at most 256 points per channel")
+                );
+            }
+            for invalid in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+                let mut settings = neutral_settings();
+                let target = match channel {
+                    0 => &mut settings.curve,
+                    1 => &mut settings.curves.master,
+                    2 => &mut settings.curves.red,
+                    3 => &mut settings.curves.green,
+                    _ => &mut settings.curves.blue,
+                };
+                *target = vec![CurvePoint { x: 0.0, y: invalid }];
+                assert!(settings.validated().is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn native_worker_optics_command_keeps_real_resolution_and_decode_errors() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let original = std::fs::read(&source).unwrap();
+        let request = || NativeOpticsStatusRequest {
+            source_path: source.clone(),
+            settings: neutral_settings(),
+        };
+        let expected = native_optics_status_inner(request()).unwrap();
+        let actual = tauri::async_runtime::block_on(native_optics_status(request())).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(std::fs::read(source).unwrap(), original);
+        let missing = || NativeOpticsStatusRequest {
+            source_path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("missing-native-worker-fixture.png"),
+            settings: neutral_settings(),
+        };
+        let expected = native_optics_status_inner(missing()).unwrap_err();
+        assert!(expected.starts_with("native optics metadata decode failed:"));
+        assert_eq!(
+            tauri::async_runtime::block_on(native_optics_status(missing())).unwrap_err(),
+            expected
+        );
+    }
+
+    #[test]
+    fn native_worker_reference_command_preserves_real_graph_and_invalid_control_errors() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let directory =
+            std::env::temp_dir().join(format!("starroom-worker-reference-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let reference = directory.join("authored-reference.png");
+        let pixels: Vec<u8> = (0..256)
+            .flat_map(|index| [index as u8, (255 - index) as u8, (index / 2) as u8])
+            .collect();
+        let png = starroom_imageio::encode_png_rgb8(&pixels, 16, 16, None).unwrap();
+        std::fs::write(&reference, &png).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let request = || NativeReferenceMatchRequest {
+            source_path: source.clone(),
+            reference_path: reference.clone(),
+            max_edge: 256,
+            amount: 0.7,
+            tone: 0.8,
+            color: 0.6,
+            grading: 0.5,
+            protect_skin: 0.9,
+            settings: neutral_settings(),
+        };
+        let expected = native_reference_match_inner(request()).unwrap();
+        let actual = tauri::async_runtime::block_on(native_reference_match(request())).unwrap();
+        let render_settings = actual.settings.clone().validated().unwrap();
+        assert_eq!(actual.settings.curve.len(), 33);
+        let decoded = decode_source_preview(&source, 256).unwrap();
+        let preview = render_source_preview_to_srgb8(&decoded, &render_settings).unwrap();
+        let export = render_source_export_to_srgb8(&decoded, &render_settings).unwrap();
+        assert_eq!(preview, export);
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        for invalid in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            let mut input = request();
+            input.amount = invalid;
+            assert_eq!(
+                tauri::async_runtime::block_on(native_reference_match(input)).unwrap_err(),
+                "reference controls must be finite values in 0..1"
+            );
+        }
+        let mut same = request();
+        same.reference_path = same.source_path.clone();
+        assert_eq!(
+            tauri::async_runtime::block_on(native_reference_match(same)).unwrap_err(),
+            "reference image must be different from the source image"
+        );
+        assert_eq!(std::fs::read(source).unwrap(), original);
+        assert_eq!(std::fs::read(&reference).unwrap(), png);
+        std::fs::remove_file(reference).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
     fn native_color_sample_ipc_transports_geometry_and_validates_coordinate_space() {
         let mut settings = neutral_settings();
         settings.geometry.rotation_degrees = 90.0;
@@ -5544,7 +5744,7 @@ mod tests {
             settings: neutral_settings(),
         };
         assert!(
-            native_sample_color(invalid)
+            tauri::async_runtime::block_on(native_sample_color(invalid))
                 .unwrap_err()
                 .starts_with("NativeColorSampleInvalid:")
         );
@@ -5571,15 +5771,16 @@ mod tests {
         let expected =
             sample_source_color_band(&decoded, &native.clone().validated().unwrap(), 0.0, 0.0)
                 .unwrap();
-        let result = native_sample_color(NativeColorSampleRequest {
-            source_path: path.clone(),
-            x: 0.0,
-            y: 0.0,
-            max_edge: 1800,
-            coordinate_space: NativeSampleCoordinateSpace::PostGeometry,
-            settings: native,
-        })
-        .unwrap();
+        let result =
+            tauri::async_runtime::block_on(native_sample_color(NativeColorSampleRequest {
+                source_path: path.clone(),
+                x: 0.0,
+                y: 0.0,
+                max_edge: 1800,
+                coordinate_space: NativeSampleCoordinateSpace::PostGeometry,
+                settings: native,
+            }))
+            .unwrap();
         assert!(result.is_some());
         assert_eq!(result, expected);
         std::fs::remove_file(path).unwrap();

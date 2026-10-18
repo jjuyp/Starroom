@@ -3,6 +3,22 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 
 describe('Native engine source ownership and immutable migration corpus', () => {
+  it('dispatches actual file and CPU commands through the asynchronous native worker boundary', () => {
+    const native = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+    const worker = readFileSync(new URL('../../src-tauri/src/native_worker.rs', import.meta.url), 'utf8')
+    for (const [command, operation] of [
+      ['ai_availability_status', 'AiAvailability'], ['native_optics_status', 'NativeOptics'],
+      ['native_sample_color', 'NativeColorSample'], ['native_reference_match', 'NativeReference'],
+    ]) {
+      expect(native).toMatch(new RegExp(`#\\[tauri::command\\]\\s+async fn ${command}\\(`))
+      const body = native.split(`async fn ${command}(`)[1].split(`fn ${command}_inner(`)[0]
+      expect(body).toContain(`native_worker::run("${operation}"`)
+      expect(body).toContain(`${command}_inner(`)
+      expect(native).toContain(`            ${command},`)
+    }
+    expect(worker).toContain('tauri::async_runtime::spawn_blocking(work)')
+    expect(worker).toContain('WorkerFailed: {error}')
+  })
   it('uses payload histograms in the real preview without forcing a CPU-readback canvas', () => {
     const app = readFileSync(new URL('../../src/App.tsx', import.meta.url), 'utf8')
     expect(app).toContain('nativePreviewDisplayHistogram(nativeResult, readback)')

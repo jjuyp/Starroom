@@ -2,6 +2,16 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Local focused async-command/Reference acceptance (doc68): four actual IPC
+  commands use Tauri blocking workers with preserved wire results/errors; real PNG/
+  Reference tests exposed and repair33-point curve rejection and wrapped negative
+  mixer offsets. No point reduction or math downgrade. Shared256-point limit covers
+  legacy/master/R/G/B;125 signed-offset combinations retain absolute-wheel circular
+  tests. Full Rust1792327964107 PASS485registered/481ordinary/four unchanged opt-ins;
+  Full Web1792327796192 PASS223/31files and all ordinary gates; licenses/infra pass.
+  Prior65ad6aa own Full39127505993/secondary39127509627 SUCCESS. Current remote gate
+  still required; no whole-UI speed, AI-inference scheduling or Production acceptance.
+
 - [ ] Accept owned working detail buffers and source-bound grain repair (docs66/67):
   actual shared stages retain pointer/capacity, frozen f32 oracles pass;96 combination
   cases and real PNG export/source-binding tests pass. New combined RAW run1792325829982

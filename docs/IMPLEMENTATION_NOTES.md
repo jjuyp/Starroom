@@ -1,5 +1,20 @@
 # Implementation Notes
 
+## 2026-10-18 — Async Native IPC and executable Reference Match repair
+
+Doc68: actual availability/optics/color-sample/reference handlers now async, existing
+file/CPU cores run on Tauri spawn_blocking; operation errors preserved, worker faults
+explicit. Real commands and source-ownership tests exercise wiring and immutable
+source pixels. The first real Reference run failed33-point-vs32 limit, then failed
+negative mixer hue wrapped near360. Retain the regression; share existing Look256
+limit across Native channels without resampling, interpolate signed offsets without
+changing absolute grading-wheel circular math.125 combinations and actual33-point
+Reference Preview/Export equality pass. Full Rust1792327964107 PASS485registered/
+481ordinary/four unchanged opt-ins, Full Web1792327796192 PASS223/31files/all ordinary
+gates, licenses561/6/269/infra19 pass. Prior65ad6aa own Full39127505993 and secondary
+39127509627 SUCCESS. Current remote acceptance pending; no app launch/new installer,
+wholeUI100ms, all AI scheduling,100MP or Final claim. Full original scope remains.
+
 ## 2026-10-18 — Owned detail frames and source-bound grain consistency
 
 Docs66/67 record real shared-graph ownership, not key-only caches: denoise/local/

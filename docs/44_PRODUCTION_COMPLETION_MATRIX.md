@@ -10,6 +10,16 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 doc68: four real Native file/CPU IPC handlers now async+spawn_blocking,
+same result/core error semantics and executable worker/actual PNG/Reference tests.
+Actual Reference exposed33-point Native limit and signed hue-offset wrapping defects;
+repaired with existing Look256 limit/no point loss and correct signed offset blend,
+absolute wheel circular semantics retained. Full Rust1792327964107 PASS485registered/
+481ordinary/four unchanged opt-ins; Web1792327796192 PASS223/31files/all ordinary gates;
+license/infra pass. Prior65ad6aa Full39127505993/secondary39127509627 SUCCESS. No claim
+of wholeUI latency, all heavy commands async, GPU residency/tiles, photographic IQ,
+100MP/installed/Final acceptance; all original31 phases remain active.
+
 2026-10-18 owned detail +source binding (docs66/67): shared real stages reuse one
 working RGB allocation with frozen-bit and96combination/pointer tests, not a full
 100MP memory qualification. Actual combined RAW validation found and repaired the
