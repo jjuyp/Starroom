@@ -1,5 +1,19 @@
 # Implementation Notes
 
+## 2026-10-18 — Retire dormant direct JPEG route
+
+Doc63 records removal of unused native_export_jpeg and its request/result/bridge/picker:
+old sync/std::fs::write/JPEG-only/no ICC route differed from the actual UI's professional
+batch policy. No UI caller existed; project/history schemas, Native shared graph,
+format/depth/profile choices, Style save and Reference Match helper are unchanged.
+One red-before/green-after ownership regression preserves required professional route
+and destination guard.51 targeted Vitest plus27 exporter/4 Native integration tests
+and targeted Clippy/format pass. Full Rust1792294738034 passes470registered/466ordinary/
+four opt-in excluded, workspace Clippy/tests/doc-tests; Web1792294565947 passes219tests/
+30files/lint/TS/build/JSON/Golden/packaging, license/infrastructure pass; own remote pending. No regression/source photo
+deleted, no new dependency/algorithm/license or speedup/Final claim. Priorcd5d8d3
+Full39092968506 and secondary39092972326 SUCCESS, PR#2Open/Draft.
+
 ## 2026-10-18 — Real private-original Native performance/parity evidence
 
 Doc62 records explicit read-only local-source support in the existing MSVC opt-in

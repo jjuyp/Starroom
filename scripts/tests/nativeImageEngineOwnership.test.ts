@@ -3,6 +3,19 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 
 describe('Native engine source ownership and immutable migration corpus', () => {
+  it('has no unused direct JPEG writer bypassing professional export policy', () => {
+    const native = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
+    const bridge = readFileSync(new URL('../../src/nativeRender.ts', import.meta.url), 'utf8')
+    const app = readFileSync(new URL('../../src/App.tsx', import.meta.url), 'utf8')
+    expect(/\bfn\s+native_export_jpeg\s*\(/.test(native), 'retired direct JPEG command').toBe(false)
+    expect(native.includes('std::fs::write(&request.output_path'), 'unsafe direct photo writer').toBe(false)
+    expect(/\bfunction\s+(exportNativeJpeg|chooseNativeExportPath)\s*\(/.test(bridge), 'unused bridge/picker').toBe(false)
+    expect(native).toContain('native_export_batch,')
+    expect(native).toContain('export_one_with_destination_guard(')
+    expect(bridge).toContain("invoke<NativeBatchExportResult>('native_export_batch'")
+    expect(app).toContain('exportNativeLibraryBatch(')
+    expect(app).toContain('exportNativeBatch(')
+  })
   it('preserves exact frozen Browser observations and tolerances', () => {
     const text = readFileSync(new URL('../../tests/fixtures/m1c/browser-native-reference.json', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
     expect(createHash('sha256').update(text).digest('hex')).toBe('f618d1e873d2433ae39f05297ebd425e347cdb3eab3c8d14ed1707bbb70fdb47')

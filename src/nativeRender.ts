@@ -378,14 +378,6 @@ export type NativeAdvisorConfidence = 'low' | 'medium' | 'high'
 export interface NativeAdvisorSuggestion { id: string; category: NativeAdvisorCategory; control: string; amount: number; what: string; why: string; confidence: NativeAdvisorConfidence }
 export interface NativeAdvisorResult { analysis: { luminanceMean: number; luminanceMedian: number; p01: number; p05: number; p25: number; p50: number; p75: number; p95: number; p99: number; blackClipFraction: number; whiteClipFraction: number; globalContrast: number; meanChroma: number; highChromaFraction: number; warmthBias: number; greenMagentaBias: number; portraitLuminanceMean: number; portraitChromaMean: number; portraitSampleFraction: number }; suggestions: NativeAdvisorSuggestion[] }
 
-export interface NativeExportResult {
-  outputPath: string
-  width: number
-  height: number
-  inputProfile: string
-  workingSpace: string
-  cameraProfileHash: string | null
-}
 export interface NativeReferenceMatchResponse { settings: NativeEditSettings; recipe: { confidence: number; protectSkin: number }; sourceAnalysis: { fingerprint: string }; referenceAnalysis: { fingerprint: string } }
 
 const HEADER_BYTES = 40
@@ -841,15 +833,6 @@ export async function adviseNativeImage(sourcePath: string, adjustments: Adjustm
     settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) } })
 }
 
-export async function chooseNativeExportPath(sourceName: string) {
-  const base = sourceName.replace(/\.[^.]+$/, '')
-  return save({
-    title: '匯出 Starroom JPEG',
-    defaultPath: `${base}-starroom.jpg`,
-    filters: [{ name: 'JPEG image', extensions: ['jpg', 'jpeg'] }],
-  })
-}
-
 export async function openNativeLibrary() {
   return invoke<{ path: string; schemaVersion: number }>('library_open_default')
 }
@@ -956,28 +939,6 @@ export async function openNativeSession() { return invoke<NativeSessionOpen>('se
 export async function autosaveNativeSession(state: NativeSessionState) { return invoke<void>('session_autosave', { state }) }
 export async function markNativeSessionClean(state: NativeSessionState) { return invoke<void>('session_mark_clean', { state }) }
 export async function discardNativeRecovery() { return invoke<void>('session_discard_recovery') }
-
-export async function exportNativeJpeg(
-  sourcePath: string,
-  outputPath: string,
-  adjustments: Adjustments,
-  curve: ToneCurvePoint[],
-  mask: RadialMask,
-  whiteBalanceMode: NativeWhiteBalanceMode = 'sourceDefault',
-  whiteBalanceSample: NativeWhiteBalanceSample | null = null,
-  toneCurves: NativeToneCurves = { master: curve, red: [], green: [], blue: [] },
-  opticsState: NativeOpticsState = defaultNativeOpticsState,
-  layers: NativeAdjustmentLayer[] = [],
-  skinRetouch: NativeSkinRetouchSettings = defaultNativeSkinRetouch(),
-  healingOperations: NativeHealingOperation[] = [],
-  renderConstants: NativeRenderConstants = defaultNativeRenderConstants,
-  rawWhiteBalance: NativeCameraWhiteBalanceTarget | null = null,
-) {
-  assertNativeSupported(adjustments, mask)
-  return invoke<NativeExportResult>('native_export_jpeg', {
-    request: { requestId: crypto.randomUUID(), sourcePath, outputPath, quality: 94, settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
-  })
-}
 
 export async function resolveNativeOpticsStatus(sourcePath: string, adjustments: Adjustments, curve: ToneCurvePoint[],
   whiteBalanceMode: NativeWhiteBalanceMode, whiteBalanceSample: NativeWhiteBalanceSample | null,

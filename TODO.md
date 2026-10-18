@@ -2,18 +2,25 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Finish acceptance of unused direct JPEG export retirement (doc63): no actual UI
+  caller, sync/direct write/no ICC weaker policy. Remove only legacy IPC/types/bridge/
+  picker; preserve professional batch, Reference Match helper and all regressions.
+  Red->green ownership guard,51 targeted Vitest and31 functional export tests pass.
+  Full Rust466 ordinary and Web219/license/infrastructure pass; own remote pending.
+
 - [x] Real private field-original Native diagnostics (doc62): explicit read-only source,
   actual dimensions/GPU flags/hash guards,137 CPU/export comparisons per RAW/JPEG run,
   max RGB8 delta1. Paths/photos remain outside public fixtures/reports. This is scoped
   evidence, not overall realtime acceptance: JPEG first103.773ms, denoise>100ms and
   RAW first1:1=2981.589ms remain required optimization targets.
 
-- [ ] Finish first-drag Native pyramid acceptance (doc61): bounded immutable higher
+- [x] Ordinary local/remote first-drag Native pyramid mechanism acceptance (doc61): bounded immutable higher
   previews produce separate interactive-only tiers outside the cache lock; Final/export
   remain direct. No duplicate Before/After tier entries or derived-child resampling.
   Actual PNG/JPEG/RAW decode/resize counters, exact Final bytes, sampler and cache
   isolation tests pass. Real first-drag466.811 ->112.460ms still exceeds100ms; warm and
-  other regressions retained. Full Rust466 ordinary and Web218/license pass; own CI pending.
+  other regressions retained. Full Rust466 ordinary and Web218/license pass; cd5d8d3
+  Full39092968506 and secondary39092972326 SUCCESS. Whole latency target remains OPEN.
 
 - [x] Ordinary local/remote acceptance of unbounded RAW preview resampling (doc60).
   Real upstream counterexample clips[-.25,1.5,4] to[0,1,1]; adapted pinned Lanczos3

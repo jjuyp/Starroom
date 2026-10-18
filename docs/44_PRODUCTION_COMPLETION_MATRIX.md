@@ -10,6 +10,15 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 legacy export audit (doc63): unused sync/direct JPEG writer without current
+atomic/ICC policy is removed with its unused bridge/types/picker/registration. Actual
+UI already invokes professional batch; no format/profile/project capability is removed.
+Red->green ownership guard complements31 functional export tests; Full ordinaryRust466/
+Web219/license/infrastructure pass; own remote pending.
+This is one Phase21/23/24 repair, not complete audit/release/installed acceptance.
+The prior first-drag mechanismcd5d8d3 Full39092968506/secondary39092972326 are SUCCESS;
+the documented broader latency failures remain OPEN.
+
 2026-10-18 actual private field originals (doc62): explicit read-only RAW/JPEG mode in
 existing opt-in probe validates dimensions, GPU flags, immutable hashes and137 actual
 CPU/export comparisons each, max RGB8 delta1. No private source is redistributed or

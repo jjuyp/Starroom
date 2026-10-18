@@ -1,5 +1,20 @@
 # Current Task
 
+2026-10-18 latest: dormant direct JPEG path removed and locally accepted (doc63).
+Actual UI uses professional batch; old sync/std::fs::write/no ICC endpoint, registration,
+request/result/frontend wrapper/picker are deleted, with red->green ownership guard.
+same_file stays for Reference Match, Style save untouched.31 actual export tests pass;
+Full Rust1792294738034 PASS470registered/466ordinary/four opt-in excluded, strict workspace
+Clippy/tests/doc-tests; Web1792294565947 PASS219/30files/lint/TS/build/JSON/Golden/package
+config. License561/6/269/infrastructure pass. Commit/push this accepted batch plus prior
+50c91e3 diagnostic commit. Remotecd5d8d3 Full39092968506 +secondary39092972326 now SUCCESS.
+PR#2Open/Draft, attached to thread. All local sessions terminal, no browser/server/app
+launched. No new installer/Final claim. Preserve full31-phase goal; no phase VERIFIED.
+Next high-priority latency work: bounded preview priming to remove first encoded resize/
+input-transform cost (actual JPEG first103.773ms); actual NR>100ms, RAW first1:1 full
+sensor decode2981.589ms, output CMM and GPU residency/direct presentation remain OPEN.
+Do not swap algorithms, lower Final quality or call a native-only timing whole UI latency.
+
 2026-10-18 latest: actual private field-original Native probe group is accepted locally
 (doc62). Test-only explicit source branch NEVER creates/replaces local original; source
 dimensions/GPU flags/hash required,137 actual CPU/export frame comparisons outside

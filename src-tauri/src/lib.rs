@@ -1858,16 +1858,6 @@ const fn default_prefer_gpu() -> bool {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct NativeExportRequest {
-    request_id: String,
-    source_path: PathBuf,
-    output_path: PathBuf,
-    quality: u8,
-    settings: NativeEditSettings,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct NativeColorSampleRequest {
     source_path: PathBuf,
     x: f32,
@@ -2113,17 +2103,6 @@ async fn native_white_balance_info(source_path: PathBuf) -> Result<NativeWhiteBa
     })
     .await
     .map_err(|error| format!("native white-balance metadata task failed: {error}"))?
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct NativeExportResult {
-    output_path: PathBuf,
-    width: u32,
-    height: u32,
-    input_profile: String,
-    camera_profile_hash: Option<String>,
-    working_space: &'static str,
 }
 
 fn profile_flag(source: starroom_color_management::InputProfileSource) -> u16 {
@@ -4187,66 +4166,6 @@ fn same_file(left: &Path, right: &Path) -> bool {
     }
 }
 
-#[tauri::command]
-fn native_export_jpeg(
-    portrait_runtime: State<'_, NativePortraitRuntime>,
-    ai_mask_runtime: State<'_, NativeAiMaskRuntime>,
-    ai_denoise_runtime: State<'_, NativeAiDenoiseRuntime>,
-    request: NativeExportRequest,
-) -> Result<NativeExportResult, String> {
-    if same_file(&request.source_path, &request.output_path) {
-        return Err("export destination must not overwrite the source image".into());
-    }
-    let requested_denoise_provider = request.settings.ai_denoise_provider;
-    let mut settings = request.settings.validated()?;
-    attach_portrait_masks(&mut settings, &request.source_path, &portrait_runtime)?;
-    attach_generated_masks(&mut settings, &request.source_path, &ai_mask_runtime)?;
-    let decoded = decode_source(&request.source_path)
-        .map_err(|error| format!("native export decode failed: {error}"))?;
-    attach_ai_denoise(
-        &decoded,
-        &request.source_path,
-        &mut settings,
-        requested_denoise_provider,
-        &request.request_id,
-        &ai_denoise_runtime,
-    )?;
-    let rendered = render_source_export_to_srgb8(&decoded, &settings)
-        .map_err(|error| format!("native export graph failed: {error}"))?;
-    let input_profile = rendered
-        .color
-        .camera_profile_id
-        .clone()
-        .unwrap_or_else(|| match rendered.color.input {
-            starroom_color_management::InputProfileSource::EmbeddedIcc => "embedded ICC".into(),
-            starroom_color_management::InputProfileSource::AssumedSrgb => "assumed sRGB".into(),
-            starroom_color_management::InputProfileSource::RawCameraMatrix => {
-                "resolved RAW camera profile".into()
-            }
-            starroom_color_management::InputProfileSource::RawGenericProfile => {
-                "Generic RAW Profile".into()
-            }
-        });
-    let jpeg = encode_jpeg_rgb8(
-        &rendered.data,
-        rendered.width,
-        rendered.height,
-        request.quality.clamp(1, 100),
-        None,
-    )
-    .map_err(|error| format!("native export encode failed: {error}"))?;
-    std::fs::write(&request.output_path, jpeg)
-        .map_err(|error| format!("native export write failed: {error}"))?;
-    Ok(NativeExportResult {
-        output_path: request.output_path,
-        width: rendered.width,
-        height: rendered.height,
-        input_profile,
-        camera_profile_hash: rendered.color.camera_profile_hash,
-        working_space: rendered.color.working_space,
-    })
-}
-
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeExportProgress {
@@ -4988,7 +4907,6 @@ pub fn run() {
             native_preview_cancel,
             native_preview_scheduler_status,
             native_preview_profile,
-            native_export_jpeg,
             portrait_detect,
             portrait_models_install_local,
             ai_mask_generate,
