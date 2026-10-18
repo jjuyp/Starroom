@@ -1,5 +1,10 @@
 # Starroom third-party notices
 
+The same image0.25.10 sampler adaptation also covers bounded opaque RGBA interactive
+proxies (2026-10-18); its upstream encoded0..1 clamp is retained in this mode. RAW RGB
+remains unbounded. Cache scheduling/parent lineage is Starroom-authored; all original
+upstream notices and selected MIT terms remain applicable.
+
 The unbounded RAW preview Lanczos3 adapter in `starroom-imageio/src/unbounded_resize.rs`
 is adapted from image-rs/image0.25.10 `src/imageops/sample.rs`, source commit
 `76e57184f22772dad1138e96954e57945406b15e`, by the image-rs contributors. MIT is selected

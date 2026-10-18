@@ -28,7 +28,7 @@
       "blackLevel": 0,
       "asShotMultipliers": [2, 1, 4],
       "sensorLevels": [1024, 2048, 4096, 6144, 8192, 10240, 12288, 14336],
-      "tests": ["realLibRawDecode", "fullAndHalfSize", "declaredWhiteLevel", "wbHeadroom", "unboundedPreviewResampling", "analogBalanceVariant", "forwardCalibrationVariant", "dngMatrixPresence", "independentBradfordSensorOracle", "sharedNativePreviewExport", "metadataRoundTrip", "finite", "immutableSource"],
+      "tests": ["realLibRawDecode", "fullAndHalfSize", "declaredWhiteLevel", "wbHeadroom", "unboundedPreviewResampling", "interactiveDerivedPreview", "analogBalanceVariant", "forwardCalibrationVariant", "dngMatrixPresence", "independentBradfordSensorOracle", "sharedNativePreviewExport", "metadataRoundTrip", "finite", "immutableSource"],
       "limitation": "Controlled normalization oracle only; does not extend manufacturer or photographic scene quality coverage"
     }
   ],

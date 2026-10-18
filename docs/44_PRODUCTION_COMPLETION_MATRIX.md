@@ -10,6 +10,16 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-18 first-drag pyramid (doc61): separate interactive source/parent-tier identities
+derive bounded immutable originals outside the cache mutex; never full sensor or derived
+children, never Final/export. Actual smallPNG/largeJPEG/RAW tests prove counters and exact
+fresh Final JPEG96. MSVCRelease first466.811 ->112.460ms, file decode390.955 ->zero;
+warm and other regressions remain retained. This still fails universal100ms (also NR/
+Texture p95), and does not closePhase6/8/9/14/16/19/20/25/30. Full ordinaryRust466/Web218/
+license/infrastructure pass; own remote pending.
+Prior925c721 RAW and ddbdef8 detail groups now have successful own ordinary Full/secondary
+CI, verified2026-10-18; their much broader original requirements remain active.
+
 2026-10-17 RAW resize group (doc60): real upstream float sampler clamped negative/>1
 working RGB. Adapted mature Lanczos3 preserves unbounded RAW values, checked/fallible
 buffers and original weights/order. Actual authored sensor->16x16 retains blue>3;

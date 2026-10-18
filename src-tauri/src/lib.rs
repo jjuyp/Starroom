@@ -1568,6 +1568,71 @@ impl Drop for PreviewWorkerPermit<'_> {
 }
 
 const DECODE_CACHE_BUDGET: u64 = 512 * 1024 * 1024;
+const DERIVED_PREVIEW_POLICY: &str = ":interactive-lanczos-v1:from=";
+
+/// Only bounded interactive proxies may derive from a higher immutable preview.
+/// Full sensor/export pixels and derived children are never pyramid parents. Pixel
+/// processing occurs after releasing the cache mutex; Arc clones do not clone pixels.
+fn cached_derived_interactive_preview(
+    scheduler: &NativePreviewScheduler,
+    source_identity: &str,
+    edge: u32,
+) -> Result<Option<(Arc<DecodedSourceImage>, String)>, String> {
+    if edge > 1024 {
+        return Ok(None);
+    }
+    let prefix = format!("{source_identity}{DERIVED_PREVIEW_POLICY}");
+    let parent = {
+        let mut cache = scheduler
+            .decoded
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+        if let Some(index) = cache.iter().rposition(|(identity, cached_edge, _)| {
+            identity.starts_with(&prefix) && *cached_edge == edge
+        }) {
+            let entry = cache
+                .remove(index)
+                .ok_or("PreviewCacheFailed: derived entry disappeared")?;
+            let result = (Arc::clone(&entry.2), entry.0.clone());
+            cache.push_back(entry);
+            profiling::record_cache(true);
+            return Ok(Some(result));
+        }
+        let selected = cache
+            .iter()
+            .enumerate()
+            .filter(|(_, (identity, cached_edge, image))| {
+                identity == source_identity
+                    && *cached_edge > edge
+                    && *cached_edge <= 4096
+                    && image.width().max(image.height()) <= 4096
+            })
+            .min_by_key(|(_, (_, cached_edge, _))| *cached_edge)
+            .map(|(index, _)| index);
+        selected.and_then(|index| cache.remove(index)).map(|entry| {
+            let result = (entry.1, Arc::clone(&entry.2));
+            cache.push_back(entry);
+            result
+        })
+    };
+    let Some((parent_edge, parent)) = parent else {
+        return Ok(None);
+    };
+    let lineage = format!("{prefix}{parent_edge}");
+    let image = if parent.width().max(parent.height()) <= edge {
+        parent
+    } else {
+        let image = profiling::measure(ProfileStage::Resize, 0, || {
+            parent.derive_interactive_preview(edge)
+        })
+        .map_err(|error| format!("native interactive proxy resize failed: {error}"))?;
+        let Some(image) = image else { return Ok(None) };
+        Arc::new(image)
+    };
+    profiling::record_cache(true);
+    cache_decoded_source(scheduler, lineage.clone(), edge, Arc::clone(&image))?;
+    Ok(Some((image, lineage)))
+}
 
 fn cached_decoded_source(
     scheduler: &NativePreviewScheduler,
@@ -1605,6 +1670,9 @@ fn cache_decoded_source(
         .decoded
         .lock()
         .map_err(|_| "PreviewCacheFailed: poisoned decode cache".to_owned())?;
+    // Before/After may finish the same decode concurrently. Retain one cache entry,
+    // rather than charging duplicated immutable tiers against the bounded LRU.
+    cache.retain(|(identity, cached_edge, _)| identity != &source_identity || *cached_edge != edge);
     while !cache.is_empty()
         && (cache.len() >= 4
             || cache
@@ -3828,10 +3896,21 @@ fn native_preview_inner(
     } else {
         level.max_edge()
     };
+    let mut decoded_lineage = "direct".to_owned();
     let cached = if region.is_some() {
         None
     } else {
-        cached_decoded_source(scheduler, &source_identity, decode_edge)?
+        let direct = cached_decoded_source(scheduler, &source_identity, decode_edge)?;
+        if direct.is_some() || request.interaction_phase != PreviewInteractionPhase::Interactive {
+            direct
+        } else if let Some((image, lineage)) =
+            cached_derived_interactive_preview(scheduler, &source_identity, decode_edge)?
+        {
+            decoded_lineage = lineage;
+            Some(image)
+        } else {
+            None
+        }
     };
     let decoded = if let Some((_, _, image)) = &region {
         image.clone()
@@ -3901,6 +3980,8 @@ fn native_preview_inner(
         });
     }
     let render_decoded = decoded.clone();
+    // Different parent tiers/direct decodes must not alias encoded-frame identity.
+    let frame_identity = format!("{frame_identity}:source-samples:{decoded_lineage}");
     let viewport_cache_key = format!(
         "{source_identity}:{frame_identity}:{}:{}:{}:{}:{tile_optimized}",
         viewport.x, viewport.y, viewport.width, viewport.height
@@ -6766,6 +6847,179 @@ mod tests {
     }
 
     #[test]
+    fn derived_interactive_cache_is_bounded_isolated_and_uses_nearest_original_tier() {
+        let scheduler = NativePreviewScheduler::default();
+        let make = |edge: u32, value| {
+            Arc::new(DecodedSourceImage::Rendered(
+                starroom_imageio::DecodedRenderedImage {
+                    width: edge,
+                    height: edge / 2,
+                    format: starroom_imageio::RenderedFormat::Png,
+                    rgba: [value, value, value, 1.0].repeat((edge * edge / 2) as usize),
+                    embedded_icc: None,
+                    exif: None,
+                },
+            ))
+        };
+        cache_decoded_source(&scheduler, "a".into(), u32::MAX, make(256, 0.1)).unwrap();
+        assert!(
+            cached_derived_interactive_preview(&scheduler, "a", 32)
+                .unwrap()
+                .is_none(),
+            "full sensor buffer is never a parent"
+        );
+        cache_decoded_source(&scheduler, "a".into(), 128, make(128, 0.25)).unwrap();
+        let near = make(64, 0.4);
+        cache_decoded_source(&scheduler, "a".into(), 64, Arc::clone(&near)).unwrap();
+        cache_decoded_source(&scheduler, "a".into(), 64, Arc::clone(&near)).unwrap();
+        assert_eq!(
+            scheduler.decoded.lock().unwrap().len(),
+            3,
+            "same tier is deduplicated"
+        );
+        let ((first, lineage), profile) = profiling::capture(|| {
+            cached_derived_interactive_preview(&scheduler, "a", 32)
+                .unwrap()
+                .unwrap()
+        });
+        assert_eq!((first.width(), first.height()), (32, 16));
+        assert_eq!(lineage, format!("a{DERIVED_PREVIEW_POLICY}64"));
+        assert_eq!(profile.stages[&ProfileStage::Resize].executions, 1);
+        assert!(
+            cached_decoded_source(&scheduler, "a", 32)
+                .unwrap()
+                .is_none(),
+            "derived proxy cannot masquerade as authoritative direct tier"
+        );
+        assert!(
+            cached_derived_interactive_preview(&scheduler, "b", 32)
+                .unwrap()
+                .is_none()
+        );
+        let (_, smaller_lineage) = cached_derived_interactive_preview(&scheduler, "a", 16)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            smaller_lineage, lineage,
+            "no repeated resampling of derived children"
+        );
+        assert_eq!(scheduler.decoded.lock().unwrap().len(), 4);
+        scheduler
+            .decoded
+            .lock()
+            .unwrap()
+            .retain(|(identity, _, _)| identity.contains(DERIVED_PREVIEW_POLICY));
+        let ((again, _), warm_profile) = profiling::capture(|| {
+            cached_derived_interactive_preview(&scheduler, "a", 32)
+                .unwrap()
+                .unwrap()
+        });
+        assert!(Arc::ptr_eq(&first, &again));
+        assert!(!warm_profile.stages.contains_key(&ProfileStage::Resize));
+        assert!(
+            cached_derived_interactive_preview(&scheduler, "a", 2048)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            matches!(near.as_ref(), DecodedSourceImage::Rendered(image) if image.width == 64 && image.rgba[0] == 0.4)
+        );
+    }
+
+    #[test]
+    fn actual_native_first_drag_reuses_proxy_but_final_reopens_authoritative_tier() {
+        for relative in [
+            "fixtures/golden/sources/astronaut-eileen-collins.png",
+            "fixtures/golden/sources/neon-streets-nikon-d7100.jpg",
+            "fixtures/raw/sources/nikon-d1.nef",
+        ] {
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(relative);
+            let original = source_content_hash(&source).unwrap();
+            let scheduler = NativePreviewScheduler::default();
+            let portrait = NativePortraitRuntime::default();
+            let masks = NativeAiMaskRuntime::default();
+            let denoise = NativeAiDenoiseRuntime::default();
+            let render = |request_id: &str, phase, edge, exposure| {
+                profiling::capture(|| {
+                    let mut settings = neutral_settings();
+                    settings.exposure = exposure;
+                    let response = native_preview_inner(
+                        &scheduler,
+                        &portrait,
+                        &masks,
+                        &denoise,
+                        NativePreviewRequest {
+                            request_id: request_id.into(),
+                            source_path: source.clone(),
+                            payload_format: PreviewPayloadFormat::Jpeg,
+                            max_edge: edge,
+                            prefer_gpu: false,
+                            interaction_phase: phase,
+                            resolution_mode: PreviewResolutionMode::Fit,
+                            viewport: None,
+                            settings,
+                        },
+                    )
+                    .unwrap();
+                    let tauri::ipc::InvokeResponseBody::Raw(frame) =
+                        tauri::ipc::IpcResponse::body(response).unwrap()
+                    else {
+                        panic!("binary frame expected")
+                    };
+                    frame
+                })
+            };
+            let (fit, fit_profile) = render("fit", PreviewInteractionPhase::Final, 1024, 0.0);
+            assert_eq!(fit_profile.stages[&ProfileStage::RawDecode].executions, 1);
+            let (_, drag_profile) =
+                render("first-drag", PreviewInteractionPhase::Interactive, 512, 0.1);
+            assert!(!drag_profile.stages.contains_key(&ProfileStage::RawDecode));
+            let fit_width = u32::from_le_bytes(fit[8..12].try_into().unwrap());
+            let fit_height = u32::from_le_bytes(fit[12..16].try_into().unwrap());
+            if fit_width.max(fit_height) > 512 {
+                assert_eq!(drag_profile.stages[&ProfileStage::Resize].executions, 1);
+            } else {
+                assert!(
+                    !drag_profile.stages.contains_key(&ProfileStage::Resize),
+                    "small source reuses Arc without pixel work"
+                );
+            }
+            let (_, second_profile) = render(
+                "changed-drag",
+                PreviewInteractionPhase::Interactive,
+                512,
+                0.2,
+            );
+            assert!(!second_profile.stages.contains_key(&ProfileStage::RawDecode));
+            assert!(!second_profile.stages.contains_key(&ProfileStage::Resize));
+            let (refined, refine_profile) =
+                render("final-512", PreviewInteractionPhase::Final, 512, 0.2);
+            assert_eq!(
+                refine_profile.stages[&ProfileStage::RawDecode].executions,
+                1,
+                "Final must not reuse derived proxy"
+            );
+            let fresh = decode_source_preview(&source, 512).unwrap();
+            let mut settings = neutral_settings();
+            settings.exposure = 0.2;
+            let reference =
+                render_source_preview_to_srgb8(&fresh, &settings.validated().unwrap()).unwrap();
+            let expected =
+                encode_jpeg_rgb8(&reference.data, reference.width, reference.height, 96, None)
+                    .unwrap();
+            let profile_len = u16::from_le_bytes(refined[32..34].try_into().unwrap()) as usize;
+            assert_eq!(
+                &refined[40 + profile_len..],
+                expected,
+                "Final has exact authoritative Native pixels/quality"
+            );
+            assert_eq!(source_content_hash(&source).unwrap(), original);
+        }
+    }
+
+    #[test]
     fn model_root_prefers_explicit_then_bundled_then_development_location() {
         let base = std::env::temp_dir().join(format!("starroom-model-root-{}", std::process::id()));
         let executable = base.join("installed").join("Starroom.exe");
@@ -7446,12 +7700,17 @@ mod tests {
         };
         let raw_first = render_raw("raw-first-fit");
         let raw_reopen = render_raw("raw-cached-reopen");
-        let _ = render(
+        let (first_interactive, first_interactive_profile) = render(
             "interactive-warm",
             PreviewInteractionPhase::Interactive,
             PreviewResolutionMode::Fit,
             None,
             settings(),
+        );
+        eprintln!(
+            "NATIVE_FIRST_INTERACTIVE cold_tier_ms={:.3} profile={}",
+            first_interactive.as_secs_f64() * 1000.0,
+            serde_json::to_string(&first_interactive_profile).unwrap(),
         );
         let mut dragged = settings();
         dragged.exposure = 1.0;

@@ -63,3 +63,7 @@ equivalence, complete photographic HDR/negative-gamut quality, alpha correctness
 monitor management, GPU direct presentation, first-drag cache performance,100MP memory,
 installed Windows runtime or Final acceptance. Own remote acceptance remains pending
 until this group's commit/SHA reaches terminal success.
+
+Remote ordinary acceptance:925c72124ff01bd72581152b0a802ba410ade710 Full Check
+https://github.com/jjuyp/Starroom/actions/runs/39030002986 and secondary39030007692
+both SUCCESS, verified2026-10-18. PR#2 remainsOpen/Draft; no Final release is implied.

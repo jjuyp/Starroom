@@ -1,5 +1,9 @@
 # Exact detail scheduling and true Off finishing
 
+Remote ordinary acceptance verified2026-10-18:ddbdef8211202ca934ca54c0046766495cf11a43
+Full39028054270 and secondary39028057407 SUCCESS; PR#2Open/Draft. Original wider gates
+below remain open; this is not Final release acceptance.
+
 2026-10-17. Same Native Preview/Export algorithms; optimization of scheduling,
 neighbor-address reuse, invariant weights and an actual no-op path. No reduced
 resolution, removed stage, replacement blur, changed radius or new image engine.

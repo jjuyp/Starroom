@@ -343,6 +343,19 @@ fn real_sensor_headroom_survives_actual_imageio_preview_downsampling() {
         last_blue > 3.0,
         "actual RAW preview must not plateau at1: {last_blue}"
     );
+    let parent = DecodedSourceImage::Raw(Box::new(decoded));
+    let Some(DecodedSourceImage::Raw(derived)) = parent.derive_interactive_preview(16).unwrap()
+    else {
+        panic!("RAW must retain its native metadata/domain")
+    };
+    assert_eq!(derived.metadata, preview.metadata);
+    assert!(
+        derived
+            .rgb
+            .iter()
+            .zip(&preview.rgb)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
     assert_eq!(original, std::fs::read(&fixture.0).unwrap());
 }
 

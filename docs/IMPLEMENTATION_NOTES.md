@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## 2026-10-18 — Interactive pyramid / first-drag cache
+
+Doc61 records the actual new Native path: nearest original bounded preview -> immutable
+interactive proxy under separate policy/parent-tier identity, with no pixel work inside
+the cache mutex and no full-sensor/derived-child parent. Final/export do not read derived
+entries. Same-key Before/After cache inserts deduplicate. Pinned mature Lanczos3 extends
+to bounded opaque encoded RGBA with exact upstream bits; RAW stays unbounded. Alpha/HDR-
+encoded inputs retain original decode and are not claimed repaired. Real PNG/JPEG/RAW
+tests prove no first-drag file decode, no second-drag resize, exact fresh Final JPEG96
+and immutable originals. MSVC Release reports1792237433220 ->1792292729541 show first
+interactive466.811 ->112.460ms, decoder390.955ms/one execution ->zero; warm54.266 ->58.700ms
+and other regressions are retained. First112.460ms, NR106.070ms and Texture107.820ms p95
+still fail100ms; no complete realtime claim. Full Rust1792293196410 passes format/strict
+Clippy/workspace tests/doc-tests (470registered/466ordinary/four opt-in excluded), Web
+1792293034145 passes218tests/30files/lint/TS/build/JSON/Golden/packaging config; license
+561/6/269 and infrastructure validators pass. Own remote acceptance remains pending.
+Prior925c721 RAW Full39030002986/secondary39030007692 and ddbdef8 detail Full39028054270/
+secondary39028057407 all SUCCESS, verified today; PR#2 remainsOpen/Draft.
+
 ## 2026-10-17 — Unbounded scene-linear RAW preview sampler
 
 Doc60 records actual image0.25.10 clamp counterexample, licensed mature Lanczos3

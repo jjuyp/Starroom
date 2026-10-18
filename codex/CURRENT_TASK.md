@@ -1,5 +1,26 @@
 # Current Task
 
+2026-10-18 latest: first-drag cache group doc61 is locally accepted. New Native derived
+tiers borrow bounded nearest original previews (not full sensor/derived children),
+separate source/policy/parent lineage from direct Final, deduplicate LRU tiers. No new
+color engine/dependency or Final/export downgrade. Actual smallPNG/largeJPEG/NikonRAW
+test proves first drag no decode, repeated edit no resize, exact fresh Final JPEG96,
+immutable sources. Four new units plus existing oracles pass. Full Rust1792293196410
+PASS470registered/466ordinary/four opt-in excluded; Web1792293034145 PASS218/30files,
+license561/6/269/infrastructure pass. MSVCRelease after report1792292729541: first
+466.811 ->112.460ms, decoder390.955ms/one ->zero, resize32.231ms; warm54.266 ->58.700ms,
+refine/viewport/spatial regressions retained. Universal100ms still fails. Commit this
+batch with own Full CI; previous925c721 Full39030002986 and secondary39030007692 are
+SUCCESS; PR#2Open/Draft. All local sessions terminal, no app/browser/server launched.
+Next relevant evidence: user's screenshot source actually exists. Read-only local
+Starroom DB at LOCALAPPDATA/Starroom/starroom-library.sqlite found _DSC8369.NEF +JPG
+in C:/Users/shang/Desktop/122ND750, dimensions6032x4032 and6016x4016; original files
+remain untouched. Never push/private-photo fixture or filename data. Add explicit
+private read-only source option to existing Native opt-in probe (must not overwrite
+it in synthetic-fixture setup; validate supplied dimensions against actual frame).
+Measure actual user RAW/JPEG, then finish remaining cache/priming/adaptive/CMM work.
+Full original31-phase Production scope stays active; no new installer/Final claim.
+
 2026-10-17 latest: RAW unbounded resampling group doc60 is locally accepted. Full
 Rust1792237107318 PASS466registered/462ordinary/four opt-in excluded, Web1792236859080
 PASS218/30files, license561/6/269. New3 sampler units + actual LibRaw->16x16 blue>3

@@ -2,19 +2,27 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
-- [ ] Complete local/remote acceptance of unbounded RAW preview resampling (doc60).
+- [ ] Finish first-drag Native pyramid acceptance (doc61): bounded immutable higher
+  previews produce separate interactive-only tiers outside the cache lock; Final/export
+  remain direct. No duplicate Before/After tier entries or derived-child resampling.
+  Actual PNG/JPEG/RAW decode/resize counters, exact Final bytes, sampler and cache
+  isolation tests pass. Real first-drag466.811 ->112.460ms still exceeds100ms; warm and
+  other regressions retained. Full Rust466 ordinary and Web218/license pass; own CI pending.
+
+- [x] Ordinary local/remote acceptance of unbounded RAW preview resampling (doc60).
   Real upstream counterexample clips[-.25,1.5,4] to[0,1,1]; adapted pinned Lanczos3
   preserves scene-linear values, typed errors and unchanged sensor/profile semantics.
   Actual authored DNG16x16 blue>3, real RAW54 CPU/GPU comparisons delta<=1, sampler
   bit-exact bounded oracles and RAW/shared/Golden milestone pass. Full Rust462 ordinary
-  and Web218/license gates pass; own remote acceptance pending.
+  and Web218/license gates pass;925c721 Full39030002986 and secondary39030007692 SUCCESS.
   This precedes cached lower-tier derivation; no new photographic/Final claim.
 
-- [ ] Remote acceptance of exact detail scheduling/Off finishing (doc59). Existing Rayon,
+- [x] Ordinary remote acceptance of exact detail scheduling/Off finishing (doc59). Existing Rayon,
   frozen serial588 function comparisons in1/2/4 threads, MSVC Release exact bits, same
   algorithms/precision. Actual24MP Native sharpen180.705→70.964ms, lumaNR421.432→100.008ms
   medians; residual>100ms p95 retained. Full Rust462 registered/458 ordinary and Web216 pass;
-  license561Rust/6npm/269notices passes. No full input-to-present/100MP/Final claim.
+  license561Rust/6npm/269notices passes;ddbdef8 Full39028054270 and secondary39028057407
+  SUCCESS. No full input-to-present/100MP/Final claim.
 
 - [ ] Use real inclusive-CMM/gamut-child profiling (doc57) to finish the remaining
   output-transform and full input-to-present latency gate. Actual RAW Exposure's

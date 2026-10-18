@@ -1,7 +1,7 @@
-//! RGB/f32 adaptation of image0.25.10 src/imageops/sample.rs (sinc/lanczos3,
+//! RGB(A)/f32 adaptation of image0.25.10 src/imageops/sample.rs (sinc/lanczos3,
 //! vertical_sample/horizontal_sample), commit76e57184f22772dad1138e96954e57945406b15e.
 //! Original project: image-rs contributors. MIT OR Apache-2.0; MIT selected below.
-//! Changes: opaque RGB/f32 only, no final0..1 color clamp, checked/fallible buffers,
+//! Changes: unbounded RGB/f32 and bounded opaque RGBA/f32, checked/fallible buffers,
 //! shared precomputed axis weights and independent parallel output rows. Each sample's
 //! weight/accumulation order and vertical-then-horizontal pass order are unchanged.
 //!
@@ -38,13 +38,13 @@ fn allocate(samples: usize) -> Result<Vec<f32>, ImageIoError> {
     Ok(data)
 }
 
-fn samples(width: u32, height: u32) -> Result<usize, ImageIoError> {
+fn samples<const CHANNELS: usize>(width: u32, height: u32) -> Result<usize, ImageIoError> {
     if width == 0 || height == 0 {
         return Err(ImageIoError::InvalidResizeDimensions);
     }
     (width as usize)
         .checked_mul(height as usize)
-        .and_then(|n| n.checked_mul(3))
+        .and_then(|n| n.checked_mul(CHANNELS))
         .ok_or(ImageIoError::InvalidResizeDimensions)
 }
 
@@ -104,8 +104,31 @@ pub(crate) fn resize_rgb(
     new_width: u32,
     new_height: u32,
 ) -> Result<Vec<f32>, ImageIoError> {
-    let input_samples = samples(width, height)?;
-    let output_samples = samples(new_width, new_height)?;
+    resize::<3>(source, width, height, new_width, new_height, false)
+}
+
+/// The bounded upstream policy is retained for opaque encoded RGB(A) proxies only.
+/// Transparent/premultiplied inputs must not enter this adapter.
+pub(crate) fn resize_opaque_rgba(
+    source: &[f32],
+    width: u32,
+    height: u32,
+    new_width: u32,
+    new_height: u32,
+) -> Result<Vec<f32>, ImageIoError> {
+    resize::<4>(source, width, height, new_width, new_height, true)
+}
+
+fn resize<const CHANNELS: usize>(
+    source: &[f32],
+    width: u32,
+    height: u32,
+    new_width: u32,
+    new_height: u32,
+    bounded: bool,
+) -> Result<Vec<f32>, ImageIoError> {
+    let input_samples = samples::<CHANNELS>(width, height)?;
+    let output_samples = samples::<CHANNELS>(new_width, new_height)?;
     if source.len() != input_samples {
         return Err(ImageIoError::InvalidBufferLength);
     }
@@ -119,16 +142,16 @@ pub(crate) fn resize_rgb(
     }
     let vertical = axis_weights(height, new_height)?;
     let horizontal = axis_weights(width, new_width)?;
-    let mut intermediate = allocate(samples(width, new_height)?)?;
+    let mut intermediate = allocate(samples::<CHANNELS>(width, new_height)?)?;
     intermediate
-        .par_chunks_mut(width as usize * 3)
+        .par_chunks_mut(width as usize * CHANNELS)
         .zip(vertical.par_iter())
         .for_each(|(row, axis)| {
-            for (x, pixel) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-                let mut sum = [0.0; 3];
+            for (x, pixel) in row.as_chunks_mut::<CHANNELS>().0.iter_mut().enumerate() {
+                let mut sum = [0.0; CHANNELS];
                 for (index, weight) in axis.weights.iter().enumerate() {
-                    let base = ((axis.start + index) * width as usize + x) * 3;
-                    for channel in 0..3 {
+                    let base = ((axis.start + index) * width as usize + x) * CHANNELS;
+                    for channel in 0..CHANNELS {
                         sum[channel] += source[base + channel] * weight;
                     }
                 }
@@ -137,15 +160,25 @@ pub(crate) fn resize_rgb(
         });
     let mut output = allocate(output_samples)?;
     output
-        .par_chunks_mut(new_width as usize * 3)
+        .par_chunks_mut(new_width as usize * CHANNELS)
         .enumerate()
         .for_each(|(y, row)| {
-            for (pixel, axis) in row.as_chunks_mut::<3>().0.iter_mut().zip(&horizontal) {
-                let mut sum = [0.0; 3];
+            for (pixel, axis) in row
+                .as_chunks_mut::<CHANNELS>()
+                .0
+                .iter_mut()
+                .zip(&horizontal)
+            {
+                let mut sum = [0.0; CHANNELS];
                 for (index, weight) in axis.weights.iter().enumerate() {
-                    let base = (y * width as usize + axis.start + index) * 3;
-                    for channel in 0..3 {
+                    let base = (y * width as usize + axis.start + index) * CHANNELS;
+                    for channel in 0..CHANNELS {
                         sum[channel] += intermediate[base + channel] * weight;
+                    }
+                }
+                if bounded {
+                    for value in &mut sum {
+                        *value = value.clamp(0.0, 1.0);
                     }
                 }
                 pixel.copy_from_slice(&sum);
@@ -160,7 +193,33 @@ pub(crate) fn resize_rgb(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageBuffer, Rgb, imageops};
+    use image::{ImageBuffer, Rgb, Rgba, imageops};
+
+    #[test]
+    fn opaque_encoded_proxy_matches_upstream_float_lanczos_bits_including_clipping() {
+        for (w, h, dw, dh) in [(17, 11, 8, 5), (13, 1, 5, 1), (1, 13, 1, 5), (5, 7, 11, 13)] {
+            let source: Vec<f32> = (0..w * h)
+                .flat_map(|i| {
+                    [
+                        if i % 2 == 0 { 0.0 } else { 1.0 },
+                        (i * 31 % 97) as f32 / 96.0,
+                        0.25,
+                        1.0,
+                    ]
+                })
+                .collect();
+            let reference = ImageBuffer::<Rgba<f32>, _>::from_raw(w, h, source.as_slice()).unwrap();
+            let expected =
+                imageops::resize(&reference, dw, dh, imageops::FilterType::Lanczos3).into_raw();
+            let actual = resize_opaque_rgba(&source, w, h, dw, dh).unwrap();
+            assert!(
+                actual
+                    .iter()
+                    .zip(expected)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+            );
+        }
+    }
 
     #[test]
     fn bounded_samples_match_the_pinned_upstream_bits_when_no_clip_is_required() {

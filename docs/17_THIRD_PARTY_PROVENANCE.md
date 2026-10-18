@@ -4,6 +4,14 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-18 interactive pyramid adaptation extends the same pinned/licensed image0.25.10
+Lanczos3 adapter below to opaque encoded RGBA/f32. It preserves upstream final0..1
+clamp ONLY for bounded encoded proxies, verified against actual upstream float samples
+including overshoot. RAW remains unbounded. Transparency/HDR-encoded inputs do not use
+this new derivation; existing file decode remains authoritative. Native cache scheduling,
+explicit parent-tier lineage, Arc ownership and Final/export isolation are Starroom code.
+No new dependency, version, model distribution, license or runtime network access.
+
 2026-10-17 RAW resample review: `crates/starroom-imageio/src/unbounded_resize.rs` directly
 adapts the mature sinc/Lanczos3 and vertical/horizontal sampler from image-rs/image0.25.10,
 source commit `76e57184f22772dad1138e96954e57945406b15e`, `src/imageops/sample.rs`

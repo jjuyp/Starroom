@@ -49,6 +49,67 @@ pub enum DecodedSourceImage {
 }
 
 impl DecodedSourceImage {
+    /// Derive an INTERACTIVE proxy from immutable decoded pixels, never an export source.
+    /// RAW keeps unbounded linear RGB; opaque encoded samples retain the existing bounded
+    /// encoded-domain Lanczos3 policy. Alpha-bearing/HDR-encoded sources return None so
+    /// callers keep the authoritative file decode until their separate policies are qualified.
+    /// No source-sized clone is created; only output/intermediate pixels and metadata copy.
+    pub fn derive_interactive_preview(&self, max_edge: u32) -> Result<Option<Self>, ImageIoError> {
+        if max_edge == 0 || max_edge > 1024 || self.width() == 0 || self.height() == 0 {
+            return Err(ImageIoError::InvalidResizeDimensions);
+        }
+        let scale = f64::from(max_edge) / f64::from(self.width().max(self.height()));
+        let width = (f64::from(self.width()) * scale.min(1.0)).round().max(1.0) as u32;
+        let height = (f64::from(self.height()) * scale.min(1.0)).round().max(1.0) as u32;
+        match self {
+            Self::Raw(image) => Ok(Some(Self::Raw(Box::new(DecodedRawImage {
+                width,
+                height,
+                rgb: unbounded_resize::resize_rgb(
+                    &image.rgb,
+                    image.width,
+                    image.height,
+                    width,
+                    height,
+                )?,
+                metadata: image.metadata.clone(),
+                timings: image.timings,
+                preview_half_size: image.preview_half_size,
+            })))),
+            Self::Rendered(image) => {
+                let (pixels, remainder) = image.rgba.as_chunks::<4>();
+                if !remainder.is_empty()
+                    || u64::from(image.width) * u64::from(image.height) != pixels.len() as u64
+                {
+                    return Err(ImageIoError::InvalidBufferLength);
+                }
+                if image.rgba.iter().any(|value| !value.is_finite()) {
+                    return Err(ImageIoError::NonFiniteResize);
+                }
+                if pixels
+                    .iter()
+                    .any(|p| p[3] != 1.0 || p[..3].iter().any(|v| !(0.0..=1.0).contains(v)))
+                {
+                    return Ok(None);
+                }
+                Ok(Some(Self::Rendered(DecodedRenderedImage {
+                    width,
+                    height,
+                    rgba: unbounded_resize::resize_opaque_rgba(
+                        &image.rgba,
+                        image.width,
+                        image.height,
+                        width,
+                        height,
+                    )?,
+                    embedded_icc: image.embedded_icc.clone(),
+                    exif: image.exif.clone(),
+                    format: image.format,
+                })))
+            }
+        }
+    }
+
     pub fn width(&self) -> u32 {
         match self {
             Self::Rendered(image) => image.width,
@@ -697,6 +758,53 @@ fn insert_png_xmp(png: &mut Vec<u8>, xmp: &[u8]) -> Result<(), ImageIoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derived_interactive_proxy_preserves_metadata_and_explicit_source_policies() {
+        let image = DecodedRenderedImage {
+            width: 16,
+            height: 8,
+            format: RenderedFormat::Png,
+            rgba: [0.2, 0.4, 0.6, 1.0].repeat(128),
+            embedded_icc: Some(vec![1, 2, 3]),
+            exif: Some(vec![4, 5, 6]),
+        };
+        let source = DecodedSourceImage::Rendered(image.clone());
+        let Some(DecodedSourceImage::Rendered(proxy)) =
+            source.derive_interactive_preview(8).unwrap()
+        else {
+            panic!("opaque encoded proxy expected")
+        };
+        assert_eq!((proxy.width, proxy.height), (8, 4));
+        assert_eq!(proxy.embedded_icc, image.embedded_icc);
+        assert_eq!(proxy.exif, image.exif);
+        assert_eq!(proxy.format, image.format);
+        assert_eq!(source, DecodedSourceImage::Rendered(image.clone()));
+        for (index, value) in [(3, 0.5), (0, 2.0), (0, -0.1)] {
+            let mut unsupported = image.clone();
+            unsupported.rgba[index] = value;
+            assert!(
+                DecodedSourceImage::Rendered(unsupported)
+                    .derive_interactive_preview(8)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut invalid = image.clone();
+        invalid.rgba[0] = f32::NAN;
+        assert!(matches!(
+            DecodedSourceImage::Rendered(invalid).derive_interactive_preview(8),
+            Err(ImageIoError::NonFiniteResize)
+        ));
+        assert!(source.derive_interactive_preview(0).is_err());
+        assert!(source.derive_interactive_preview(2048).is_err());
+        let mut malformed = image;
+        malformed.rgba.pop();
+        assert!(matches!(
+            DecodedSourceImage::Rendered(malformed).derive_interactive_preview(8),
+            Err(ImageIoError::InvalidBufferLength)
+        ));
+    }
 
     #[test]
     fn source_crop_preserves_f32_samples_and_profile_metadata() {

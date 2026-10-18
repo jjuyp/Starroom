@@ -12,6 +12,8 @@ if (process.platform !== 'win32' || !/host: .*windows-msvc/.test(compiler)) {
 const sourceFiles = ['Cargo.lock', 'src-tauri/src/lib.rs', 'src-tauri/src/preview_transport.rs',
   'crates/starroom-pipeline/src/lib.rs', 'crates/starroom-detail/src/lib.rs',
   'crates/starroom-look/src/lib.rs', 'crates/starroom-render/src/profiling.rs',
+  'crates/starroom-imageio/src/lib.rs', 'crates/starroom-imageio/src/unbounded_resize.rs',
+  'crates/starroom-raw/src/lib.rs',
   'crates/starroom-color-management/src/lib.rs', 'crates/starroom-color-management/src/gamut.rs']
 const sourceIdentity = () => Object.fromEntries(sourceFiles.map((path) => [path,
   createHash('sha256').update(readFileSync(path, 'utf8').replaceAll('\r\n', '\n')).digest('hex')]))
@@ -27,14 +29,17 @@ process.stdout.write(output)
 const controls = [...output.matchAll(/NATIVE_CONTROL_PERF control=(\S+) changed_samples=(\d+) edge=(\d+) median_ms=([\d.]+) p95_ms=([\d.]+)/g)]
   .map((match) => ({ control: match[1], changedSamples: Number(match[2]), edge: Number(match[3]),
     medianMs: Number(match[4]), p95Ms: Number(match[5]) }))
+const firstMatch = output.match(/NATIVE_FIRST_INTERACTIVE cold_tier_ms=([\d.]+) profile=(\{[^\r\n]+\})/)
+const firstInteractive = firstMatch ? { elapsedMs: Number(firstMatch[1]), profile: JSON.parse(firstMatch[2]) } : null
 const changedDuringRun = JSON.stringify(sources) !== JSON.stringify(sourceIdentity())
 const failure = changedDuringRun ? 'Source changed during compilation/measurement; retain report but do not accept it'
   : result.error?.message ?? (result.status !== 0 ? `cargo exit ${result.status}`
-  : controls.length !== 27 ? `Expected27 controls, received${controls.length}` : null)
+  : controls.length !== 27 ? `Expected27 controls, received${controls.length}`
+    : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
   sources, changedDuringRun,
   scope: 'Real MSVC Release Native requests on24MP synthetic source, excludes Tauri IPC/browser/OS presentation',
-  command: ['cargo', ...args], exitCode: result.status, failure, controls, output }
+  command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, output }
 mkdirSync('.starroom-reports', { recursive: true })
 const path = `.starroom-reports/native-preview-${format}-${Date.now()}.json`
 writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
