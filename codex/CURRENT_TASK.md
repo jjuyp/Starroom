@@ -1,5 +1,32 @@
 # Current Task
 
+2026-10-21 latest: doc70 actual GPU NR group locally accepted, not wholephase. Real
+sharedgraph calls apply_creative_with_denoise, retainedGPUcreative->NR->ONEreadback;
+CPU/export/complex Mask/Skin/Healing order remains, canonicalNR skipped onlywhenfused.
+New gpu/denoise.rs+wgsl use existingdetailparams/f32weights/order, lazyPSO/buffers and
+source+creative+params cachekey. BothGPUtimestamp pairs sharefinalmap, nofaketimeonhits.
+60 GPUcases+cachedframes/HDR/alpha/borders and realportrait CPU/exportdelta<=1 pass.
+Native actualRAW1792343560451PASS157/delta<=1/ten hardwareNRframes/sourcehashunchanged.
+NR+Sharpen111.039->77.399ms, heavy140.603->101.027ms stillfails; firstNRp95104.026ms,
+Texture109.413/135.977ms, Dehazep95100.456ms, firstRAWzoom3107.553ms remain. Unfavorable
+Exposure58.947ms versusprior52.991 retained. Full Rust1792597236422PASS491registered/
+487ordinary/four unchangedoptins; focusedWeb53+scriptlint/JSON/license561/6/269/infra19
+pass. Frontendprodsourceunchangedfromdb082c7's224/build baseline, explicitreuse.
+Dependencyedge render->existingdetail only; Cargo.lock/licenseReport/provenanceupdated.
+Prior db082c7Full39147064134/secondary39147069313SUCCESS. All localprocesses terminal;
+missing28102/54970/77733 were not reused as success; new49059fullreport is authoritative.
+Commit/push focusedGPUgroup, inspectexactownCI, continueoriginal31phasegoal.
+Next target actualTexture/Clarity/SharpenCPUspatial hotpath, preservingmatureoracles:
+GPUseparableGaussian (sameCPUweights/order), localdetail/boxfilter andsharpen stages
+afterNR andbeforeONEfinalreadback whenMask/Skin/Healing orderpermits. Do not move
+Sharp before activeCPUlocaldetail. CPUbroadblur usesf64integral; anyGPUf32separable
+box must passstrictfloat/quantized/perceptual/HDR/photographic parity, notclaimbitexact.
+Keep CPU fallback and unchangedExport; no standalone shader/stub countsascompletion.
+AvoideagerallPSOcompilation/startupregression; coldlazyPSOlatency stillneedsqualification.
+Retain Stagecacheidentities, realbufferbytes/hardwaretimestamps and noextraGPUreadback.
+Otheralpha/monitor/GPUresidentICC/directpresentation/realtiles/AI/memory/100MP/installed/
+fullphotographic/Finalgates allOPEN. No desktop launch/newinstaller/Final/tag/mainmerge.
+
 2026-10-19 latest: cancellation/doc69 group locally accepted. Real Native request TLS
 token is explicitly captured for Rayon NR via denoise_owned_cancellable, latched abort
 never exposes partial data; NoCancel/export samekernel.252 frozen-bit/pointer tests,

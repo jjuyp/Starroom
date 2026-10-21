@@ -29,6 +29,8 @@ const sourceFiles = ['Cargo.lock', 'src-tauri/src/lib.rs', 'src-tauri/src/previe
   'crates/starroom-pipeline/src/cancellation.rs',
   'scripts/native-preview-performance.mjs', 'crates/starroom-detail/src/lib.rs',
   'crates/starroom-look/src/lib.rs', 'crates/starroom-render/src/profiling.rs',
+  'crates/starroom-render/src/gpu.rs', 'crates/starroom-render/src/gpu/denoise.rs',
+  'crates/starroom-render/src/gpu/denoise.wgsl',
   'crates/starroom-imageio/src/lib.rs', 'crates/starroom-imageio/src/unbounded_resize.rs',
   'crates/starroom-raw/src/lib.rs',
   'crates/starroom-color-management/src/lib.rs', 'crates/starroom-color-management/src/gamut.rs']
@@ -58,19 +60,22 @@ const firstInteractive = firstMatch ? { elapsedMs: Number(firstMatch[1]), profil
 const parityMatch = output.match(/NATIVE_LOCAL_PARITY compared_frames=(\d+) max_rgb8_delta=(\d+)/)
 const localParity = parityMatch ? { comparedFrames: Number(parityMatch[1]), maxRgb8Delta: Number(parityMatch[2]) } : null
 const primingMatch = output.match(/NATIVE_PRIMING_READY elapsed_ms=([\d.]+)/)
+const gpuDenoiseMatch = output.match(/NATIVE_GPU_DENOISE actual_frames=(\d+)/)
+const gpuDenoise = gpuDenoiseMatch ? { actualFrames: Number(gpuDenoiseMatch[1]), proof: 'individual controls with hardware timestamp' } : null
 const priming = primingMatch ? { elapsedMs: Number(primingMatch[1]), scope: 'completed cache preparation, not UI scheduling' } : null
 const changedDuringRun = JSON.stringify(sources) !== JSON.stringify(sourceIdentity())
 const failure = changedDuringRun ? 'Source changed during compilation/measurement; retain report but do not accept it'
   : JSON.stringify(sourcePhoto) !== JSON.stringify(privateIdentity()) ? 'Original source bytes changed'
   : result.error?.message ?? (result.status !== 0 ? `cargo exit ${result.status}`
   : controls.length !== 27 ? `Expected27 controls, received${controls.length}`
+    : gpuDenoise?.actualFrames !== 10 ? 'Actual GPU denoise individual-control passes did not complete'
     : combinedControls.length !== (combined ? 4 : 0) ? 'Combined control timing did not complete'
     : prime && !priming ? 'Missing completed Native priming evidence'
     : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement'
       : localSource && (!localParity || localParity.comparedFrames !== (combined ? 157 : 137) || localParity.maxRgb8Delta > 1)
         ? 'Actual local photo CPU/GPU parity did not complete' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
-  sources, changedDuringRun, sourcePhoto, localParity, priming,
+  sources, changedDuringRun, sourcePhoto, localParity, priming, gpuDenoise,
   scope: `Real MSVC Release Native requests on24MP ${localSource ? 'private read-only original' : 'synthetic source'}, excludes Tauri IPC/browser/OS presentation`,
   command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, combinedControls, output }
 mkdirSync('.starroom-reports', { recursive: true })

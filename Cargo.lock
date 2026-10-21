@@ -3998,6 +3998,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "starroom-detail",
  "thiserror 2.0.20",
  "wgpu",
  "windows-sys 0.61.2",

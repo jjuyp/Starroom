@@ -1,5 +1,22 @@
 # Implementation Notes
 
+## 2026-10-21 — Actual GPU NR consumes retained creative output
+
+Doc70: GPU port of the accepted CPU Y/Cb/Cr kernel, not a blur/new denoise algorithm.
+Real shared graph uses it before ONE readback only with identity Mask/Skin/Healing
+tail; canonical CPU/export/complex order preserved, no duplicate NR. Lazy persistent
+pipeline/buffers, exact parameter/source cache identity, optional timestamp pairs in
+same mapping, HDR/alpha/finite boundaries and typed GPU errors tested.60 GPU cases
+plus actual photographic Preview/Export delta<=1 pass. Actual MSVC/RTX3050 RAW report
+1792343560451 PASS157 CPU/export comparisons/ten hardware NR frames/source immutable.
+NR+Sharpen111.039->77.399ms median; heavy140.603->101.027ms still fails100ms, coldNR
+p95104.026/Texture109.413ms/firstRAWzoom3107.553ms retained; no universal speedup.
+Full Rust1792597236422 PASS491registered/487ordinary/four optins. FocusedWeb53/ESLint/
+JSON/license561/6/269/infra19 pass, unchanged frontend224/build baseline explicit reuse.
+New local detail dependency edge/provenance/lockfile report synchronized, no new OSS
+version/model/photo. Prior db082c7 Full39147064134/secondary39147069313 SUCCESS.
+Own remote pending; no desktop launch/new installer/whole-phase/Final/tag/main merge.
+
 ## 2026-10-19 — Cancellation reaches the actual NR workers and pending UI lifecycle
 
 Doc69 adds request-scoped, latched cancellation inside unchanged mature NR math,

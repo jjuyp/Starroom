@@ -9,6 +9,7 @@ rust-version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+starroom-detail = { path = "../starroom-detail" }
 thiserror.workspace = true
 wgpu = { version = "30.0.0", default-features = false, features = ["dx12", "vulkan", "metal", "gles", "wgsl"] }
 pollster = "0.4.0"

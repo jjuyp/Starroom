@@ -4,6 +4,20 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-19 GPU NR: `starroom-render` adds a dependency edge to the existing GPL
+`starroom-detail` crate (no new package/version). `src/gpu/denoise.rs` and
+`denoise.wgsl` port Starroom's existing accepted edge-aware Y/Cb/Cr CPU kernel from
+`db082c7f4e35be80d20f825641849009a8e33782`, retaining parameter mapping, f32 spatial
+weights, dy/dx accumulation order, HDR/negative values and typed boundaries. This is
+an implementation-backend port, not a new/weaker denoiser or a newly copied upstream
+algorithm. Existing darktable reference/derived-component obligations below are
+unchanged. Existing pinned wgpu30.0.0 and Rayon1.12.0 remain the runtime foundations.
+GPU buffers stay f32 to preserve the accepted reference range; no 8-bit intermediate.
+No model/photo, license version or runtime download is added. Lockfile license report
+regenerated:561 Rust/6 npm production packages/269 notice texts. Native Preview uses
+the new pass only when local Mask/Skin/Healing ordering permits; Export remains the
+same CPU oracle, with executable parity requirements before acceptance.
+
 2026-10-18 interactive pyramid adaptation extends the same pinned/licensed image0.25.10
 Lanczos3 adapter below to opaque encoded RGBA/f32. It preserves upstream final0..1
 clamp ONLY for bounded encoded proxies, verified against actual upstream float samples

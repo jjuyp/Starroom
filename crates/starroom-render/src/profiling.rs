@@ -193,6 +193,12 @@ pub fn record_gpu(stage: ProfileStage, elapsed_nanoseconds: u64) {
                     .unwrap_or(0)
                     .saturating_add(elapsed_nanoseconds),
             );
+            if stage == ProfileStage::Detail {
+                active.report.gpu_spatial_nanoseconds = active
+                    .report
+                    .gpu_spatial_nanoseconds
+                    .saturating_add(elapsed_nanoseconds);
+            }
             if matches!(
                 stage,
                 ProfileStage::WhiteBalance

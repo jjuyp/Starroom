@@ -10,6 +10,17 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-21 actual GPU NR(doc70): real shared graph consumes retained creative buffer
+before ONE readback with canonical identity-tail predicate; complex Mask/Skin/Healing
+order stays CPU, unchanged oracle.60 device cases/actual portrait and RAW157 comparisons
+maxRGB8delta1 pass; ten Native NR frames have hardware timestamps. NR+Sharpen median
+111.039->77.399ms, heavy140.603->101.027ms STILL fails100ms; Texture/coldNR/zoom failures
+remain visible. Full Rust1792597236422 PASS491registered/487ordinary/four optins;
+focusedWeb53/lint/JSON/license/infra pass, unchanged frontend224/build baseline reused.
+Provenance/lockfile report updated for existing local detail dependency edge. Prior
+db082c7 Full39147064134/secondary39147069313 SUCCESS; own remote pending. No complete
+phase, wholeUI100ms, GPU-resident ICC/presentation,100MP/installed or Final acceptance.
+
 2026-10-19 cancellation(doc69): real Native token explicitly captured by NR Rayon
 workers, latched abort with no partial success;252 frozen-bit/pointer cases and actual
 graph token test pass. Queue pending updates no longer issue orphan Native cancel:

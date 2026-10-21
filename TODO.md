@@ -2,6 +2,17 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [x] Local actual GPU NR/shared-graph batch(doc70): retained creative output feeds
+  mature NR before ONE readback only when Mask/Skin/Healing ordering permits. CPU
+  oracle/export and complex-tail cancellation remain canonical; stage cache/identity,
+  f32 HDR/alpha, hardware time and explicit error/fallback tested.60 GPU cases plus
+  actual portrait parity/maxRGB8delta1, actual RAW1792343560451PASS157comparisons/ten
+  hardware NR frames/source unchanged. NR+Sharpen111.039->77.399ms median; heavy
+  140.603->101.027ms STILL fails, Texture109.413ms and firstNRp95104.026ms retained.
+  Full Rust1792597236422 PASS491registered/487ordinary/four unchanged optins; focused
+  Web53/lint/JSON/license561/6/269/infra19 pass. Unchanged frontend224 baseline reused.
+  Own remote required; all broader31-phase/wholeUI/residency/100MP/Final scope OPEN.
+
 - [x] Local cancellation batch (doc69): Native request token explicitly reaches real
   Rayon NR rows/64-pixel blocks; cancellation latches, never returns partial success.
  252 new frozen-bit/pointer cases and actual graph token test pass. Queue RED showed

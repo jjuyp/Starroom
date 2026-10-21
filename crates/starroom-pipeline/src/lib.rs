@@ -57,7 +57,7 @@ pub use starroom_raw::{
 use starroom_render::profiling::{self, ProfileStage};
 use starroom_render::{
     GpuStageCacheKeys,
-    gpu::{GpuCreativeParameters, GpuError, GpuRenderer},
+    gpu::{GpuCreativeParameters, GpuDenoiseRequest, GpuError, GpuRenderer},
 };
 use std::time::Instant;
 
@@ -1505,6 +1505,24 @@ fn gpu_can_fuse_vignette(settings: &RenderSettings) -> bool {
         && settings.grain.amount.abs() <= f32::EPSILON
 }
 
+/// NR belongs after local composites, Skin and Healing. Keep their canonical CPU order
+/// whenever any intervening stage is active; only the identity tail permits pre-readback NR.
+fn gpu_can_fuse_denoise(settings: &RenderSettings) -> bool {
+    let iso = settings.denoise.high_iso.clamp(0.0, 1.0);
+    let active = (settings.denoise.luminance + iso * 0.35).clamp(0.0, 1.0) > f32::EPSILON
+        || (settings.denoise.chroma + iso * 0.55).clamp(0.0, 1.0) > f32::EPSILON;
+    active
+        && settings
+            .layers
+            .iter()
+            .all(|layer| !layer.enabled || layer.opacity <= f32::EPSILON)
+        && skin_retouch_is_identity(settings.skin_retouch.parameters)
+        && settings
+            .healing_operations
+            .iter()
+            .all(|operation| !operation.enabled)
+}
+
 fn gpu_creative_parameters(
     settings: &RenderSettings,
     pixel_count: usize,
@@ -1588,6 +1606,7 @@ fn apply_creative_graph_mapped(
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
     semantic_map: Option<SemanticSamplingMap>,
+    allow_gpu_denoise: bool,
 ) -> Result<Vec<f32>, PipelineError> {
     validate_mask_rasters(&settings.portrait_masks, &settings.generated_masks)?;
     // Encoded relative-WB is prepared by the CPU color oracle. The complete global creative
@@ -1639,15 +1658,25 @@ fn apply_creative_graph_mapped(
         let parameters = gpu_creative_parameters(settings, pixel_count, width, height)?;
         let luts = gpu_curve_luts(settings);
         let exposed = profiling::measure(ProfileStage::Tone, working_bytes, || {
-            renderer.apply_creative(
-                &input,
-                &parameters,
-                &luts,
-                settings
-                    .gpu_cache_keys
-                    .as_ref()
-                    .map(|keys| keys.global_creative.as_str()),
-            )
+            let identity = settings
+                .gpu_cache_keys
+                .as_ref()
+                .map(|keys| keys.global_creative.as_str());
+            if allow_gpu_denoise && gpu_can_fuse_denoise(settings) {
+                renderer.apply_creative_with_denoise(
+                    &input,
+                    &parameters,
+                    &luts,
+                    identity,
+                    GpuDenoiseRequest {
+                        width: width as u32,
+                        height: height as u32,
+                        parameters: settings.denoise,
+                    },
+                )
+            } else {
+                renderer.apply_creative(&input, &parameters, &luts, identity)
+            }
         })?;
         let elapsed = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         profiling::record_gpu(ProfileStage::Tone, elapsed);
@@ -1777,7 +1806,7 @@ fn apply_creative_graph(
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
 ) -> Result<Vec<f32>, PipelineError> {
-    apply_creative_graph_mapped(pixels, width, height, settings, gpu, None)
+    apply_creative_graph_mapped(pixels, width, height, settings, gpu, None, false)
 }
 
 fn to_working_image(
@@ -2153,19 +2182,26 @@ fn render_prepared_working_graph(
             settings,
             gpu,
             Some(semantic_map),
+            true,
         )?,
     )
     .map_err(|_| PipelineError::DetailBuffer)?;
     checkpoint()?;
     let detailed = profiling::measure(ProfileStage::Detail, working_bytes, || {
-        if gpu.is_some()
+        let fused_vignette = gpu.is_some()
             && gpu_can_fuse_vignette(settings)
-            && settings.vignette.amount.abs() > f32::EPSILON
-        {
+            && settings.vignette.amount.abs() > f32::EPSILON;
+        let fused_denoise = gpu.is_some() && gpu_can_fuse_denoise(settings);
+        if fused_vignette || fused_denoise {
             // Only a mathematically safe identity-tail vignette is already fused. Non-commuting
             // combinations retain the canonical shared finishing order below.
             let mut detail_settings = settings.clone();
-            detail_settings.vignette = VignetteSettings::default();
+            if fused_vignette {
+                detail_settings.vignette = VignetteSettings::default();
+            }
+            if fused_denoise {
+                detail_settings.denoise = DenoiseParameters::default();
+            }
             apply_detail_stage(creative, &detail_settings)
         } else {
             apply_detail_stage(creative, settings)
@@ -4287,6 +4323,111 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn gpu_denoise_real_portrait_uses_canonical_order_and_matches_cpu_export() {
+        let Ok(gpu) = GpuRenderer::try_new() else {
+            eprintln!("GPU unavailable; real Native release gate still required");
+            return;
+        };
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let original = std::fs::read(&path).unwrap();
+        let source = starroom_imageio::decode_source_preview(&path, 256).unwrap();
+        let mut base = RenderSettings::default();
+        base.denoise.luminance = 0.65;
+        base.denoise.chroma = 0.7;
+        let mut combined = base.clone();
+        combined.tone.exposure_ev = 0.6;
+        combined.tone.shadows = 0.2;
+        combined.relative_color.temperature = -0.15;
+        combined.color_mixer.bands[0].hue_degrees = -12.0;
+        combined.local_detail.texture = 0.3;
+        combined.sharpen.amount = 0.5;
+        combined.grain.amount = 0.15;
+        combined.vignette.amount = 0.2;
+        combined.image_identity = "gpu-nr-parity-portrait".into();
+        let mut layered = combined.clone();
+        layered.layers.push(NativeAdjustmentLayer {
+            id: "before-nr".into(),
+            name: "Before NR".into(),
+            enabled: true,
+            opacity: 0.7,
+            blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
+            adjustments: LayerAdjustments {
+                tone: ToneParameters {
+                    exposure_ev: -0.7,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        });
+        assert!(gpu_can_fuse_denoise(&base));
+        assert!(gpu_can_fuse_denoise(&combined));
+        assert!(!gpu_can_fuse_denoise(&layered));
+        for (index, settings) in [base, combined, layered].into_iter().enumerate() {
+            let state = serde_json::to_vec(&settings).unwrap();
+            let expected = render_source_export_to_srgb8(&source, &settings).unwrap();
+            let before = gpu.resource_stats();
+            let (actual, profile) = profiling::capture(|| {
+                render_source_preview_with_gpu_to_srgb8(&source, &settings, &gpu)
+            });
+            let actual = actual.unwrap();
+            assert_eq!(
+                (actual.width, actual.height),
+                (expected.width, expected.height)
+            );
+            let delta = actual
+                .data
+                .iter()
+                .zip(&expected.data)
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(delta <= 1, "case{index} maxRGB8 delta{delta}");
+            assert_eq!(
+                gpu.resource_stats().final_readback_count,
+                before.final_readback_count + 1
+            );
+            if index == 2 {
+                assert_eq!(
+                    profile.gpu_spatial_nanoseconds, 0,
+                    "local layer must remain before CPU NR"
+                );
+            } else if gpu.resource_stats().timestamp_query_supported {
+                assert!(
+                    profile.gpu_spatial_nanoseconds > 0
+                        || profile.stages[&ProfileStage::Detail].cache_hits > 0
+                );
+            }
+            assert_eq!(serde_json::to_vec(&settings).unwrap(), state);
+        }
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn gpu_denoise_eligibility_preserves_noncommuting_skin_and_layer_stages() {
+        let mut settings = RenderSettings::default();
+        assert!(!gpu_can_fuse_denoise(&settings));
+        settings.denoise.high_iso = 0.7;
+        assert!(gpu_can_fuse_denoise(&settings));
+        settings.skin_retouch.parameters.smooth = 0.5;
+        assert!(!gpu_can_fuse_denoise(&settings));
+        settings.skin_retouch.parameters = Default::default();
+        settings.layers.push(NativeAdjustmentLayer {
+            id: "mask".into(),
+            name: "Mask".into(),
+            enabled: true,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            mask: MaskDefinition::None.into(),
+            adjustments: Default::default(),
+        });
+        assert!(!gpu_can_fuse_denoise(&settings));
+        settings.layers[0].enabled = false;
+        assert!(gpu_can_fuse_denoise(&settings));
     }
 
     #[test]
