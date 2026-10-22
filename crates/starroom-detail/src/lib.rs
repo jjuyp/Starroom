@@ -130,7 +130,8 @@ pub enum DetailError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DetailCancelled;
 
-fn gaussian_kernel(radius: f32) -> Vec<f32> {
+/// Shared normalized f32 coefficients for CPU and parity-checked GPU backends.
+pub fn gaussian_kernel(radius: f32) -> Vec<f32> {
     let sigma = radius.max(0.25);
     let half = (sigma * 3.0).ceil().clamp(1.0, 24.0) as isize;
     let mut kernel = Vec::with_capacity((half * 2 + 1) as usize);

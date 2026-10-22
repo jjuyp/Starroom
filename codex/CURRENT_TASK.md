@@ -1,5 +1,24 @@
 # Current Task
 
+2026-10-22 current: doc71 GPU spatial batch remains uncommitted, under acceptance.
+Real graph integrates local detail/sharpen after retained NR, before one readback;
+CPU/export and active-local-tail order unchanged.75 device cases+cached repeats and
+five portrait cases pass. Actual RAW1792598926333/1792599202889 pass157/delta1 with
+20hardware spatialframes. Texture71.235ms improves, heavy108.840ms stillfails.
+Cooperative shared-line experiment1792631638051 passed157/delta1 but heavy108.469/
+114.065ms and44.619ms GPU showed no benefit; removed, simpler filter retained.
+FullRust1792632362628 PASS493registered/489ordinary/four unchangedoptins; OOM and
+sandbox atomic-write failures retained, jobs=1/approvedpermissions resolve without
+product/test changes. Handle57481 expired; authoritative reportterminalPASS, don't
+restart. Current RAW1792666481462 PASS157/delta1/20spatialframes/sourceimmutable;
+Texture69.803/93.910ms, heavy108.552/116.230 andcoldSharp186.343ms remainfailures.
+All local processes terminal. Commit/push focusedgroup, inspectownCI. Next actual
+hotpath remains coldPSO/complex13pass43.98msGPU and23msCMM; no unmeasured speedclaim.
+Previous17c7fe2 Full39628273115 andsecondary39628284090SUCCESS. No newinstaller or
+desktop launch; user confirms running last delivered version, screenshot saysGPU.
+Original31-phase requirements remain active, especially wholeUIlatency/ICC/residency/
+tiles/100MP/installed qualification. Do not claim latest source already installed.
+
 2026-10-21 latest: doc70 actual GPU NR group locally accepted, not wholephase. Real
 sharedgraph calls apply_creative_with_denoise, retainedGPUcreative->NR->ONEreadback;
 CPU/export/complex Mask/Skin/Healing order remains, canonicalNR skipped onlywhenfused.

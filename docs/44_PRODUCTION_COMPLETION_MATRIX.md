@@ -10,6 +10,16 @@ private model weights. All original requirements remain active.
 
 ## Evidence rules
 
+2026-10-22 GPU spatial(doc71), under acceptance: actual NR/local/sharpen chain shares
+one readback and retains CPU/export/local-tail order.75 device cases and five portrait
+cases pass; actualRAW157 comparisons maxRGB8delta1,20 spatialhardwareframes. Texture
+median109.413->71.235ms, but heavy108.840ms/coldSharp182.407ms remain failures.
+Shared-line experiment did not establish speedup and was removed. FullRust1792632362628
+passes493registered/489ordinary/four unchangedoptins. Current RAW1792666481462 passes
+157/delta1; Texture69.803ms/heavy108.552ms/coldSharp186.343ms, failures still visible.
+OwnCI pending. Previous17c7fe2 Full39628273115/secondary39628284090SUCCESS. No phase newly
+VERIFIED, no installed or wholeUIlatency acceptance; original scope unchanged.
+
 2026-10-21 actual GPU NR(doc70): real shared graph consumes retained creative buffer
 before ONE readback with canonical identity-tail predicate; complex Mask/Skin/Healing
 order stays CPU, unchanged oracle.60 device cases/actual portrait and RAW157 comparisons

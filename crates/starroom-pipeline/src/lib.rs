@@ -57,7 +57,7 @@ pub use starroom_raw::{
 use starroom_render::profiling::{self, ProfileStage};
 use starroom_render::{
     GpuStageCacheKeys,
-    gpu::{GpuCreativeParameters, GpuDenoiseRequest, GpuError, GpuRenderer},
+    gpu::{GpuCreativeParameters, GpuError, GpuRenderer},
 };
 use std::time::Instant;
 
@@ -1507,15 +1507,20 @@ fn gpu_can_fuse_vignette(settings: &RenderSettings) -> bool {
 
 /// NR belongs after local composites, Skin and Healing. Keep their canonical CPU order
 /// whenever any intervening stage is active; only the identity tail permits pre-readback NR.
+#[cfg(test)]
 fn gpu_can_fuse_denoise(settings: &RenderSettings) -> bool {
     let iso = settings.denoise.high_iso.clamp(0.0, 1.0);
     let active = (settings.denoise.luminance + iso * 0.35).clamp(0.0, 1.0) > f32::EPSILON
         || (settings.denoise.chroma + iso * 0.55).clamp(0.0, 1.0) > f32::EPSILON;
-    active
-        && settings
-            .layers
-            .iter()
-            .all(|layer| !layer.enabled || layer.opacity <= f32::EPSILON)
+    active && gpu_can_fuse_detail(settings)
+}
+
+/// Every compatible spatial stage executes in canonical NR/local/sharpen order.
+fn gpu_can_fuse_detail(settings: &RenderSettings) -> bool {
+    settings
+        .layers
+        .iter()
+        .all(|layer| !layer.enabled || layer.opacity <= f32::EPSILON)
         && skin_retouch_is_identity(settings.skin_retouch.parameters)
         && settings
             .healing_operations
@@ -1606,7 +1611,7 @@ fn apply_creative_graph_mapped(
     settings: &RenderSettings,
     gpu: Option<&GpuRenderer>,
     semantic_map: Option<SemanticSamplingMap>,
-    allow_gpu_denoise: bool,
+    allow_gpu_detail: bool,
 ) -> Result<Vec<f32>, PipelineError> {
     validate_mask_rasters(&settings.portrait_masks, &settings.generated_masks)?;
     // Encoded relative-WB is prepared by the CPU color oracle. The complete global creative
@@ -1662,16 +1667,18 @@ fn apply_creative_graph_mapped(
                 .gpu_cache_keys
                 .as_ref()
                 .map(|keys| keys.global_creative.as_str());
-            if allow_gpu_denoise && gpu_can_fuse_denoise(settings) {
-                renderer.apply_creative_with_denoise(
+            if allow_gpu_detail && gpu_can_fuse_detail(settings) {
+                renderer.apply_creative_with_detail(
                     &input,
                     &parameters,
                     &luts,
                     identity,
-                    GpuDenoiseRequest {
+                    starroom_render::gpu::GpuDetailRequest {
                         width: width as u32,
                         height: height as u32,
-                        parameters: settings.denoise,
+                        denoise: settings.denoise,
+                        local_detail: settings.local_detail,
+                        sharpen: settings.sharpen,
                     },
                 )
             } else {
@@ -2191,16 +2198,18 @@ fn render_prepared_working_graph(
         let fused_vignette = gpu.is_some()
             && gpu_can_fuse_vignette(settings)
             && settings.vignette.amount.abs() > f32::EPSILON;
-        let fused_denoise = gpu.is_some() && gpu_can_fuse_denoise(settings);
-        if fused_vignette || fused_denoise {
+        let fused_detail = gpu.is_some() && gpu_can_fuse_detail(settings);
+        if fused_vignette || fused_detail {
             // Only a mathematically safe identity-tail vignette is already fused. Non-commuting
             // combinations retain the canonical shared finishing order below.
             let mut detail_settings = settings.clone();
             if fused_vignette {
                 detail_settings.vignette = VignetteSettings::default();
             }
-            if fused_denoise {
+            if fused_detail {
                 detail_settings.denoise = DenoiseParameters::default();
+                detail_settings.local_detail = LocalDetailParameters::default();
+                detail_settings.sharpen.amount = 0.0;
             }
             apply_detail_stage(creative, &detail_settings)
         } else {
@@ -4367,7 +4376,32 @@ mod tests {
         assert!(gpu_can_fuse_denoise(&base));
         assert!(gpu_can_fuse_denoise(&combined));
         assert!(!gpu_can_fuse_denoise(&layered));
-        for (index, settings) in [base, combined, layered].into_iter().enumerate() {
+        let spatial = RenderSettings {
+            local_detail: LocalDetailParameters {
+                texture: 0.8,
+                clarity: -0.6,
+                dehaze: 0.7,
+            },
+            sharpen: SharpenParameters {
+                amount: 1.5,
+                radius: 3.0,
+                masking: 0.6,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut negative = spatial.clone();
+        negative.local_detail = LocalDetailParameters {
+            texture: -1.0,
+            clarity: 1.0,
+            dehaze: -1.0,
+        };
+        negative.sharpen.radius = 0.3;
+        negative.tone.exposure_ev = 1.5;
+        for (index, settings) in [base, combined, layered, spatial, negative]
+            .into_iter()
+            .enumerate()
+        {
             let state = serde_json::to_vec(&settings).unwrap();
             let expected = render_source_export_to_srgb8(&source, &settings).unwrap();
             let before = gpu.resource_stats();

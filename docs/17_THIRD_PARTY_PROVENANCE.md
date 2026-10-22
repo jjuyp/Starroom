@@ -4,6 +4,17 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-22 GPU spatial backend: `gpu/spatial.rs`, `spatial_filter.wgsl` and
+`spatial_merge.wgsl` adapt the existing GPL Starroom detail implementation at
+`17c7fe2d83d4b3612dcf90e7620b4fd8e9cc13e4`. The existing CPU Gaussian coefficient
+generator is shared unchanged; local-detail and sharpen formulas retain their
+accepted parameters/order. Compensated f32 separable broad mean is checked against
+the CPU f64 summed-area oracle (not claimed bit exact). This code enters the binary
+under the existing GPL distribution obligations. No new external code/package/model,
+lockfile change or additional redistribution permission is introduced. The resolved
+wgpu pin remains30.0.1 as recorded in the table below; CPU Export remains authoritative.
+Doc71 records numeric, photographic and actual Native qualification.
+
 2026-10-19 GPU NR: `starroom-render` adds a dependency edge to the existing GPL
 `starroom-detail` crate (no new package/version). `src/gpu/denoise.rs` and
 `denoise.wgsl` port Starroom's existing accepted edge-aware Y/Cb/Cr CPU kernel from
@@ -11,7 +22,7 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 weights, dy/dx accumulation order, HDR/negative values and typed boundaries. This is
 an implementation-backend port, not a new/weaker denoiser or a newly copied upstream
 algorithm. Existing darktable reference/derived-component obligations below are
-unchanged. Existing pinned wgpu30.0.0 and Rayon1.12.0 remain the runtime foundations.
+unchanged. Existing resolved wgpu30.0.1 and Rayon1.12.0 remain the runtime foundations.
 GPU buffers stay f32 to preserve the accepted reference range; no 8-bit intermediate.
 No model/photo, license version or runtime download is added. Lockfile license report
 regenerated:561 Rust/6 npm production packages/269 notice texts. Native Preview uses

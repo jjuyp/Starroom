@@ -2,6 +2,16 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Current GPU spatial batch (doc71): real shared graph now executes NR/local
+  detail/sharpen before one readback with compatible local-stage ordering. 75 GPU
+  parity cases plus cached repeats and five portrait cases pass; 157 actual RAW
+  comparisons retain max RGB8 delta 1. Texture median109.413->71.235ms, but heavy
+  combined108.840ms and cold Sharpen182.407ms remain failures. Shared-line experiment
+  did not improve timings and was removed. Full Rust1792632362628 passes493registered/
+  489ordinary/four unchangedoptins. Current RAW1792666481462 passes157/delta1;
+  Texture69.803ms, heavy108.552ms/coldSharp186.343ms still fail. Own-SHA CI pending;
+  no complete UI latency, installed release or whole-phase completion claim.
+
 - [x] Local actual GPU NR/shared-graph batch(doc70): retained creative output feeds
   mature NR before ONE readback only when Mask/Skin/Healing ordering permits. CPU
   oracle/export and complex-tail cancellation remain canonical; stage cache/identity,

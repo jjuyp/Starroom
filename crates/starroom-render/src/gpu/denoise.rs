@@ -79,6 +79,7 @@ struct Buffers {
 }
 
 pub(super) struct EncodedDenoise {
+    pub identity: u64,
     pub output: wgpu::Buffer,
     pub staging: wgpu::Buffer,
     pub timestamps: bool,
@@ -86,6 +87,12 @@ pub(super) struct EncodedDenoise {
 }
 
 impl GpuDenoiseStage {
+    pub(super) fn invalidate(&mut self) {
+        if let Some(buffers) = &mut self.buffers {
+            buffers.identity = None;
+        }
+    }
+
     fn new(renderer: &GpuRenderer) -> Result<Self, GpuError> {
         let scope = renderer
             .device
@@ -259,6 +266,7 @@ impl GpuDenoiseStage {
             buffers.identity = Some(identity);
         }
         Ok(EncodedDenoise {
+            identity,
             output: buffers.output.clone(),
             staging: buffers.staging.clone(),
             timestamps: !hit && buffers.timing.is_some(),
@@ -266,11 +274,16 @@ impl GpuDenoiseStage {
         })
     }
 
-    pub(super) fn resolve_timing(&self, encoder: &mut wgpu::CommandEncoder, offset: u64) {
+    pub(super) fn resolve_timing(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        staging: &wgpu::Buffer,
+        offset: u64,
+    ) {
         if let Some(buffers) = self.buffers.as_ref()
             && let Some(timing) = buffers.timing.as_ref()
         {
-            timing.resolve_into(encoder, &buffers.staging, offset);
+            timing.resolve_into(encoder, staging, offset);
         }
     }
 }

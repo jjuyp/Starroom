@@ -1,5 +1,23 @@
 # Implementation Notes
 
+## 2026-10-22 — Retained GPU local detail and sharpening (under acceptance)
+
+Doc71 records actual shared-graph creative/NR/local/sharpen execution, one readback,
+lazy per-family caches and pass timestamps. Existing CPU Gaussian coefficients and
+detail semantics remain the oracle; no new dependency or image math in TypeScript.
+Active Mask/Skin/Healing retains canonical CPU ordering. GPU errors invalidate any
+unsubmitted identities. 75 device cases/cached repeats and five real portrait cases
+pass strict float/alpha/output bounds. Two pre-tiling actual RAW reports pass 157
+CPU/export comparisons, ten NR and twenty spatial hardware frames. Texture improves,
+but heavy combinations and cold PSO latency remain above target. A shared-line filter
+experiment passed correctness but failed to demonstrate speedup and was removed;
+report1792631638051 is retained. Full Rust1792632362628 passes493registered/489ordinary/
+four unchangedoptins. OOM1792631914428 and sandbox atomic-write1792632127107 failures
+are retained; jobs=1/approved permissions rerun unchanged tests successfully. Current
+RAW1792666481462 passes157/delta1, Texture69.803ms/heavy108.552ms/coldSharp186.343ms;
+the latter failures remain open. Scriptlint/JSON/infra19 pass. Own-SHA CI pending. No new
+installer, app launch, main merge, Final tag or complete responsiveness claim.
+
 ## 2026-10-21 — Actual GPU NR consumes retained creative output
 
 Doc70: GPU port of the accepted CPU Y/Cb/Cr kernel, not a blur/new denoise algorithm.

@@ -8091,6 +8091,7 @@ mod tests {
         let compared_frames = std::cell::Cell::new(0_u32);
         let max_rgb_delta = std::cell::Cell::new(0_u8);
         let gpu_denoise_frames = std::cell::Cell::new(0_u32);
+        let gpu_spatial_frames = std::cell::Cell::new(0_u32);
 
         let scheduler = NativePreviewScheduler::default();
         let portrait = NativePortraitRuntime::default();
@@ -8473,7 +8474,20 @@ mod tests {
                     );
                     gpu_denoise_frames.set(gpu_denoise_frames.get() + 1);
                 }
+                if matches!(*name, "Sharpen" | "Texture" | "Clarity" | "Dehaze") {
+                    assert!(
+                        profile.gpu_spatial_nanoseconds > 0,
+                        "{name} must execute actual GPU spatial processing"
+                    );
+                    gpu_spatial_frames.set(gpu_spatial_frames.get() + 1);
+                }
                 samples.push(duration.as_secs_f64() * 1000.0);
+                if index == 4 {
+                    eprintln!(
+                        "NATIVE_CONTROL_PROFILE control={name} profile={}",
+                        serde_json::to_string(&profile).unwrap()
+                    );
+                }
             }
             samples.sort_by(f64::total_cmp);
             eprintln!(
@@ -8533,6 +8547,12 @@ mod tests {
                     );
                     assert!(profile.stages.contains_key(&ProfileStage::Encode));
                     samples.push(duration.as_secs_f64() * 1000.0);
+                    if index == 4 {
+                        eprintln!(
+                            "NATIVE_COMBINED_PROFILE control={name} profile={}",
+                            serde_json::to_string(&profile).unwrap()
+                        );
+                    }
                 }
                 samples.sort_by(f64::total_cmp);
                 eprintln!(
@@ -8543,6 +8563,11 @@ mod tests {
         }
         assert_eq!(source_content_hash(&source).unwrap(), source_hash);
         assert_eq!(gpu_denoise_frames.get(), 10);
+        assert_eq!(gpu_spatial_frames.get(), 20);
+        eprintln!(
+            "NATIVE_GPU_SPATIAL actual_frames={} scope=individual_controls_with_hardware_timestamp",
+            gpu_spatial_frames.get()
+        );
         eprintln!(
             "NATIVE_GPU_DENOISE actual_frames={} scope=individual_controls_with_hardware_timestamp",
             gpu_denoise_frames.get()

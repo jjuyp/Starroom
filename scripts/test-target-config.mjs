@@ -84,6 +84,7 @@ export const targets = {
     rust: [
       ['test', '--locked', '-p', 'starroom-render', 'gpu'],
       ['test', '--locked', '-p', 'starroom-pipeline', 'm12_gpu'],
+      ['test', '--locked', '-p', 'starroom-pipeline', 'gpu_denoise'],
     ],
     web: ['src/nativeRender.test.ts'],
     golden: ['raw', 'tone', 'curve', 'color', 'grading', 'detail', 'portrait', 'skin', 'neon', 'landscape', 'hdr'],

@@ -9,7 +9,9 @@
 use bytemuck::{Pod, Zeroable};
 mod denoise;
 pub use denoise::GpuDenoiseRequest;
+mod spatial;
 use serde::Serialize;
+pub use spatial::GpuDetailRequest;
 use std::{
     borrow::Cow,
     collections::hash_map::DefaultHasher,
@@ -257,6 +259,7 @@ pub struct GpuRenderer {
     failure_detail: Arc<Mutex<Option<String>>>,
     resources: Mutex<Option<GpuBufferResources>>,
     denoise: Mutex<Option<denoise::GpuDenoiseStage>>,
+    spatial: Mutex<Option<spatial::GpuSpatialStage>>,
     pipeline_count: AtomicU64,
     stats: Mutex<GpuResourceStats>,
 }
@@ -512,6 +515,7 @@ impl GpuRenderer {
             failure_detail,
             resources: Mutex::new(None),
             denoise: Mutex::new(None),
+            spatial: Mutex::new(None),
             pipeline_count: AtomicU64::new(2),
             stats: Mutex::new(GpuResourceStats {
                 pipeline_create_count: 2,
@@ -550,6 +554,13 @@ impl GpuRenderer {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .map_or(0, denoise::GpuDenoiseStage::allocated_buffer_bytes);
+        stats.allocated_buffer_bytes += self
+            .spatial
+            .lock()
+            .ok()
+            .as_deref()
+            .and_then(Option::as_ref)
+            .map_or(0, spatial::GpuSpatialStage::allocated_buffer_bytes);
         stats
     }
 
@@ -930,6 +941,34 @@ impl GpuRenderer {
         if request.is_identity(pixels.len())? {
             return self.apply_creative(pixels, parameters, curve_luts, stage_identity);
         }
+        self.apply_creative_with_detail(
+            pixels,
+            parameters,
+            curve_luts,
+            stage_identity,
+            GpuDetailRequest {
+                width: request.width,
+                height: request.height,
+                denoise: request.parameters,
+                local_detail: Default::default(),
+                sharpen: starroom_detail::SharpenParameters {
+                    amount: 0.0,
+                    ..Default::default()
+                },
+            },
+        )
+    }
+
+    /// Compatible spatial stages retain GPU intermediates and share one final readback.
+    pub fn apply_creative_with_detail(
+        &self,
+        pixels: &[[f32; 4]],
+        parameters: &GpuCreativeParameters,
+        curve_luts: &[f32; 8192],
+        stage_identity: Option<&str>,
+        request: GpuDetailRequest,
+    ) -> Result<Vec<[f32; 4]>, GpuError> {
+        request.validate(pixels.len())?;
         self.apply_creative_inner(
             pixels,
             parameters,
@@ -945,7 +984,44 @@ impl GpuRenderer {
         parameters: &GpuCreativeParameters,
         curve_luts: &[f32; 8192],
         stage_identity: Option<&str>,
-        denoise_request: Option<GpuDenoiseRequest>,
+        detail_request: Option<GpuDetailRequest>,
+    ) -> Result<Vec<[f32; 4]>, GpuError> {
+        let result = self.apply_creative_frame(
+            pixels,
+            parameters,
+            curve_luts,
+            stage_identity,
+            detail_request,
+        );
+        if result.is_err() {
+            // Encoding may fail before submission. Never reuse a fingerprint whose work
+            // was only recorded, or whose final readback/finite validation failed.
+            if let Ok(mut resources) = self.resources.lock()
+                && let Some(resources) = resources.as_mut()
+            {
+                resources.creative_fingerprint = None;
+            }
+            if let Ok(mut stage) = self.denoise.lock()
+                && let Some(stage) = stage.as_mut()
+            {
+                stage.invalidate();
+            }
+            if let Ok(mut stage) = self.spatial.lock()
+                && let Some(stage) = stage.as_mut()
+            {
+                stage.invalidate();
+            }
+        }
+        result
+    }
+
+    fn apply_creative_frame(
+        &self,
+        pixels: &[[f32; 4]],
+        parameters: &GpuCreativeParameters,
+        curve_luts: &[f32; 8192],
+        stage_identity: Option<&str>,
+        detail_request: Option<GpuDetailRequest>,
     ) -> Result<Vec<[f32; 4]>, GpuError> {
         self.check_device()?;
         if pixels.is_empty()
@@ -1097,6 +1173,15 @@ impl GpuRenderer {
             pass.dispatch_workgroups((pixels.len() as u32).div_ceil(64), 1, 1);
         }
         let timestamps = !creative_hit && resources.timing.is_some();
+        let denoise_request = detail_request
+            .map(GpuDetailRequest::nr)
+            .map(|request| {
+                request
+                    .is_identity(pixels.len())
+                    .map(|identity| (!identity).then_some(request))
+            })
+            .transpose()?
+            .flatten();
         let denoised = denoise_request
             .map(|request| {
                 self.encode_denoise(
@@ -1108,11 +1193,40 @@ impl GpuRenderer {
                 )
             })
             .transpose()?;
-        let (output, staging) = denoised
-            .as_ref()
-            .map_or((&resources.output, &resources.staging), |stage| {
-                (&stage.output, &stage.staging)
-            });
+        let mut spatial_stages = Vec::with_capacity(2);
+        if let Some(request) = detail_request {
+            for kind in 0..2 {
+                if request.active(kind) {
+                    let (input, identity) = spatial_stages.last().map_or_else(
+                        || {
+                            denoised
+                                .as_ref()
+                                .map_or((&resources.output, creative_fingerprint), |s| {
+                                    (&s.output, s.identity)
+                                })
+                        },
+                        |s: &spatial::EncodedSpatial| (&s.output, s.identity),
+                    );
+                    spatial_stages.push(self.encode_spatial(
+                        &mut encoder,
+                        input,
+                        identity,
+                        request,
+                        kind,
+                    )?);
+                }
+            }
+        }
+        let (output, staging) = spatial_stages.last().map_or_else(
+            || {
+                denoised
+                    .as_ref()
+                    .map_or((&resources.output, &resources.staging), |stage| {
+                        (&stage.output, &stage.staging)
+                    })
+            },
+            |stage| (&stage.output, &stage.staging),
+        );
         encoder.copy_buffer_to_buffer(output, 0, staging, 0, byte_len);
         let mut timestamp_stages = Vec::with_capacity(2);
         if let Some(timing) = resources.timing.as_ref().filter(|_| timestamps) {
@@ -1129,6 +1243,7 @@ impl GpuRenderer {
                 {
                     state.resolve_timing(
                         &mut encoder,
+                        staging,
                         byte_len + timestamp_stages.len() as u64 * 16,
                     );
                 }
@@ -1150,6 +1265,43 @@ impl GpuRenderer {
                 resources.allocated_buffer_bytes() + spatial_bytes,
             );
         }
+        for stage in &spatial_stages {
+            if let Some(state) = self
+                .spatial
+                .lock()
+                .map_err(|_| GpuError::DeviceLost)?
+                .as_ref()
+            {
+                state.resolve_timing(
+                    stage,
+                    &mut encoder,
+                    staging,
+                    byte_len + timestamp_stages.len() as u64 * 16,
+                );
+            }
+            timestamp_stages.extend(std::iter::repeat_n(true, stage.executed.len()));
+            if stage.cache_hit {
+                self.statistics().gpu_stage_cache_hit += 1;
+                crate::profiling::record_stage_cache_hit(crate::profiling::ProfileStage::Detail);
+            } else {
+                self.statistics().gpu_stage_cache_miss += 1;
+            }
+        }
+        let detail_bytes = self
+            .denoise
+            .lock()
+            .map_err(|_| GpuError::DeviceLost)?
+            .as_ref()
+            .map_or(0, denoise::GpuDenoiseStage::allocated_buffer_bytes)
+            + self
+                .spatial
+                .lock()
+                .map_err(|_| GpuError::DeviceLost)?
+                .as_ref()
+                .map_or(0, spatial::GpuSpatialStage::allocated_buffer_bytes);
+        crate::profiling::record_gpu_buffer_bytes(
+            resources.allocated_buffer_bytes() + detail_bytes,
+        );
         let submission = self.queue.submit(Some(encoder.finish()));
         let readback_started = Instant::now();
         let result = self.readback_rgba_staged(staging, byte_len, &timestamp_stages, submission)?;
