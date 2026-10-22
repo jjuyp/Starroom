@@ -85,6 +85,12 @@ for (const pkg of rustPackages) {
 for (const [path, pkg] of npmPackages) {
   collectLicenseDocuments(`npm ${path.replace(/^node_modules\//, '')}@${pkg.version}`, join(rootPath, path))
 }
+// This GPL plugin is compiled by our build.rs, not represented as a Cargo package.
+// Include its retained full text in the same installer-bundled notice artifact.
+collectLicenseDocuments(
+  'LittleCMS Fast Float 2.19 / 21c582a594fe5279f90c0b93437c398f93bf62b0 / GPL-3.0-or-later',
+  join(rootPath, 'vendor/lcms-fast-float-2.19'),
+)
 const licenseTexts = [
   'STARROOM THIRD-PARTY LICENSE TEXTS',
   '',

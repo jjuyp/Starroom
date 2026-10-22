@@ -1,5 +1,12 @@
 # Third-party notices
 
+LittleCMS Fast Float 2.19, copyright (c) 1998-2026 Marti Maria Saguer,
+is included under GPL-3.0-or-later (not the core LittleCMS MIT license).
+Unmodified source: mm2/Little-CMS commit
+21c582a594fe5279f90c0b93437c398f93bf62b0, plugins/fast_float.
+Retained source, hashes and full license: vendor/lcms-fast-float-2.19.
+Redistributed binaries must retain these notices and corresponding GPL source.
+
 Starroom's Native correlated-temperature provider is a BSD-3-Clause-derived scalar
 port of Colour Developers' Robertson (1968) implementation, colour-science/colour
 v0.4.7, colour/temperature/robertson1968.py, blob 380b8bf8327098e8532eedd219084e8386547530.

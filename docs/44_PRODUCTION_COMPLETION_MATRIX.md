@@ -2,6 +2,11 @@
 
 Status: **Phase 0 audit in progress; Final Acceptance is NOT achieved.**
 
+2026-10-23 evidence increment: doc72 bounds official LCMS output acceleration to
+verified sRGB samples; real Native157frame parity passes and median CMM improves.
+This does not verify GPU-resident display/monitor ICC, wholeUI latency, all-profile
+performance, large-image memory or any complete phase. Cold/p95 failures persist.
+
 Scope: the user's `FINAL COMPLETION & COLOR ENGINE PERFECTION PASS`, Phases 0–30.
 Baseline source is `b36692f55a50a64106815b55083582bbb13d523d`. Historical M1–M30
 checkmarks and green RC workflows are implementation evidence, not proof of these stronger

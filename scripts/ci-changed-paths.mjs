@@ -17,7 +17,7 @@ const rules = {
   library: [/^crates\/starroom-library\//],
   history: [/^crates\/starroom-history\//],
   export: [/^crates\/starroom-export\//],
-  color: [/^crates\/starroom-(?:color|color-management|grading|reference|look)\//],
+  color: [/^crates\/starroom-(?:color|color-management|grading|reference|look)\//, /^vendor\/lcms-fast-float-2\.19\//],
   raw: [/^crates\/starroom-(?:raw|imageio)\//, /^fixtures\/raw\//, /^fixtures\/colorchecker\//],
   detail: [/^crates\/starroom-(?:detail|heal|portrait|ai-denoise|look)\//],
   optics: [/^crates\/starroom-optics\//],

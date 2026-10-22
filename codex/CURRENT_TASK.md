@@ -1,5 +1,39 @@
 # Current Task
 
+2026-10-23 latest: doc72 group now locally accepted, ready commit/push/ownCI.
+FullRust1792690429095 PASS format/workspaceClippy/tests/doc-tests;496registered,
+492ordinary/four existingoptins. FullWeb1792689864727 PASS225/31files/all gates.
+Sourcehash/license test17files and bundledGPL pass; vendor-only CI color routing
+and infrastructure19 pass. All local sessions terminal (50339/26808 included).
+ActualRAW1792689231463 PASS157/delta1; limitations remain in doc72. Prior c09cf3f
+Full39766859444/secondary39766866113 SUCCESS and PR2Open/Draft rechecked.
+Commit focusedgroup, push, inspectownCI. Next cold-detail initialization audit:
+GpuSpatialStage::new creates two pipelines inside encode_spatial on first use;
+current priming is deliberately CPU-only, request GPU protected by scheduler.gpu
+Mutex. Do not blindly add compile under foreground-held mutex or eager startup.
+Measure initialization separately, then design idle/tool-intent preparation without
+pixel changes/extra readback/foreground blocking. Original31phases remainactive.
+No new installer, app launch, fullrelease claim, main merge or tag.
+
+2026-10-23 current: doc72 bounded official LCMS Fast Float integration is UNCOMMITTED.
+c09cf3f own Full39766859444/secondary39766866113 succeeded; no new installer.
+Profile round-trip quantization fixed with shared in-memory Rec2020 parameters;
+explicit-sRGB toe failure fixed by canonical evaluation near sampled-TRC knee.
+43 color-management tests/targeted Clippy pass; plugin GPL/source hashes/notices and
+license561/6/270 pass. Real Native report1792689231463 terminalPASS157/delta1;
+Exposure40.880ms, heavy93.473/115.385ms, coldSharp174.520ms still fails100ms.
+Source/code unchanged during measurement; later dense-test-only addition passes.
+All local handles now TERMINAL. Color78154 sandboxVitestEPERM retained; approved
+67341 report1792689669282 passes all but simultaneous-dist EBUSY. Export48557
+report1792689669595 passes all, including sharedgraph/Golden/workspaceClippy/build.
+Standalone npmrunbuild after both terminalPASS (TS/Vite), no code change.70focused
+Vitest pass, pipeline80+integration/RAW/photographic and render42 pass. Scriptlint/
+JSON/infrastructure19 pass. Do not run milestone bundles concurrently: both write dist.
+Next: source/license verifier tests, full stable-group
+acceptance then commit/push/ownCI. Do not call experimental group release-ready.
+Original31phase scope remains active, all wholeUI/GPUresident/tiles/100MP/installed
+gates still required; no desktop launch, source-photo modification, Final/tag/merge.
+
 2026-10-22 current: doc71 GPU spatial batch remains uncommitted, under acceptance.
 Real graph integrates local detail/sharpen after retained NR, before one readback;
 CPU/export and active-local-tail order unchanged.75 device cases+cached repeats and

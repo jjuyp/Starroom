@@ -1,5 +1,21 @@
 # Implementation Notes
 
+## 2026-10-23 — Bounded LittleCMS output accelerator (under acceptance)
+
+Local acceptance now passes: FullRust1792690429095 (496 registered,492 ordinary,
+four unchanged opt-ins), FullWeb1792689864727 (225 tests/31 files), source17hashes,
+license561/6/270, infrastructure19. Remote own-commit CI remains pending; this
+does not close whole-UI, GPU residency, 100MP or installed-release requirements.
+
+Doc72 records the official unmodified GPL Fast Float source, exact-sRGB-only private
+context integration, canonical unbounded/knee handling and corrected ICC round-trip
+quantization. All 43 color-management tests and targeted Clippy pass. Actual private
+RAW report1792689231463 passed157 CPU/export comparisons (delta<=1); output CMM~23ms
+to6.644ms, Exposure50.802->40.880ms, heavy108.552->93.473ms median. ColdSharp174.520ms,
+heavy p95115.385ms and firstinteraction62.517ms retain limitations/regressions.
+No UI/installed/100MP/Final claim. License report561/6/270 includes full pluginGPL.
+Wider acceptance pending; temporary Vitest sandbox EPERM is not a product failure.
+
 ## 2026-10-22 — Retained GPU local detail and sharpening (under acceptance)
 
 Doc71 records actual shared-graph creative/NR/local/sharpen execution, one readback,

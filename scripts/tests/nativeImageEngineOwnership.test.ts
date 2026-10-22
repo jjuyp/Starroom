@@ -3,6 +3,24 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 
 describe('Native engine source ownership and immutable migration corpus', () => {
+  it('retains pinned Fast Float sources and bundles its distinct GPL notice', () => {
+    const root = new URL('../../vendor/lcms-fast-float-2.19/', import.meta.url)
+    const manifest = readFileSync(new URL('README.md', root), 'utf8')
+    const entries = [...manifest.matchAll(/^- `([^`]+)`: `([a-f0-9]{64})`/gm)]
+    expect(entries).toHaveLength(17)
+    for (const [, path, hash] of entries) {
+      const content = readFileSync(new URL(path, root), 'utf8').replaceAll('\r\n', '\n')
+      expect(createHash('sha256').update(content).digest('hex'), path).toBe(hash)
+    }
+    const build = readFileSync(new URL('../../crates/starroom-color-management/build.rs', import.meta.url), 'utf8')
+    for (const [, path] of entries.filter(([, path]) => path.endsWith('.c'))) {
+      expect(build).toContain(`"${path.slice(4, -2)}"`)
+    }
+    expect(build).toContain('DEP_LCMS2_INCLUDE')
+    const licenses = readFileSync(new URL('../../THIRD_PARTY_LICENSES.txt', import.meta.url), 'utf8')
+    expect(licenses).toContain('LittleCMS Fast Float 2.19 / 21c582a594fe5279f90c0b93437c398f93bf62b0 / GPL-3.0-or-later')
+    expect(licenses).toContain(readFileSync(new URL('COPYING.GPL3', root), 'utf8').replaceAll('\r\n', '\n').trimEnd())
+  })
   it('dispatches actual file and CPU commands through the asynchronous native worker boundary', () => {
     const native = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
     const worker = readFileSync(new URL('../../src-tauri/src/native_worker.rs', import.meta.url), 'utf8')

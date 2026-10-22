@@ -4,6 +4,18 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-10-23 integration under validation: LittleCMS Fast Float 2.19,
+[upstream source](https://github.com/mm2/Little-CMS/tree/21c582a594fe5279f90c0b93437c398f93bf62b0/plugins/fast_float),
+commit `21c582a594fe5279f90c0b93437c398f93bf62b0`, GPL-3.0-or-later,
+copyright 1998-2026 Marti Maria Saguer. Unmodified vendored C sources are compiled
+statically into the binary; no algorithm port. Source/license/SHA-256 inventory:
+`vendor/lcms-fast-float-2.19/README.md`. Purpose: bounded known-sRGB output acceleration
+in the existing shared LittleCMS provider, not RAW/input or arbitrary ICC replacement.
+External redistribution must include GPL notices and corresponding source; the core
+LittleCMS MIT license does not cover this plugin. Existing project GPL obligations
+remain applicable. Production/installer acceptance is pending. The direct lcms2-sys
+4.0.7 and cc 1.4.4 edges reuse already pinned packages; no package version changes.
+
 2026-10-22 GPU spatial backend: `gpu/spatial.rs`, `spatial_filter.wgsl` and
 `spatial_merge.wgsl` adapt the existing GPL Starroom detail implementation at
 `17c7fe2d83d4b3612dcf90e7620b4fd8e9cc13e4`. The existing CPU Gaussian coefficient

@@ -2,6 +2,11 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Bounded LCMS output acceleration (doc72): official GPL plugin integrated,
+  43 color-management tests/Clippy and actual RAW157 comparisons pass (delta<=1).
+  Exposure40.880ms, heavy93.473ms median; cold/p95>100ms and wholeUI qualification
+  remain open. Complete shared/export/Golden/full acceptance before commit/release.
+
 - [ ] Current GPU spatial batch (doc71): real shared graph now executes NR/local
   detail/sharpen before one readback with compatible local-stage ordering. 75 GPU
   parity cases plus cached repeats and five portrait cases pass; 157 actual RAW

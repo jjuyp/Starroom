@@ -8,14 +8,14 @@ use starroom_color::{Oklab, oklab_to_rec2020, rec2020_to_oklab};
 type ProofTransform = Transform<[f32; 3], [f32; 3], ThreadContext, DisallowCache>;
 
 #[derive(Clone, Copy)]
-struct DestinationAffine([[f32; 4]; 3]);
+pub(super) struct DestinationAffine([[f32; 4]; 3]);
 impl DestinationAffine {
-    fn apply(self, p: [f32; 3]) -> [f32; 3] {
+    pub(super) fn apply(self, p: [f32; 3]) -> [f32; 3] {
         self.0
             .map(|r| r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + r[3])
     }
 }
-fn exact_destination_affine(
+pub(super) fn exact_destination_affine(
     destination: &[u8],
     intent: RenderingIntent,
     bpc: bool,

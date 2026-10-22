@@ -3749,7 +3749,9 @@ dependencies = [
 name = "starroom-color-management"
 version = "1.0.0-rc.3"
 dependencies = [
+ "cc",
  "lcms2",
+ "lcms2-sys",
  "rayon",
  "serde",
  "starroom-color",

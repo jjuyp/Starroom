@@ -1,6 +1,6 @@
 // Explicit heavy/opt-in Native request benchmark, not an installed UI latency gate.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
 
@@ -35,7 +35,11 @@ const sourceFiles = ['Cargo.lock', 'src-tauri/src/lib.rs', 'src-tauri/src/previe
   'crates/starroom-render/src/gpu/spatial_merge.wgsl',
   'crates/starroom-imageio/src/lib.rs', 'crates/starroom-imageio/src/unbounded_resize.rs',
   'crates/starroom-raw/src/lib.rs',
-  'crates/starroom-color-management/src/lib.rs', 'crates/starroom-color-management/src/gamut.rs']
+  'crates/starroom-color-management/src/lib.rs', 'crates/starroom-color-management/src/gamut.rs',
+  'crates/starroom-color-management/src/fast_output.rs', 'crates/starroom-color-management/build.rs',
+  'vendor/lcms-fast-float-2.19/include/lcms2_fast_float.h',
+  ...readdirSync('vendor/lcms-fast-float-2.19/src').filter((name) => /\.[ch]$/.test(name)).sort()
+    .map((name) => `vendor/lcms-fast-float-2.19/src/${name}`)]
 const sourceIdentity = () => Object.fromEntries(sourceFiles.map((path) => [path,
   createHash('sha256').update(readFileSync(path, 'utf8').replaceAll('\r\n', '\n')).digest('hex')]))
 const sources = sourceIdentity()

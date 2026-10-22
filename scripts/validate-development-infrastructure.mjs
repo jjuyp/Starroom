@@ -20,6 +20,9 @@ if (!colorOnly.color || colorOnly.raw || colorOnly.geometry || colorOnly.ai) {
   throw new Error('Color-only path classification has an unrelated CI fan-out')
 }
 const shared = classifyPaths(['crates/starroom-pipeline/src/lib.rs'])
+if (!classifyPaths(['vendor/lcms-fast-float-2.19/src/fast_float_matsh.c']).color) {
+  throw new Error('Vendored LCMS accelerator changes must run real color/ICC checks')
+}
 if (!classifyPaths(['src-tauri/src/lib.rs']).desktop) throw new Error('Native IPC changes must compile and test the desktop crate')
 if (Object.values(shared).some((enabled) => !enabled)) throw new Error('Shared graph changes must broaden all targeted checks')
 

@@ -2,6 +2,7 @@
 //! ICC parsing/execution is provided by LittleCMS. Published chromatic adaptation math lives here
 //! so the render graph can keep file, working and display transforms explicit.
 
+mod fast_output;
 mod gamut;
 pub mod quality;
 pub mod temperature;
@@ -405,6 +406,8 @@ impl std::fmt::Display for ProfileRole {
 
 #[derive(Debug, Error)]
 pub enum ColorManagementError {
+    #[error("LittleCMS bounded-output accelerator initialization failed")]
+    OutputAccelerationInitialization,
     #[error("destination ICC gamut mapping could not preserve the neutral anchor")]
     GamutMappingUnavailable,
     #[error("LittleCMS transform cache is unavailable")]
@@ -459,6 +462,7 @@ pub struct LcmsTransform {
 
 struct ParallelLcmsTransform {
     transform: Transform<[f32; 3], [f32; 3], GlobalContext, DisallowCache>,
+    fast_output: Option<fast_output::FastOutput>,
 }
 
 const TRANSFORM_CACHE_ENTRIES: usize = 8;
@@ -635,14 +639,18 @@ fn create_parallel_transform(
         TransformDirection::Input => (&named, &working),
         TransformDirection::Output => (&working, &named),
     };
-    build_parallel_lcms_transform(
+    let mut transform = build_parallel_lcms_transform(
         input,
         output,
         intent,
         black_point_compensation,
         direction.name(),
-    )
-    .map(Arc::new)
+    )?;
+    if matches!(direction, TransformDirection::Output) {
+        transform.fast_output =
+            fast_output::FastOutput::for_exact_srgb(profile, intent, black_point_compensation)?;
+    }
+    Ok(Arc::new(transform))
 }
 
 fn transform_cache() -> &'static Mutex<IccTransformCache> {
@@ -707,7 +715,7 @@ fn lcms_intent(intent: RenderingIntent) -> Intent {
     }
 }
 
-fn rec2020_linear_d65_profile() -> Result<Profile, ColorManagementError> {
+fn rec2020_linear_d65_parameters() -> (CIExyY, CIExyYTRIPLE) {
     let white = CIExyY {
         x: 0.3127,
         y: 0.3290,
@@ -730,6 +738,11 @@ fn rec2020_linear_d65_profile() -> Result<Profile, ColorManagementError> {
             Y: 1.0,
         },
     };
+    (white, primaries)
+}
+
+fn rec2020_linear_d65_profile() -> Result<Profile, ColorManagementError> {
+    let (white, primaries) = rec2020_linear_d65_parameters();
     let red = ToneCurve::new(1.0);
     let green = ToneCurve::new(1.0);
     let blue = ToneCurve::new(1.0);
@@ -938,9 +951,13 @@ impl LittleCmsProvider {
 
 fn transform_pixels_parallel(transform: &ParallelLcmsTransform, pixels: &mut [[f32; 3]]) {
     const PIXELS_PER_CHUNK: usize = 16_384;
-    pixels
-        .par_chunks_mut(PIXELS_PER_CHUNK)
-        .for_each(|chunk| transform.transform.transform_in_place(chunk));
+    pixels.par_chunks_mut(PIXELS_PER_CHUNK).for_each(|chunk| {
+        if let Some(fast) = &transform.fast_output {
+            fast.apply(chunk, &transform.transform);
+        } else {
+            transform.transform.transform_in_place(chunk);
+        }
+    });
 }
 
 fn build_parallel_lcms_transform(
@@ -964,7 +981,10 @@ fn build_parallel_lcms_transform(
         lcms_intent(intent),
         flags,
     )
-    .map(|transform| ParallelLcmsTransform { transform })
+    .map(|transform| ParallelLcmsTransform {
+        transform,
+        fast_output: None,
+    })
     .map_err(|source| ColorManagementError::TransformCreation { direction, source })
 }
 
