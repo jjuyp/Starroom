@@ -2,12 +2,16 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Installed edit-to-visible regression: local bounded timing instrumentation
+  added;81 focused/229 web tests pass. Not yet measured in the user's installed
+  64f005f binary. Do not equate Native probe time with whole-UI latency.
+
 - [ ] Idle GPU detail preparation (doc73): integrated after successful final Native
   previews without holding foreground GPU/stage locks during compilation.21 GPU
   tests/four desktop boundary tests pass; actual RAW157 comparisons maxRGB8delta1.
   Prepared Sharpen p95104.23ms (was183.84), LumaNR62.72ms (was110.29); idle cost124.271ms
   recorded separately. LocalFullRust1792730060840/FullWeb1792729563993 PASS; ownCI
-  pending. WholeUI/concurrent drag/installed
+  SUCCESS at8157eef (Full39972894162). WholeUI/concurrent drag/installed
   qualification and remaining original phases are NOT complete.
 
 - [x] Doc72 focused source batch30cf022: local FullRust/FullWeb and own remote

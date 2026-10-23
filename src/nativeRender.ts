@@ -1,6 +1,7 @@
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { LatestPreviewQueue } from './latestPreviewQueue'
+import type { NativeRequestTiming } from './previewLatency'
 import { defaultAdjustments, type Adjustments } from './editorState'
 import type { RadialMask, ToneCurvePoint } from './previewPresentation'
 import canonicalNativeDefaults from '../fixtures/contracts/native-default-settings.json'
@@ -358,6 +359,8 @@ function availableLegacyRadialId(layers: ReadonlyArray<NativeAdjustmentLayer>): 
 }
 
 export interface NativePreviewResult {
+  /** Local clock boundaries including queue and IPC, never pure GPU/CPU render time. */
+  timing?: NativeRequestTiming
   width: number
   height: number
   sourceWidth: number
@@ -787,17 +790,23 @@ export async function renderNativePreview(
 ) {
   assertNativeSupported(adjustments, mask)
   const requestId = crypto.randomUUID()
+  const timing: NativeRequestTiming = { queuedAt: performance.now(), dispatchedAt: 0, receivedAt: 0 }
   let queue = previewQueues.get(surface)
   if (!queue) { queue = new LatestPreviewQueue(); previewQueues.set(surface, queue) }
-  const frame = await queue.submit(() => invoke<ArrayBuffer | Uint8Array>('native_preview', {
+  const frame = await queue.submit(async () => {
+    timing.dispatchedAt = performance.now()
+    const result = await invoke<ArrayBuffer | Uint8Array>('native_preview', {
       request: { requestId, sourcePath, maxEdge, interactionPhase, resolutionMode, viewport,
         payloadFormat: interactionPhase === 'interactive' ? 'rgba8' : 'jpeg',
         settings: toNativeSettings(adjustments, curve, whiteBalanceMode, whiteBalanceSample, toneCurves, opticsState, layers, mask, skinRetouch, healingOperations, renderConstants, rawWhiteBalance) },
-    }), () => {
+    })
+    timing.receivedAt = performance.now()
+    return result
+  }, () => {
       void invoke('native_preview_cancel', { requestId }).catch(() => undefined)
       void cancelNativeAiDenoise(requestId).catch(() => undefined)
     }, interactionPhase === 'interactive' ? JSON.stringify([sourcePath, resolutionMode]) : undefined)
-  return parseNativePreviewFrame(frame)
+  return { ...parseNativePreviewFrame(frame), timing }
 }
 
 export async function queryNativeWhiteBalanceInfo(sourcePath: string) {

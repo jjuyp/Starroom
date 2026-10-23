@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## 2026-10-24 — Local edit-to-draw diagnostics
+
+The user confirms the last supplied installer, 64f005f; newer source performance
+changes are not installed. Screenshot identifies Native GPU, not CPU fallback.
+Local diagnostics now separate edit-handler scheduling, preview queue delay,
+Native IPC round trip and decode/Canvas draw. A following animation frame is only
+a paint opportunity, not physical display evidence. Retention is bounded to 256
+numeric records, without paths, pixels, persistence or network transmission.
+Initial loads and old edits on remounted surfaces are excluded. Existing Native
+queue cancellation, pixel transport and shared processing math remain unchanged.
+81 focused tests and 229 web tests pass, along with TypeScript/targeted ESLint.
+Production build passes through canonical `npm run build` Windows path alias.
+Direct `build:web` twice exited1 after transformation on the Unicode checkout;
+the existing path-compatible build passes without product or test changes.
+Web report1792778616150 validates six selected Golden manifest cases, not a new
+photographic runtime benchmark. This instrumentation is not a five-second-lag fix.
+8157eef own Full CI39972894162 is SUCCESS; PR2 remains Open/Draft at that SHA.
+No new installer or desktop launch; installed edit-to-visible regression is open.
+
 ## 2026-10-23 — Idle GPU detail initialization (under acceptance)
 
 Doc73 records measured cold compilation and actual production background preparation.

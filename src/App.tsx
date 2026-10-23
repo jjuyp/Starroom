@@ -10,6 +10,7 @@ import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
 import { decodeNativePreviewPayload, nativePreviewDisplayHistogram } from './nativePreviewPresentation'
+import { previewLatency } from './previewLatency'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -622,6 +623,8 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tileCanvasRef = useRef<HTMLCanvasElement>(null)
   const previewSurface = useRef({})
+  const latencyPhoto = useRef(photo)
+  useLayoutEffect(() => { latencyPhoto.current = photo }, [photo])
   const displayedSource = useRef('')
   const activePhotoId = useRef(photo.id)
   const previewGeneration = useRef(0)
@@ -642,6 +645,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   useEffect(() => { activePhotoId.current = photo.id }, [photo.id])
   useEffect(() => {
     const surface = previewSurface.current
+    previewLatency.mount(surface, previewLatency.beginEdit())
     return () => cancelNativePreviewSurface(surface)
   }, [])
 
@@ -665,6 +669,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
       }
       cachedThumbnail.src = photo.src
     }
+    const measuredPhoto = latencyPhoto.current
     // Coalesce high-frequency pointer/slider state to at most one native submission per display
     // frame. LatestPreviewQueue owns cancellation; this is not a latency-hiding debounce.
     const frameRequest = window.requestAnimationFrame(async () => {
@@ -769,8 +774,13 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           setAspect(renderedWidth / renderedHeight)
           setTileRegion(null)
         }
+        const drawnAt = performance.now()
+        const latency = !before && nativeResult?.timing
+          ? previewLatency.drawn(measuredPhoto, previewSurface.current, interactionPhase, nativeResult.timing, drawnAt) : null
         window.requestAnimationFrame(() => {
           if (!canvasRef.current || publishedGeneration.current !== generation) return
+          if (latency) previewLatency.paintOpportunity(latency.sequence, latency.phase,
+            latency.editToDrawMs + performance.now() - drawnAt)
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,
             width: canvasRef.current.clientWidth, height: canvasRef.current.clientHeight })
           const sourceWidth = nativeResult?.sourceWidth ?? photo.libraryAsset?.metadata.width ?? renderedWidth
@@ -787,6 +797,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           onDimensions(nativeResult ? `${nativeResult.sourceWidth} × ${nativeResult.sourceHeight}` : `${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
             ? `${nativeAcceleration === 'gpu' ? '原生 GPU' : '原生 CPU 備援'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · 即時預覽 1024' : nativeResult?.isTile ? nativeResult.tileOptimized ? ' · 可視區域圖塊' : ' · 可視區域圖塊 · 全幅相容' : ' · 最終品質'}${before ? ' · 原圖' : ''}`
+            + (latency ? ` · 編輯至繪製 ${Math.round(latency.editToDrawMs)} ms` : '')
             : '唯讀示範圖 · 不套用影像調整')
         }
       } catch (error) {
@@ -1816,9 +1827,11 @@ export function App() {
       setNotice('正在載入這張照片的編輯紀錄，請稍候再調整。')
       return
     }
+    const editStartedAt = previewLatency.beginEdit()
     setPhotos((current) => current.map((photo) => {
       if (photo.id !== selected.id) return photo
       const next = mutator(photo)
+      if (next !== photo) previewLatency.mark(next, editStartedAt)
       if (photo.libraryAsset && next.history.length > photo.history.length && !pendingNativeBefore.current) {
         pendingNativeBefore.current = toNativeSettings(photo.adjustments, photo.curvePoints, photo.whiteBalanceMode,
           photo.whiteBalanceSample, photo.curveChannels, photo.opticsState, photo.layers, photo.mask,
