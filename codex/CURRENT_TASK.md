@@ -1,5 +1,36 @@
 # Current Task
 
+2026-10-23 latest: doc73 idle GPU preparation group locally accepted, UNCOMMITTED.
+FullRust1792730060840 PASS format/workspaceClippy/tests/doc-tests; FullWeb1792729563993
+PASS225/31files/build. Sandbox failures1792729776495/1792729484327 retained; approved
+normal-permission retries unchanged pass. Original9117 handle expired but terminal
+authoritative report confirms success; do not restart full Rust. Inventory55822 is
+terminal:499 registered,495 ordinary/four unchanged opt-ins. ActualRAW1792729269390
+PASS157/delta1, three pipelines124.271ms idle, no
+first-control compile; Sharp51.52/104.23ms, LumaNR49.69/62.72ms. Heavy99.511/100.850
+stillfails100ms; exposure/shadows/texture timing worsened sequentially, doc73 honest.
+Production background runs after final Fit, skips explicit CPU, clones Arc from
+short try_lock, builds outside scheduler/stage locks, preserves foreground winner,
+checks epoch and bounds one preparation. No pixels/extra readbacks or shader changes.
+Prior30cf022 Full39824178304/secondary39824190581 SUCCESS; PR2Open/Draft.
+Next commit focused group, push, inspect exact ownCI. Continue original31phasegoal.
+Next bottleneck: adaptive interaction budget and wholeUI timing. Native currently
+hardcaps1024; source derivation<=1024; SRP4 both Rust/TS cap1024; UI labelhardcoded1024.
+No actual pointer-to-present telemetry yet. Do not fake latency with fixed512 or
+claim native milliseconds are wholeUI. Final/export must remain authoritative.
+No new installer/app launch/Final/mainmerge.
+
+2026-10-23 cold initialization diagnostic: 30cf022 is pushed. New profiling-only
+changes distinguish lazy spatial/denoise host pipeline creation, without changing
+image math or scheduling. Native report1792691267379 passed157 CPU comparisons,
+maxRGB8delta1, original/code unchanged. First Sharpen183.84ms includes72.18ms
+spatial initialization; first LumaDenoise110.28ms includes48.57ms initialization.
+Exposure median36.21ms, Shadows33.88ms; heavycombined100.256/105.377ms stillfails.
+These exclude IPC/presentation and do not reproduce/prove the user's five-second
+installed delay. Latest supplied installer remains2026-10-05/64f005f; later source
+optimizations are NOT installed. Next qualify non-blocking preparation and actual
+UI presentation; do not claim diagnostic instrumentation is a latency fix.
+
 2026-10-23 latest: doc72 group now locally accepted, ready commit/push/ownCI.
 FullRust1792690429095 PASS format/workspaceClippy/tests/doc-tests;496registered,
 492ordinary/four existingoptins. FullWeb1792689864727 PASS225/31files/all gates.

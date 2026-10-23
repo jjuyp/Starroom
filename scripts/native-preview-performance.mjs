@@ -63,9 +63,15 @@ const combinedControls = [...output.matchAll(/NATIVE_COMBINED_PERF control=(\S+)
     medianMs: Number(match[4]), p95Ms: Number(match[5]) }))
 const firstMatch = output.match(/NATIVE_FIRST_INTERACTIVE cold_tier_ms=([\d.]+) profile=(\{[^\r\n]+\})/)
 const firstInteractive = firstMatch ? { elapsedMs: Number(firstMatch[1]), profile: JSON.parse(firstMatch[2]) } : null
+const initializationProfiles = [...output.matchAll(/NATIVE_INITIALIZATION_PROFILE control=(\S+) profile=(\{[^\r\n]+\})/g)]
+  .map((match) => ({ control: match[1], profile: JSON.parse(match[2]),
+    scope: 'Host pipeline/layout initialization nested in inclusive creative processing; not GPU execution time' }))
 const parityMatch = output.match(/NATIVE_LOCAL_PARITY compared_frames=(\d+) max_rgb8_delta=(\d+)/)
 const localParity = parityMatch ? { comparedFrames: Number(parityMatch[1]), maxRgb8Delta: Number(parityMatch[2]) } : null
 const primingMatch = output.match(/NATIVE_PRIMING_READY elapsed_ms=([\d.]+)/)
+const gpuPrimingMatch = output.match(/NATIVE_GPU_PRIMING_READY pipelines=(\d+) elapsed_ms=([\d.]+)/)
+const gpuPriming = gpuPrimingMatch ? { pipelines: Number(gpuPrimingMatch[1]), elapsedMs: Number(gpuPrimingMatch[2]),
+  scope: 'completed idle pipeline preparation; excluded from request latency and not free work' } : null
 const gpuDenoiseMatch = output.match(/NATIVE_GPU_DENOISE actual_frames=(\d+)/)
 const gpuDenoise = gpuDenoiseMatch ? { actualFrames: Number(gpuDenoiseMatch[1]), proof: 'individual controls with hardware timestamp' } : null
 const gpuSpatialMatch = output.match(/NATIVE_GPU_SPATIAL actual_frames=(\d+)/)
@@ -80,11 +86,13 @@ const failure = changedDuringRun ? 'Source changed during compilation/measuremen
     : gpuSpatial?.actualFrames !== 20 ? 'Actual GPU detail individual-control passes did not complete'
     : combinedControls.length !== (combined ? 4 : 0) ? 'Combined control timing did not complete'
     : prime && !priming ? 'Missing completed Native priming evidence'
+    : prime && (gpuPriming?.pipelines !== 3 || initializationProfiles.length !== 0)
+      ? 'Expected three idle-prepared pipelines and no first-control compilation'
     : !firstInteractive ? 'Missing actual first-interactive cold-tier measurement'
       : localSource && (!localParity || localParity.comparedFrames !== (combined ? 157 : 137) || localParity.maxRgb8Delta > 1)
         ? 'Actual local photo CPU/GPU parity did not complete' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
-  sources, changedDuringRun, sourcePhoto, localParity, priming, gpuDenoise, gpuSpatial,
+  sources, changedDuringRun, sourcePhoto, localParity, priming, gpuPriming, gpuDenoise, gpuSpatial, initializationProfiles,
   scope: `Real MSVC Release Native requests on24MP ${localSource ? 'private read-only original' : 'synthetic source'}, excludes Tauri IPC/browser/OS presentation`,
   command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, combinedControls, output }
 mkdirSync('.starroom-reports', { recursive: true })

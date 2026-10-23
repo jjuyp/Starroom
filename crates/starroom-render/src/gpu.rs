@@ -18,7 +18,7 @@ use std::{
     hash::{Hash, Hasher},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -30,6 +30,34 @@ const GPU_READBACK_LIMIT: Duration = Duration::from_secs(5);
 const FAILURE_OOM: u8 = 1;
 const FAILURE_DEVICE_LOST: u8 = 2;
 const FAILURE_VALIDATION: u8 = 3;
+
+fn prepare_optional_stage<T>(
+    slot: &Mutex<Option<T>>,
+    current: impl Fn() -> bool,
+    build: impl FnOnce() -> Result<T, GpuError>,
+) -> Result<bool, GpuError> {
+    if !current() {
+        return Ok(false);
+    }
+    match slot.try_lock() {
+        Ok(guard) if guard.is_some() => return Ok(false),
+        Ok(_) => {}
+        Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+        Err(_) => return Err(GpuError::DeviceLost),
+    }
+    let prepared = build()?;
+    if !current() {
+        return Ok(false);
+    }
+    match slot.try_lock() {
+        Ok(mut guard) if guard.is_none() => {
+            *guard = Some(prepared);
+            Ok(true)
+        }
+        Ok(_) | Err(std::sync::TryLockError::WouldBlock) => Ok(false),
+        Err(_) => Err(GpuError::DeviceLost),
+    }
+}
 
 fn wait_for_mapping<T>(
     receiver: &std::sync::mpsc::Receiver<T>,
@@ -260,6 +288,7 @@ pub struct GpuRenderer {
     resources: Mutex<Option<GpuBufferResources>>,
     denoise: Mutex<Option<denoise::GpuDenoiseStage>>,
     spatial: Mutex<Option<spatial::GpuSpatialStage>>,
+    detail_preparing: AtomicBool,
     pipeline_count: AtomicU64,
     stats: Mutex<GpuResourceStats>,
 }
@@ -516,6 +545,7 @@ impl GpuRenderer {
             resources: Mutex::new(None),
             denoise: Mutex::new(None),
             spatial: Mutex::new(None),
+            detail_preparing: AtomicBool::new(false),
             pipeline_count: AtomicU64::new(2),
             stats: Mutex::new(GpuResourceStats {
                 pipeline_create_count: 2,
@@ -528,6 +558,35 @@ impl GpuRenderer {
         &self.status
     }
 
+    /// Optional idle preparation. No image buffers, dispatches or cache identities are changed.
+    /// Compile outside stage locks: a foreground request must never wait on our host mutex.
+    /// A request arriving during compilation may initialize its own stage; retain its winner.
+    pub fn prepare_detail_pipelines(&self, current: impl Fn() -> bool) -> Result<u32, GpuError> {
+        if !current() || self.detail_preparing.swap(true, Ordering::AcqRel) {
+            return Ok(0);
+        }
+        struct Reset<'a>(&'a AtomicBool);
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _reset = Reset(&self.detail_preparing);
+        self.check_device()?;
+        let mut installed = 0;
+        if prepare_optional_stage(&self.spatial, &current, || {
+            spatial::GpuSpatialStage::new(self)
+        })? {
+            installed += 2;
+        }
+        if prepare_optional_stage(&self.denoise, &current, || {
+            denoise::GpuDenoiseStage::new(self)
+        })? {
+            installed += 1;
+        }
+        Ok(installed)
+    }
+
     /// Driver/runtime diagnostics only; resource labels do not contain source photo names/pixels.
     pub fn failure_diagnostic(&self) -> Option<String> {
         self.failure_detail
@@ -538,6 +597,9 @@ impl GpuRenderer {
 
     pub fn resource_stats(&self) -> GpuResourceStats {
         let mut stats = *self.statistics();
+        // Preparation can create pipelines concurrently with foreground work. Read the
+        // authoritative counter rather than a potentially older statistics snapshot.
+        stats.pipeline_create_count = self.pipeline_count.load(Ordering::Relaxed);
         stats.timestamp_query_supported = self
             .device
             .features()
@@ -1397,6 +1459,46 @@ pub fn resolve_preview_backend(prefer_gpu: bool, gpu: Result<&GpuRenderer, GpuEr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn optional_stage_preparation_never_holds_foreground_lock_or_replaces_winner() {
+        use super::*;
+        let slot = Mutex::new(None::<u32>);
+        let held = slot.lock().unwrap();
+        assert!(!prepare_optional_stage(&slot, || true, || panic!("busy must skip")).unwrap());
+        drop(held);
+        assert!(!prepare_optional_stage(&slot, || false, || panic!("stale must skip")).unwrap());
+        assert!(
+            !prepare_optional_stage(
+                &slot,
+                || true,
+                || {
+                    *slot
+                        .try_lock()
+                        .expect("compilation must not hold stage lock") = Some(17);
+                    Ok(42)
+                }
+            )
+            .unwrap()
+        );
+        assert_eq!(*slot.lock().unwrap(), Some(17));
+        *slot.lock().unwrap() = None;
+        let current = std::cell::Cell::new(true);
+        assert!(
+            !prepare_optional_stage(
+                &slot,
+                || current.get(),
+                || {
+                    current.set(false);
+                    Ok(42)
+                }
+            )
+            .unwrap()
+        );
+        assert!(slot.lock().unwrap().is_none());
+        assert!(prepare_optional_stage(&slot, || true, || Err(GpuError::DeviceLost)).is_err());
+        assert!(!slot.is_poisoned());
+        assert!(prepare_optional_stage(&slot, || true, || Ok(42)).unwrap());
+    }
     #[test]
     fn contiguous_pixel_hash_is_bit_exact_to_previous_component_hash() {
         use std::hint::black_box;

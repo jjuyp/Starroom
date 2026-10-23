@@ -1536,7 +1536,7 @@ struct NativePreviewScheduler {
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
     prepared: SourcePreparationCache,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
-    gpu: Mutex<Option<Result<GpuRenderer, String>>>,
+    gpu: Mutex<Option<Result<Arc<GpuRenderer>, String>>>,
     request_epoch: AtomicU64,
     priming: Mutex<PreviewPrimingStatus>,
 }
@@ -1544,6 +1544,9 @@ struct NativePreviewScheduler {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PreviewPrimingStatus {
+    gpu_pipelines_prepared: u64,
+    gpu_prepare_nanoseconds: u64,
+    gpu_prepare_error: Option<String>,
     running: bool,
     completed: u64,
     skipped: u64,
@@ -1686,6 +1689,44 @@ fn prime_cached_interactive_preview(
                 status.failed += 1;
                 status.last_error = Some(error.clone());
             }
+        }
+    }
+    result
+}
+
+/// Prepare only an already-created renderer after a successful final preview. Never hold
+/// the scheduler GPU lock while compiling, initialize a device, or publish an image here.
+fn prime_cached_gpu_detail(scheduler: &NativePreviewScheduler, epoch: u64) -> Result<u32, String> {
+    let current = || scheduler.request_epoch.load(Ordering::Acquire) == epoch;
+    if !current() {
+        return Ok(0);
+    }
+    let renderer = match scheduler.gpu.try_lock() {
+        Ok(cache) => match cache.as_ref() {
+            Some(Ok(renderer)) => Arc::clone(renderer),
+            _ => return Ok(0),
+        },
+        Err(std::sync::TryLockError::WouldBlock) => return Ok(0),
+        Err(_) => return Err("PreviewPrimingFailed: GPU cache unavailable".into()),
+    };
+    let started = Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        renderer
+            .prepare_detail_pipelines(current)
+            .map_err(|error| format!("PreviewPrimingFailed: {error}"))
+    }))
+    .unwrap_or_else(|_| {
+        Err("PreviewPrimingFailed: driver pipeline initialization panicked".into())
+    });
+    if let Ok(mut status) = scheduler.priming.lock() {
+        status.gpu_prepare_nanoseconds =
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        match &result {
+            Ok(count) => {
+                status.gpu_pipelines_prepared += u64::from(*count);
+                status.gpu_prepare_error = None;
+            }
+            Err(error) => status.gpu_prepare_error = Some(error.clone()),
         }
     }
     result
@@ -2398,8 +2439,8 @@ fn source_dimensions(decoded: &DecodedSourceImage) -> (u32, u32) {
 /// Keep driver/validation panics inside the GPU boundary while the cache guard remains alive.
 /// A previously poisoned device is discarded; the caller can continue on the labelled CPU graph.
 fn recoverable_gpu_attempt<T>(
-    cache: &Mutex<Option<Result<GpuRenderer, String>>>,
-    operation: impl FnOnce(&mut Option<Result<GpuRenderer, String>>) -> Result<T, String>,
+    cache: &Mutex<Option<Result<Arc<GpuRenderer>, String>>>,
+    operation: impl FnOnce(&mut Option<Result<Arc<GpuRenderer>, String>>) -> Result<T, String>,
 ) -> Result<T, String> {
     let mut guard = match cache.lock() {
         Ok(guard) => guard,
@@ -3767,7 +3808,13 @@ async fn native_preview(
         + 1;
     let priming_request = (request.interaction_phase == PreviewInteractionPhase::Final
         && request.resolution_mode == PreviewResolutionMode::Fit)
-        .then(|| (request.source_path.clone(), request.settings.clone()));
+        .then(|| {
+            (
+                request.source_path.clone(),
+                request.settings.clone(),
+                request.prefer_gpu,
+            )
+        });
     let request_id = request.request_id.clone();
     let token = app
         .state::<NativePreviewScheduler>()
@@ -3829,7 +3876,7 @@ async fn native_preview(
         drop(_permit);
         if result.is_ok()
             && !token.load(Ordering::Acquire)
-            && let Some((source, settings)) = priming_request
+            && let Some((source, settings, prefer_gpu)) = priming_request
         {
             let app = app.clone();
             // Response does not await this optional cache work. It cannot schedule/publish
@@ -3841,6 +3888,9 @@ async fn native_preview(
                     settings,
                     epoch,
                 );
+                if prefer_gpu {
+                    let _ = prime_cached_gpu_detail(&app.state::<NativePreviewScheduler>(), epoch);
+                }
             });
         }
         result
@@ -4211,7 +4261,11 @@ fn native_preview_inner(
     let (rendered, backend_flags) = if request.prefer_gpu {
         match recoverable_gpu_attempt(&scheduler.gpu, |gpu| {
             let renderer = gpu
-                .get_or_insert_with(|| GpuRenderer::try_new().map_err(|error| error.to_string()))
+                .get_or_insert_with(|| {
+                    GpuRenderer::try_new()
+                        .map(Arc::new)
+                        .map_err(|error| error.to_string())
+                })
                 .as_ref()
                 .map_err(Clone::clone)?;
             let result = render_source_preview_with_preparation_cache_to_srgb8(
@@ -6338,7 +6392,7 @@ mod tests {
 
     #[test]
     fn gpu_cache_poison_and_render_panic_become_recoverable_errors() {
-        let poisoned: Arc<Mutex<Option<Result<GpuRenderer, String>>>> = Arc::new(Mutex::new(None));
+        let poisoned = Arc::new(Mutex::new(None));
         let worker_cache = Arc::clone(&poisoned);
         let _ = std::thread::spawn(move || {
             let _guard = worker_cache.lock().unwrap();
@@ -6363,6 +6417,21 @@ mod tests {
         assert!(error.contains("Native CPU render graph"));
         assert!(!poisoned.is_poisoned());
         assert!(recoverable_gpu_attempt(&poisoned, |_| Ok::<_, String>(())).is_ok());
+    }
+
+    #[test]
+    fn gpu_priming_skips_stale_busy_absent_and_failed_devices() {
+        let scheduler = NativePreviewScheduler::default();
+        assert_eq!(prime_cached_gpu_detail(&scheduler, 0).unwrap(), 0);
+        assert!(scheduler.gpu.lock().unwrap().is_none());
+        let mut guard = scheduler.gpu.lock().unwrap();
+        assert_eq!(prime_cached_gpu_detail(&scheduler, 0).unwrap(), 0);
+        *guard = Some(Err("device unavailable".into()));
+        drop(guard);
+        assert_eq!(prime_cached_gpu_detail(&scheduler, 0).unwrap(), 0);
+        scheduler.request_epoch.store(1, Ordering::Release);
+        assert_eq!(prime_cached_gpu_detail(&scheduler, 0).unwrap(), 0);
+        assert_eq!(scheduler.priming.lock().unwrap().gpu_pipelines_prepared, 0);
     }
 
     #[test]
@@ -8257,9 +8326,16 @@ mod tests {
         if std::env::var("STARROOM_PREVIEW_PERF_PRIME").as_deref() == Ok("1") {
             let started = Instant::now();
             assert!(prime_cached_interactive_preview(&scheduler, &source, settings(), 0).unwrap());
+            let cache_elapsed = started.elapsed();
+            let gpu_started = Instant::now();
+            let pipelines = prime_cached_gpu_detail(&scheduler, 0).unwrap();
+            eprintln!(
+                "NATIVE_GPU_PRIMING_READY pipelines={pipelines} elapsed_ms={:.3}",
+                gpu_started.elapsed().as_secs_f64() * 1000.0
+            );
             eprintln!(
                 "NATIVE_PRIMING_READY elapsed_ms={:.3} scope=completed_native_cache_preparation_not_ui_scheduling",
-                started.elapsed().as_secs_f64() * 1000.0
+                cache_elapsed.as_secs_f64() * 1000.0
             );
         }
         let (first_interactive, first_interactive_profile) = render(
@@ -8482,6 +8558,18 @@ mod tests {
                     gpu_spatial_frames.set(gpu_spatial_frames.get() + 1);
                 }
                 samples.push(duration.as_secs_f64() * 1000.0);
+                if profile
+                    .stages
+                    .contains_key(&ProfileStage::GpuSpatialInitialization)
+                    || profile
+                        .stages
+                        .contains_key(&ProfileStage::GpuDenoiseInitialization)
+                {
+                    eprintln!(
+                        "NATIVE_INITIALIZATION_PROFILE control={name} profile={}",
+                        serde_json::to_string(&profile).unwrap()
+                    );
+                }
                 if index == 4 {
                     eprintln!(
                         "NATIVE_CONTROL_PROFILE control={name} profile={}",

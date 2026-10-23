@@ -1,5 +1,20 @@
 # Implementation Notes
 
+## 2026-10-23 — Idle GPU detail initialization (under acceptance)
+
+Doc73 records measured cold compilation and actual production background preparation.
+Renderer lifetime is shared by Arc; foreground recovery/serialization stays intact.
+Compilation holds neither scheduler GPU nor stage locks. One preparation owner,
+epoch checks, foreground-winner preservation and explicit CPU preference bound
+speculation. No image math, dependencies, pixel buffers or dispatches are added.
+21 GPU tests and four desktop boundary tests pass. Native1792729269390 passes157
+comparisons/delta1; prepared Sharp51.52/104.23ms, LumaNR49.69/62.72ms. Separate idle
+cost124.271ms, heavy99.511/100.850ms stillfails. Exposure/Shadows/Texture worsened
+  in sequential measurements; retain limitations. LocalFullRust1792730060840 and
+FullWeb1792729563993 PASS (225 frontend tests), own remote acceptance pending.
+Prior30cf022 Full39824178304 and secondary39824190581 now SUCCESS; PR2Open/Draft.
+No new installer/Final or whole-phase completion. See original matrix doc44.
+
 ## 2026-10-23 — Bounded LittleCMS output accelerator (under acceptance)
 
 Local acceptance now passes: FullRust1792690429095 (496 registered,492 ordinary,

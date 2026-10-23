@@ -93,7 +93,7 @@ impl GpuDenoiseStage {
         }
     }
 
-    fn new(renderer: &GpuRenderer) -> Result<Self, GpuError> {
+    pub(super) fn new(renderer: &GpuRenderer) -> Result<Self, GpuError> {
         let scope = renderer
             .device
             .push_error_scope(wgpu::ErrorFilter::Validation);
@@ -300,7 +300,11 @@ impl GpuRenderer {
         request.prepare((byte_len / 16) as usize)?;
         let mut stage = self.denoise.lock().map_err(|_| GpuError::DeviceLost)?;
         if stage.is_none() {
-            *stage = Some(GpuDenoiseStage::new(self)?);
+            *stage = Some(crate::profiling::measure(
+                crate::profiling::ProfileStage::GpuDenoiseInitialization,
+                0,
+                || GpuDenoiseStage::new(self),
+            )?);
         }
         stage
             .as_mut()

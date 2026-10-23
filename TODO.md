@@ -2,6 +2,18 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Idle GPU detail preparation (doc73): integrated after successful final Native
+  previews without holding foreground GPU/stage locks during compilation.21 GPU
+  tests/four desktop boundary tests pass; actual RAW157 comparisons maxRGB8delta1.
+  Prepared Sharpen p95104.23ms (was183.84), LumaNR62.72ms (was110.29); idle cost124.271ms
+  recorded separately. LocalFullRust1792730060840/FullWeb1792729563993 PASS; ownCI
+  pending. WholeUI/concurrent drag/installed
+  qualification and remaining original phases are NOT complete.
+
+- [x] Doc72 focused source batch30cf022: local FullRust/FullWeb and own remote
+  Full39824178304/secondary39824190581 all PASS. PR2Open/Draft. Not an installer,
+  wholeUI performance, all-profile acceleration or complete-phase acceptance.
+
 - [ ] Bounded LCMS output acceleration (doc72): official GPL plugin integrated,
   43 color-management tests/Clippy and actual RAW157 comparisons pass (delta<=1).
   Exposure40.880ms, heavy93.473ms median; cold/p95>100ms and wholeUI qualification

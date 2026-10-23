@@ -134,7 +134,7 @@ impl GpuSpatialStage {
         }
     }
 
-    fn new(renderer: &GpuRenderer) -> Result<Self, GpuError> {
+    pub(super) fn new(renderer: &GpuRenderer) -> Result<Self, GpuError> {
         let scope = renderer
             .device
             .push_error_scope(wgpu::ErrorFilter::Validation);
@@ -501,7 +501,11 @@ impl GpuRenderer {
     ) -> Result<EncodedSpatial, GpuError> {
         let mut stage = self.spatial.lock().map_err(|_| GpuError::DeviceLost)?;
         if stage.is_none() {
-            *stage = Some(GpuSpatialStage::new(self)?);
+            *stage = Some(crate::profiling::measure(
+                crate::profiling::ProfileStage::GpuSpatialInitialization,
+                0,
+                || GpuSpatialStage::new(self),
+            )?);
         }
         stage
             .as_mut()
@@ -517,10 +521,29 @@ mod tests {
 
     #[test]
     fn gpu_spatial_matches_cpu_hdr_borders_order_alpha_and_cache() {
+        spatial_oracle(false);
+    }
+
+    #[test]
+    fn gpu_prepared_spatial_matches_cpu_without_first_render_compilation() {
+        spatial_oracle(true);
+    }
+
+    fn spatial_oracle(prepared: bool) {
         let Ok(renderer) = GpuRenderer::try_new() else {
             eprintln!("GPU unavailable; hardware release qualification remains required");
             return;
         };
+        if prepared {
+            assert_eq!(renderer.prepare_detail_pipelines(|| false).unwrap(), 0);
+            assert_eq!(renderer.resource_stats().pipeline_create_count, 2);
+            assert_eq!(renderer.prepare_detail_pipelines(|| true).unwrap(), 3);
+            assert_eq!(renderer.prepare_detail_pipelines(|| true).unwrap(), 0);
+            let stats = renderer.resource_stats();
+            assert_eq!(stats.pipeline_create_count, 5);
+            assert_eq!(stats.allocated_buffer_bytes, 0);
+            assert_eq!(stats.final_readback_count, 0);
+        }
         let mut cases = 0;
         for (width, height) in [(1, 1), (1, 9), (11, 1), (17, 13), (67, 31)] {
             let pixels: Vec<[f32; 4]> = (0..width * height)
@@ -567,15 +590,38 @@ mod tests {
                         request.sharpen,
                     );
                     let before = renderer.resource_stats();
-                    let actual = renderer
-                        .apply_creative_with_detail(
+                    let (actual, initialization) = crate::profiling::capture(|| {
+                        renderer.apply_creative_with_detail(
                             &pixels,
                             &creative,
                             &[0.0; 8192],
                             Some("spatial-oracle"),
                             request,
                         )
-                        .unwrap();
+                    });
+                    let actual = actual.unwrap();
+                    let creations = |stage| {
+                        initialization
+                            .stages
+                            .get(&stage)
+                            .map_or(0, |entry| u64::from(entry.executions))
+                    };
+                    if prepared {
+                        assert_eq!(
+                            creations(crate::profiling::ProfileStage::GpuSpatialInitialization),
+                            0
+                        );
+                        assert_eq!(
+                            creations(crate::profiling::ProfileStage::GpuDenoiseInitialization),
+                            0
+                        );
+                    }
+                    assert_eq!(
+                        2 * creations(crate::profiling::ProfileStage::GpuSpatialInitialization)
+                            + creations(crate::profiling::ProfileStage::GpuDenoiseInitialization),
+                        renderer.resource_stats().pipeline_create_count
+                            - before.pipeline_create_count,
+                    );
                     assert_eq!(
                         renderer.resource_stats().final_readback_count,
                         before.final_readback_count + 1
@@ -603,6 +649,16 @@ mod tests {
                     });
                     assert_eq!(cached.unwrap(), actual);
                     assert_eq!(profile.gpu_hardware_pass_count, 0);
+                    assert!(
+                        !profile.stages.contains_key(
+                            &crate::profiling::ProfileStage::GpuSpatialInitialization
+                        )
+                    );
+                    assert!(
+                        !profile.stages.contains_key(
+                            &crate::profiling::ProfileStage::GpuDenoiseInitialization
+                        )
+                    );
                     cases += 1;
                 }
             }

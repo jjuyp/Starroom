@@ -79,3 +79,23 @@ Golden/RAW manifests and packaging configuration. The source-provenance regressi
 checks all17 retained upstream hashes and installer-bundled full GPL text.
 Vendor-only changes now trigger the color CI target; infrastructure/script lint pass.
 Remote same-commit CI remains pending at commit creation; this is not Level-4 release.
+
+## Follow-up: cold initialization diagnosis (2026-10-23)
+
+Report `native-preview-rgba8-1792691267379.json` adds host-only nested
+`gpuSpatialInitialization` / `gpuDenoiseInitialization` measurements. These must
+not be summed with their inclusive parent or presented as GPU execution time.
+Cached repeat tests verify no initialization event and no new pipeline creation;
+the spatial hardware oracle still checks 75 cases against CPU results.
+
+On the same private D750 source, first Sharpen request183.84ms includes72.18ms
+spatial initialization; first LumaDenoise110.28ms includes48.57ms denoise
+initialization. Exposure median36.21ms, Shadows33.88ms; heavy combination
+median100.256/p95105.377ms remains above target. The Native probe passed157
+CPU/export comparisons, maximum RGB8 difference1, with source and code unchanged.
+This change instruments existing work only; it is not an optimization result.
+
+The latest supplied installer is still the October5 `64f005f` build. Subsequent
+source improvements have not been delivered in an installer. This native-only
+measurement cannot establish the cause of the user's installed five-second delay
+or qualify whole-UI latency; installed end-to-end reproduction remains necessary.

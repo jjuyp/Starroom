@@ -26,6 +26,10 @@ pub enum ProfileStage {
     /// Child of ColorTransform: destination-gamut proof/search only. Do not add it to its
     /// inclusive parent when aggregating elapsed time; total_cpu_nanoseconds is wall time.
     OutputGamut,
+    /// Host pipeline/layout compilation nested within the creative stage, not GPU time.
+    /// Do not sum this child with its inclusive parent when calculating render latency.
+    GpuSpatialInitialization,
+    GpuDenoiseInitialization,
     Encode,
 }
 
