@@ -1,0 +1,144 @@
+[
+  {
+    "id": "portrait-skin-contract",
+    "name": "人像・肌膚",
+    "enabled": true,
+    "opacity": 0.75,
+    "blendMode": "normal",
+    "mask": {
+      "operation": "add",
+      "children": [
+        {
+          "type": "portraitSemantic",
+          "face_id": "face-contract-1",
+          "region": "skin",
+          "threshold": 0.5,
+          "feather": 0.08,
+          "model_id": "yakhyo/face-parsing-bisenet-resnet18",
+          "model_version": "8a4729d",
+          "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cache_key": "portrait-contract:face-crop-1"
+        }
+      ]
+    },
+    "adjustments": {
+      "tone": {
+        "exposure_ev": 0.35,
+        "contrast": 0.12,
+        "highlights": -0.2,
+        "shadows": 0.25,
+        "whites": -0.1,
+        "blacks": -0.15
+      },
+      "relativeColor": { "temperature": 0.2, "tint": -0.1, "vibrance": 0.1, "saturation": -0.2 },
+      "curves": {
+        "master": [{ "x": 0, "y": 0.03 }, { "x": 0.5, "y": 0.6 }, { "x": 1, "y": 1 }],
+        "red": [{ "x": 0, "y": 0 }, { "x": 1, "y": 0.95 }],
+        "green": [{ "x": 0, "y": 0.02 }, { "x": 1, "y": 1 }],
+        "blue": [{ "x": 0, "y": 0 }, { "x": 0.5, "y": 0.45 }, { "x": 1, "y": 1 }]
+      },
+      "colorMixer": {
+        "bands": [
+          { "hueDegrees": 12, "chroma": 0.1, "lightness": -0.05 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+          { "hueDegrees": -8, "chroma": -0.1, "lightness": 0.02 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 },
+          { "hueDegrees": 0, "chroma": 0, "lightness": 0 }
+        ],
+        "hueLock": false,
+        "bandWidthDegrees": 52
+      },
+      "grading": {
+        "global": { "hueDegrees": 31, "chroma": 0.1, "lightness": -0.02 },
+        "shadows": { "hueDegrees": 221, "chroma": 0.05, "lightness": 0.02 },
+        "midtones": { "hueDegrees": 51, "chroma": 0.03, "lightness": 0.01 },
+        "highlights": { "hueDegrees": 71, "chroma": 0.04, "lightness": -0.01 },
+        "balance": 0.1, "blending": 0.6, "amount": 0.8
+      }
+    }
+  },
+  {
+    "id": "ai-background-contract",
+    "name": "AI・背景",
+    "enabled": true,
+    "opacity": 1,
+    "blendMode": "normal",
+    "mask": {
+      "type": "generated",
+      "provider_id": "birefnet",
+      "model_id": "birefnet-general",
+      "model_version": "contract-v1",
+      "model_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "semantic_class": "background",
+      "threshold": 0.5,
+      "feather": 0.08,
+      "invert": false,
+      "cache_identity": "contract-source-provider-model-params",
+      "metadata": { "executionProvider": "cpu", "source": "local-only", "status": "ready" }
+    },
+    "adjustments": {
+      "tone": {
+        "exposure_ev": -0.4,
+        "contrast": -0.1,
+        "highlights": -0.35,
+        "shadows": 0.15,
+        "whites": -0.05,
+        "blacks": 0.08
+      }
+    }
+  },
+  {
+    "id": "linear-contract",
+    "name": "線性漸層",
+    "enabled": true,
+    "opacity": 0.6,
+    "blendMode": "normal",
+    "mask": {
+      "type": "linear",
+      "start_x": 0.2,
+      "start_y": 0.1,
+      "end_x": 0.8,
+      "end_y": 0.9,
+      "feather": 0.25,
+      "invert": false
+    },
+    "adjustments": {
+      "tone": {
+        "exposure_ev": 0.25,
+        "contrast": 0,
+        "highlights": -0.15,
+        "shadows": 0.1,
+        "whites": 0,
+        "blacks": 0
+      }
+    }
+  },
+  {
+    "id": "none-contract", "name": "全圖", "enabled": true, "opacity": 1, "blendMode": "normal",
+    "mask": { "type": "none" },
+    "adjustments": { "tone": { "exposure_ev": 0.1, "contrast": 0, "highlights": 0, "shadows": 0, "whites": 0, "blacks": 0 } }
+  },
+  {
+    "id": "radial-contract", "name": "徑向漸層", "enabled": true, "opacity": 0.7, "blendMode": "normal",
+    "mask": { "type": "radial", "x": 0.5, "y": 0.4, "width": 0.3, "height": 0.6, "rotation": 15, "feather": 0.2, "invert": true },
+    "adjustments": { "tone": { "exposure_ev": 0.2, "contrast": 0.1, "highlights": 0, "shadows": 0, "whites": 0, "blacks": 0 } }
+  },
+  {
+    "id": "brush-contract", "name": "筆刷", "enabled": true, "opacity": 0.8, "blendMode": "normal",
+    "mask": { "type": "brush", "points": [{ "x": 0.2, "y": 0.3, "pressure": 0.8 }], "radius": 0.03, "feather": 0.2, "flow": 0.8, "erase": false },
+    "adjustments": { "tone": { "exposure_ev": -0.1, "contrast": 0, "highlights": 0, "shadows": 0.1, "whites": 0, "blacks": 0 } }
+  },
+  {
+    "id": "luminance-contract", "name": "亮度範圍", "enabled": true, "opacity": 0.9, "blendMode": "normal",
+    "mask": { "type": "luminance", "minimum": 0.1, "maximum": 0.6, "feather": 0.2, "invert": false },
+    "adjustments": { "tone": { "exposure_ev": 0.15, "contrast": 0, "highlights": -0.1, "shadows": 0, "whites": 0, "blacks": 0 } }
+  },
+  {
+    "id": "color-range-contract", "name": "色彩範圍", "enabled": true, "opacity": 0.5, "blendMode": "normal",
+    "mask": { "type": "colorRange", "reference": [0.4, 0.2, 0.1], "tolerance": 0.1, "feather": 0.2, "invert": false },
+    "adjustments": { "tone": { "exposure_ev": -0.15, "contrast": 0, "highlights": 0, "shadows": 0, "whites": -0.05, "blacks": 0 } }
+  }
+]

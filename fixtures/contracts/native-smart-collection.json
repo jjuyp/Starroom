@@ -1,0 +1,6 @@
+{
+  "all": [
+    { "field": "rating", "minimum": 4 },
+    { "field": "keyword", "value": "Japan" }
+  ]
+}

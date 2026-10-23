@@ -1,0 +1,348 @@
+# Third-party provenance, version and license inventory
+
+Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document are review pins, not permission to integrate a project. Any version change must update this file and `Cargo.lock`/`package-lock.json` in the same change.
+
+## Foundation selections
+
+2026-10-23 integration under validation: LittleCMS Fast Float 2.19,
+[upstream source](https://github.com/mm2/Little-CMS/tree/21c582a594fe5279f90c0b93437c398f93bf62b0/plugins/fast_float),
+commit `21c582a594fe5279f90c0b93437c398f93bf62b0`, GPL-3.0-or-later,
+copyright 1998-2026 Marti Maria Saguer. Unmodified vendored C sources are compiled
+statically into the binary; no algorithm port. Source/license/SHA-256 inventory:
+`vendor/lcms-fast-float-2.19/README.md`. Purpose: bounded known-sRGB output acceleration
+in the existing shared LittleCMS provider, not RAW/input or arbitrary ICC replacement.
+External redistribution must include GPL notices and corresponding source; the core
+LittleCMS MIT license does not cover this plugin. Existing project GPL obligations
+remain applicable. Production/installer acceptance is pending. The direct lcms2-sys
+4.0.7 and cc 1.4.4 edges reuse already pinned packages; no package version changes.
+
+2026-10-22 GPU spatial backend: `gpu/spatial.rs`, `spatial_filter.wgsl` and
+`spatial_merge.wgsl` adapt the existing GPL Starroom detail implementation at
+`17c7fe2d83d4b3612dcf90e7620b4fd8e9cc13e4`. The existing CPU Gaussian coefficient
+generator is shared unchanged; local-detail and sharpen formulas retain their
+accepted parameters/order. Compensated f32 separable broad mean is checked against
+the CPU f64 summed-area oracle (not claimed bit exact). This code enters the binary
+under the existing GPL distribution obligations. No new external code/package/model,
+lockfile change or additional redistribution permission is introduced. The resolved
+wgpu pin remains30.0.1 as recorded in the table below; CPU Export remains authoritative.
+Doc71 records numeric, photographic and actual Native qualification.
+
+2026-10-19 GPU NR: `starroom-render` adds a dependency edge to the existing GPL
+`starroom-detail` crate (no new package/version). `src/gpu/denoise.rs` and
+`denoise.wgsl` port Starroom's existing accepted edge-aware Y/Cb/Cr CPU kernel from
+`db082c7f4e35be80d20f825641849009a8e33782`, retaining parameter mapping, f32 spatial
+weights, dy/dx accumulation order, HDR/negative values and typed boundaries. This is
+an implementation-backend port, not a new/weaker denoiser or a newly copied upstream
+algorithm. Existing darktable reference/derived-component obligations below are
+unchanged. Existing resolved wgpu30.0.1 and Rayon1.12.0 remain the runtime foundations.
+GPU buffers stay f32 to preserve the accepted reference range; no 8-bit intermediate.
+No model/photo, license version or runtime download is added. Lockfile license report
+regenerated:561 Rust/6 npm production packages/269 notice texts. Native Preview uses
+the new pass only when local Mask/Skin/Healing ordering permits; Export remains the
+same CPU oracle, with executable parity requirements before acceptance.
+
+2026-10-18 interactive pyramid adaptation extends the same pinned/licensed image0.25.10
+Lanczos3 adapter below to opaque encoded RGBA/f32. It preserves upstream final0..1
+clamp ONLY for bounded encoded proxies, verified against actual upstream float samples
+including overshoot. RAW remains unbounded. Transparency/HDR-encoded inputs do not use
+this new derivation; existing file decode remains authoritative. Native cache scheduling,
+explicit parent-tier lineage, Arc ownership and Final/export isolation are Starroom code.
+No new dependency, version, model distribution, license or runtime network access.
+
+2026-10-17 RAW resample review: `crates/starroom-imageio/src/unbounded_resize.rs` directly
+adapts the mature sinc/Lanczos3 and vertical/horizontal sampler from image-rs/image0.25.10,
+source commit `76e57184f22772dad1138e96954e57945406b15e`, `src/imageops/sample.rs`
+SHA256 `f5dd7c0697010b8f5e8dd6d92b82294dd38ed364b8df6a575ca0b5fa8c212641`.
+Upstream: https://github.com/image-rs/image/tree/76e57184f22772dad1138e96954e57945406b15e .
+Purpose: retain negative/>1 scene-linear RAW RGB during preview downsampling; actual
+upstream8x8→2x2 proof changes[-.25,1.5,4] to[0,1,1]. **Direct adaptation / binary: yes**.
+MIT selected from MIT OR Apache-2.0; no new upstream package/version or network runtime.
+The source retains license text and THIRD_PARTY_NOTICES identifies changes; existing
+bundled image license texts cover redistribution. Low risk with notices/source retained.
+Adapter changes only opaqueRGB/f32 final clamp policy, typed shape/finite/allocation
+guards, shared weights and independent row scheduling; not a new/weaker filter. Input
+format parsing, LibRaw sensor/WB/demosaic/camera matrices remain untouched. Decode policy
+v8 invalidates prior preview/library/export identities explicitly. Existing Rayon1.12.0
+is added as an imageio dependency edge; regenerated lockfile license report verifies
+561Rust/6npm/269notice texts.
+
+2026-10-17 detail scheduling: `starroom-detail` now directly uses the already pinned
+Rayon1.12.0 public parallel iterators (same MIT OR Apache-2.0 row below). No new upstream
+package/version/source, pixel algorithm or image engine. Only independent row/pixel
+scheduling and identical precomputed spatial weights change; serial accumulation order
+and precision remain frozen in a test-only oracle. Cargo.lock changes one workspace
+dependency edge; license extraction is regenerated and passes561Rust/6npm/269notices.
+
+2026-10-17 interactive transport (doc56): Starroom-authored bounded SRP4 packing uses
+the existing shared Native/LCMS output; presentation uses browser-native ImageData and
+ImageBitmap, not a new color/codec dependency or upstream code port. Final JPEG uses
+the unchanged pinned codec. Lockfiles, model distribution and notices are unchanged.
+The measurement reuses the existing CC0 Fujifilm fixture; no new photographic asset.
+
+2026-10-17 encoded storage/gamut scratch review (doc55): existing pinned LittleCMS continues
+all ICC/WB transforms and proofing without algorithm, source, version or license changes.
+Only Starroom-authored Vec ownership and scratch lifetimes change. No dependency/model/code
+port or new notice; existing binary redistribution obligations remain unchanged.
+
+2026-10-15 GPU instrumentation uses the same pinned wgpu30.0.1 TIMESTAMP_QUERY,
+ComputePassTimestampWrites, resolve_query_set and Queue::get_timestamp_period public APIs
+in `starroom-render`. No upstream code is copied/ported; runtime adapter code is Starroom-
+authored. Existing MIT/Apache notices and binary closure are unchanged. Rust std DefaultHasher
+pixel-byte batching retains the prior byte stream; it introduces no package/license. Doc54
+records measured scope and explicit unsupported/absent timestamp semantics.
+
+2026-10-15 destination-gamut / D65 correction: existing pinned LittleCMS 2.19 and lcms2 6.1.1
+now also own actual output-gamut proofing, inverse reproduction and private matrix-shaper
+linearization. No engine/wrapper source, version, lockfile or license is changed. The reference
+for constant-L/h chroma reduction and white-consistent XYZ/LMS numerical coefficients is
+[W3C CSS Color 4, Candidate Recommendation Draft 2026-10-09](https://www.w3.org/TR/2026/CRD-css-color-4-20261009/),
+sections 14.1.3 and 19; upstream repository [w3c/csswg-drafts](https://github.com/w3c/csswg-drafts).
+This is a pinned published-document reference, not a newly vendored package/commit. W3C
+permissive document terms apply to the reference document. No sample JavaScript functions or
+pseudocode were copied; Starroom's existing CPU/WGSL conversions receive the numerical matrix
+correction and its Native adapter implements the bounded search. Numerical correction and
+adapter enter the binary; no browser color engine is added. No new executable third-party
+source or notice obligation is introduced. Re-review if sample code is later imported.
+Doc53 records the exact placement, ownership, tests and photographic-mapping limitations;
+do not describe this as CSS local-MINDE conformance or completed photographic IQ acceptance.
+
+| Project | Intended use | Upstream and fixed revision | License | Direct derivation / port | Enters shipped binary | External-distribution risk and required action |
+|---|---|---|---|---|---|---|
+| darktable | Production M4 scene-linear highlight shoulder and normalized monotonic shadow response, plus quality reference for tone, color calibration/grading, sharpening, denoise and perspective behavior | [darktable-org/darktable](https://github.com/darktable-org/darktable), `release-5.6.0`, tag object `f89bf9231fb21db0a53b3c279ff164caef48cef8`, commit `3c17b2976793303c186a5f64e8c9635ecf8b15d3` | GPL-3.0-or-later | **Direct adaptation** of the stable generalized-loglogistic response in `src/iop/sigmoid.c` into `crates/starroom-color/src/lib.rs`; marked `GPL-derived / private-use`, with Starroom control mapping and tests authored around the adapted operator. The 2026-10-03 shadow mapping reuses this pinned response with black/18%-gray anchors; no new upstream revision or dependency is introduced. | **Yes**, compiled into `starroom-color` / desktop binary | **GPL distribution obligation accepted by project owner.** Workspace is now declared GPL-3.0-or-later and NOTICE identifies source/revision. Before every external binary release, retain the full GPL text, corresponding source, notices and review all bundled-license compatibility. |
+| LibRaw | Production RAW sensor decode, metadata, black/white level, CFA/X-Trans handling, As-Shot WB, public DNG matrices/AnalogBalance/calibration signatures and mature AHD/X-Trans demosaic boundary | [LibRaw/LibRaw](https://github.com/LibRaw/LibRaw), `0.22.2`, annotated tag object `24fa7e5463cbf8b8615dbd2b16c933a294d52400`, peeled source commit `b93f6e45c194f5df9b02a43b1af9a54b4f41f33f`; covered patch paths/hashes in `vendor/libraw-0.22.2/STARROOM_MODIFICATIONS.md` | **CDDL-1.0 selected for Starroom integration**; upstream is alternatively LGPL-2.1-or-later; bundled DCB/X3F portions retain their BSD notices | Vendored with covered metadata/type modifications: promote selected DNG presence bits and compare exact calibration signatures through the existing parser/arena and coefficient paths. No demosaic change. Original C adapter and resolver v7 use the public DNG rules with existing color providers | **Yes**, statically compiled by `crates/starroom-raw/build.rs` | **Medium.** Covered modifications remain CDDL-1.0, published with original copyright/license, source and explicit modification/hash records. Retain corresponding source. Optional Adobe SDK/RawSpeed integrations are not enabled. Re-review before binary distribution and on every LibRaw update. |
+| LittleCMS | ICC v2/v4 input, working-space, display/output transforms and measured-neutral Bradford adaptation for Auto WB / Gray Picker | [mm2/Little-CMS](https://github.com/mm2/Little-CMS), vendored 2.19 content at `21c582a594fe5279f90c0b93437c398f93bf62b0` (`LCMS_VERSION 2190`) through `lcms2-sys 4.0.7` | MIT | No algorithm copied; linked through the safe Rust provider, including `CIEXYZExt::adapt_to_illuminant` / `cmsAdaptToIlluminant` | **Yes**, statically compiled by the `lcms2` `static` feature | **Low.** Ship the LittleCMS and Rust-wrapper MIT notices. Security/version review is required before bumping the C engine or wrapper. |
+| Lensfun | Production camera/lens identification plus distortion, lateral CA, vignetting and auto-scale correction | [lensfun/lensfun](https://github.com/lensfun/lensfun), `v0.3.4`, commit/tag target `101c745e847a5de4a1e569a94368ce2027198598`; official `data/db/timestamp.txt` `1645386247` | Library/model equations LGPL-3.0-or-later; embedded database **CC-BY-SA-3.0** | **Direct adapter/port.** The complete upstream XML database is retained unchanged under `crates/starroom-optics/data/lensfun-v0.3.4`; interpolation and the exact Poly3/Poly5/PTLens modifier equations are adapted from `libs/lensfun/lens.cpp` and `mod-coord.cpp`. Starroom adds typed matching/error/IPC and linear-RGB resampling. | **Yes.** Database is embedded; adapted evaluator and parser compile into the desktop binary. The upstream C++ library itself is not linked, avoiding a hidden system-DLL fallback. | **Medium/high and accepted for this GPL repository.** Retain LGPL and CC-BY-SA attribution/source, identify modifications, offer corresponding Starroom source, and preserve ShareAlike terms for redistributed database adaptations. Re-review packaging and database attribution before every external binary/data release. |
+| MediaPipe | Future local face landmarks / portrait masks provider | [google-ai-edge/mediapipe](https://github.com/google-ai-edge/mediapipe), `v1.0.0`, tag object `6d31f1ebc3284db74d211d62bdc4f0a0c29ea120` | Apache-2.0 | No | No, planned | **Medium.** Retain LICENSE/NOTICE, review model licenses separately, document telemetry/privacy behavior for the selected runtime, and do not bundle a model merely because framework code is Apache-2.0. |
+| colour-science | Offline validation oracle for matrices, chromatic adaptation and ColorChecker metrics; not runtime image processing | [colour-science/colour](https://github.com/colour-science/colour), `v0.4.7`, tag object `7082a604a6d988d314576c0343c7f5008b4b5171` | BSD-3-Clause | `DATA_BABELCOLOR_AVERAGE` values are now distributed unchanged at their published four-decimal precision as reference test data; no runtime code is ported | Test data only; no production binary code | **Low.** The upstream copyright and BSD-3-Clause text are retained beside the fixture. Preserve exact source symbol/blob/version and do not imply Colour Developers endorse Starroom. |
+| Adobe DNG Specification patent license | Public DNG-compatible RAW reading and metadata processing | [Adobe DNG patent license](https://helpx.adobe.com/in/camera-raw/digital-negative.html#dng-specification-patent-license), consulted 2026-08-12 | Royalty-free patent license for compliant implementations, subject to its terms | No Adobe SDK or source code is bundled; LibRaw parses DNG and Starroom reads its public DNG metadata adapter boundary | **Yes**, DNG reading support enters the binary through LibRaw | **Medium.** `NOTICE.md`, README and the DNG bridge retain the exact required prominent notice: “This product includes DNG technology under license by Adobe.” Re-review before release if DNG write support or another SDK is added. |
+| wgpu | Rust GPU acceleration, DX12-first adapter, WGSL validation, bounded readback and real device-loss/OOM callbacks | [gfx-rs/wgpu](https://github.com/gfx-rs/wgpu), lockfile-resolved `30.0.1`, packaged source commit `40f4a34ebaf56f9a046231f54125ad046239d3f3` from `.cargo_vcs_info.json`; crates.io checksum `527ccdf43dd5b2e8676eed9984ce00e2bbb0a1b85b70c1969dcb6cd2eb55ab9e`. Declaration `30.0.0` is a semver requirement, not the resolved pin. | MIT OR Apache-2.0 | No upstream image algorithm copied; official wgpu/WGSL adapter, including `PollType::Wait` timeout / device error callbacks. CPU remains semantic oracle. | **Yes**, linked through `starroom-render` | **Low/medium.** Retain selected permissive notices and audit backend/DX12 closure. This corrects stale inventory text, not a lockfile/dependency update. GPU preview residency/physical fallback/full release qualification remain separate gates; export uses the shared CPU graph. |
+| ONNX Runtime Rust binding (`ort`) | M16 local YuNet and BiSeNet model sessions; hash validation, CPU provider and DirectML-first session option | [pykeio/ort](https://github.com/pykeio/ort), Cargo exact `2.0.0-rc.10`, lockfile-pinned | MIT OR Apache-2.0 | No model or runtime algorithm is copied; `starroom-portrait` is a narrow typed adapter over official ONNX Runtime APIs | **Yes**, runtime closure enters desktop binary | **Low/medium.** Retain chosen permissive notices and re-review execution-provider/binary packaging before distribution. No cloud or telemetry capability is enabled by Starroom. |
+| OpenCV Zoo YuNet ONNX | M16 local multi-face bbox/confidence/5-landmark detector | [`opencv/opencv_zoo`](https://github.com/opencv/opencv_zoo), commit `47534e27c9851bb1128ccc0102f1145e27f23f98`; SHA-256 `ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0` | MIT | No; adapter decodes the public ONNX output contract | **No**: local-only ignored model file | **Reviewed/approved for current private use.** Model is never auto-downloaded, committed or sent to CI; retain notice and re-review before binary distribution. See `MODEL_PROVENANCE.md`. |
+| yakhyo Face Parsing BiSeNet ResNet18 ONNX | M16 local 19-class semantic logits for soft portrait masks | [`yakhyo/face-parsing`](https://github.com/yakhyo/face-parsing), commit `8a4729d95118d0e97c44185f9bdef3d6bfeaaf99`; release `resnet18.onnx`, SHA-256 `0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f` | Upstream code MIT; trained model/dataset review required (CelebAMask-HQ) | No; Starroom only preprocesses, consumes logits and creates editable masks | **No**: local-only ignored model file | **NON_COMMERCIAL_ONLY; REVIEW_REQUIRED_BEFORE_PUBLIC_RELEASE.** Never package, commit or upload this binary until model/dataset redistribution rights are separately cleared. See `MODEL_PROVENANCE.md`. |
+| BiRefNet general Swin-Tiny ONNX | M20 Subject soft mask; Background is its exact complement | [`ZhengPeng7/BiRefNet`](https://github.com/ZhengPeng7/BiRefNet), tag `v1`, commit `a0cf9925880620000aa2d1948d61bf659ddfdfaa`; release asset id `186739942`, SHA-256 `5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333`, 224,005,088 bytes | MIT, copyright 2024 ZhengPeng | No model math is copied; the existing typed ONNX provider consumes the exact upstream asset | **Yes in the Windows rc.2 installer**, but never Git-tracked | **Low/medium.** The release job obtains the fixed official asset, verifies size/hash, packages it locally and retains `licenses/models/BiRefNet-LICENSE.txt`. Runtime download/cloud/API fallback is forbidden. Re-review any model or revision change. |
+
+| NAFNet SIDD width-32 ONNX | M21 local RGB denoise provider before tone/creative processing | [`megvii-research/NAFNet`](https://github.com/megvii-research/NAFNet), commit `2b4af71ebe098a92a75910c233a3965a3e93ede4`; official width-32 checkpoint SHA-256 `89c70e808d1783b6c07911306e106aaf0d4f7f3da8c61078b99ff7f8929a26f4`; deterministic static 512/opset20 ONNX SHA-256 `0e522d6de607958c283c834e6459a37b2fccbf5c19223a289393b4745f0cb633` | MIT repository; pretrained SIDD redistribution must be re-reviewed | No model math port; deterministic exporter imports the pinned official architecture and runtime consumes ONNX | **No**: checkpoint and ONNX are local-only ignored files | **Private/local use accepted.** Never commit, package, auto-download or upload the model to CI; retain upstream notice and perform checkpoint/dataset redistribution review before public binaries. |
+
+## CI-only tooling
+
+### October M20 whole-person correction
+
+The existing NVIDIA SegFormer-B0 ADE20K ONNX adapter now extracts Person class 12 as well
+as Sky class 2. Upstream pin `489d5cd81a0b59fab9b7ea758d3548ebe99677da`, ONNX SHA-256
+`56d255beface9e9f82ab68a1292b8b03881aa45161dffe914b7fb9657133dc58`, exact upstream config
+URL and license decision remain in `MODEL_PROVENANCE.md`. This is adapter routing, not a model
+port or new model acquisition. Rust adapter code enters the binary; restricted weights do not.
+Private local installation only; no redistribution approval is implied by the new UI action.
+No Cargo/npm lockfile or license closure changed.
+
+### October tone correctness repair
+
+The 2026-10-03 tone batch reuses the darktable revision above for normalized shadow response
+and anchored highlight/white shoulders. It also evaluates downstream zones against their
+actual stage input. This is a recorded adaptation change, not a new dependency or license.
+Dense single/combined-control monotonicity and real photographic detail/parity regressions
+are required; the Browser prototype is retained as a migration record, not the tone IQ oracle.
+
+### October Native chroma semantics
+
+The physical-WB connection now preserves LibRaw's fixed non-DNG camera profile when changing
+camera-space gains (cam_xyz_coeff in src/utils/utils_dcraw.cpp; scale_colors in
+src/postprocessing/postprocessing_utils_dcrdefs.cpp, same pinned upstream). This is reuse of
+the existing adapter/matrix provider and independently implemented gain algebra, not new copied
+source. DNG target interpolation/adaptation retains its public chapter-6 rules. Test-only desktop
+tempfile 3.27.0 is already lockfile inventoried; source versions/licenses/notices are unchanged.
+
+Opt-in physical RAW white reuses pinned LibRaw metadata, Native Robertson and existing Bradford/
+matrix providers, with independently implemented public DNG chapter-6 target-neutral equations.
+No SDK code or new dependency is copied. Decode policy v7 retains original calibration for
+rebalancing; all existing covered-source and BSD notice obligations remain unchanged. Native
+source/target/working transforms share Preview/Export. UI and full product qualification remain open.
+
+Primary DNG inverse-white iteration reuses that pinned Robertson provider and the existing
+Native matrix/LibRaw metadata boundary. The public DNG camera-neutral equations are independently
+implemented; no additional upstream code, package or SDK is copied. Resolver v8/decode policy
+v6 record this domain change. The imageio test adds a path reference to the already inventoried
+color-management crate, not a new external dependency. Runtime BSD notice obligations persist.
+
+Native correlated-temperature support now directly ports the scalar Robertson (1968) provider
+from Colour Developers' `colour/temperature/robertson1968.py`, v0.4.7, blob
+`380b8bf8327098e8532eedd219084e8386547530`, BSD-3-Clause / Copyright 2013 Colour Developers.
+The full runtime-source notice is retained in `starroom-color-management/COLOUR_SCIENCE_LICENSE.txt`
+and referenced by NOTICE. No new package is linked, but this is now executable derivation and
+must accompany binary redistribution, not merely the older numerical chart fixture. Source
+table/direction/interpolation logic is retained in f64 scalar Rust with explicit finite/domain
+validation; source example, tungsten/daylight/tint round trips and invalid inputs are tested.
+Non-DNG As-Shot metadata estimates now invert original unbalanced XYZ->camera coefficients,
+not the D65-row-normalized matrix prepared for baked-WB pixels. Decode policy v5 binds metadata
+identity. This is not complete physical WB editing, spectral recovery or DNG iterative-white.
+
+DNG signature handling extends the same pinned LibRaw TIFF/DNG parser/types and selected-IFD
+coefficient metadata under the selected CDDL-1.0 path. Exact UTF-8 bytes in ASCII/BYTE tags are
+stored in its existing memory manager and compared before CC use; the narrow C ABI passes a
+match flag to the actual Rust resolver. Changed covered files/hashes, 4MiB metadata policy and
+source obligations are in vendor STARROOM_MODIFICATIONS and NOTICE. The public DNG 1.7.1
+signature rule is implemented independently; no Adobe SDK/PDF source is bundled. Upstream pin
+and license selection are unchanged. Profile resolver v7/decode policy v4 bind existing cache/
+export identities; complete primary/extra profile/iterative-white/n>3/physical-WB IQ is not inferred.
+
+Typed RAW resource-limit handling uses the same pinned LibRaw public
+`rawparams.max_raw_memory_mb` and error constants. The Starroom C ABI/Rust adapter exposes
+the mature sensor policy; no LibRaw source, allocator/demosaic algorithm, upstream revision
+or license changes. No default resolution, pixel math or embedded-JPEG substitution is added.
+
+RAW/encoded region-copy ownership changes reuse existing Native row extraction and metadata;
+no image algorithm is ported or replaced. The authored DNG test generator uses the existing
+tempfile 3.27.0 exclusive creation/TempPath cleanup provider (already used by Export) rather
+than timestamp-only names. Added references are test-only in imageio/pipeline; no new package,
+version, production dependency or license is introduced. Generator hash updates are in the RAW
+manifest; fixture pixel/tag data and covered LibRaw sources are unchanged.
+
+Native quality measurement uses the existing lcms2 6.1.1 / LittleCMS 2.19 safe public
+`CIEXYZExt::adapt_to_illuminant`, `to_lab` and `CIELabExt::cie2000_delta_e` APIs.
+Starroom owns finite validation, f64 XYZ RMSE/Y-error accumulation and test/report wiring;
+no CIEDE2000/Lab/CAT implementation is copied or newly invented. Engine/wrapper pins,
+licenses and notices remain unchanged. The retained BSD chart's bytes/hash do not change.
+
+Resolver v6 independently applies DNG 1.7.1 chapter 6's ForwardMatrix / ReferenceNeutral
+equations at the existing LibRaw baked-WB boundary, through the existing Matrix3 and Bradford
+providers. FM and CC interpolate independently before reference-neutral balance; no Adobe
+SDK/PDF/source is copied or bundled. The original project-authored CFA generator adds a
+forward/calibration variant using existing TIFF 0.11.3 (also test-only in pipeline). Upstream
+pins and licenses do not change. Signatures, iterative-white, n>3 and full photographic quality
+qualification remain required; the existing DNG patent/covered-source notices remain in place.
+
+Resolver v4 independently applies the same public DNG 1.7.1 chapter-6 CC/CM interpolation and
+product order through existing Matrix3/Bradford providers. No Adobe SDK/source/PDF is copied
+or bundled, no dependency/fixture license changes; retain DNG notices. Missing AnalogBalance,
+signatures, Forward/mixed and iterative dual-white features are not qualified by this repair.
+
+Prepared pixel-stage reuse retains existing LittleCMS input, LibRaw working RGB, Lensfun
+geometry/correction and shared WB kernels unchanged. Starroom's bounded Weak/Arc LRU and
+dependency projection are authored ownership/scheduling code, not new or copied imaging math.
+No dependency, upstream revision, fixture license or notices change is introduced.
+
+ICC transform lifetime reuse uses the same pinned `lcms2` 6.1.1 / LittleCMS engine and public
+`Transform<..., GlobalContext, DisallowCache>` API. The safe wrapper's `src/transform.rs` exposes
+Send/Sync for the NO_CACHE transform mode already used by the Rayon adapter. Starroom adds
+bounded object ownership and exact-key LRU, not copied source or a new ICC algorithm. Pixel
+flags, float format, profiles and rendering intent remain unchanged. No new dependency/license
+or unsafe implementation is introduced; retain the existing wrapper/engine MIT notices.
+
+The DNG ColorMatrix boundary repair independently implements public DNG 1.7.1 chapter-6
+domain/neutral equations, retaining the existing validated Bradford/matrix provider. Reference:
+[Adobe specification](https://helpx.adobe.com/content/dam/help/en/photoshop/pdf/DNG_Spec_1_7_1_0.pdf),
+September 2023 version; `crates/starroom-raw/src/profile.rs` no-ForwardMatrix path, resolver v3.
+No Adobe SDK/source/PDF is copied or bundled, no new dependency/license/LibRaw revision changes.
+The existing DNG patent notice remains prominent in NOTICE and the C bridge. The authored D65
+matrix diagnostic and unchanged BSD ColorChecker data do not add third-party camera assets.
+
+Relative Temperature/Tint now additionally calls the same pinned LittleCMS public daylight
+white-point API (`cmsWhitePointFromTemp`, `vendor/src/cmswtpnt.c`) and prepared adaptation API.
+The relative UI displacement/perpendicular u/v mapping and GPU matrix application are authored
+Starroom adapter/workflow code, not a polynomial or CAT source port. No dependency, model,
+upstream revision or license changes. Encoded values are relative, not measured physical Kelvin;
+RAW editable camera WB is not declared completed by this working-space correction.
+
+The RAW bridge headroom repair uses the same LibRaw revision/public options (`highlight=1`,
+`adjust_maximum_thr=0`) and restores its effective maximum/minimum WB normalization in f32 after
+the mature 16-bit demosaic boundary. Behavioral sources: `src/postprocessing/postprocessing_utils_dcrdefs.cpp::scale_colors`,
+`src/postprocessing/dcraw_process.cpp` and `src/utils/utils_libraw.cpp::adjust_maximum`. No vendored
+LibRaw code or custom demosaic is introduced. CDDL choice/notices are unchanged. The authored
+synthetic DNG generator in `starroom-imageio/tests/support/controlled_dng.rs` uses existing
+`tiff 0.11.3`, has GPL project licensing and no external camera/photo pixels; source hash and
+limitations are recorded in the RAW manifest. The prominent Adobe DNG notice remains in NOTICE.
+
+The saturation endpoint and perceptual Vibrance skin-like heuristic in `starroom-color` and the
+matching fused WGSL are Starroom-authored OKLCh workflow code, implementing `docs/12_TONE_COLOR_ENGINE.md`.
+No darktable implementation/model is copied for this heuristic, no third-party revision changes,
+and no face-detection claim is made. Existing permissive color-reference data and NASA portrait
+licenses/hashes remain unchanged. Complete destination-gamut and photographic quality validation
+is still required before a Production release.
+
+The acceleration workflow pins CI actions by immutable commit: `actions/checkout` v4 `11d5960a326750d5838078e36cf38b85af677262`, `actions/setup-node` v4 `49933ea5288caeca8642d1e84afbd3f7d6820020`, `actions/cache` v4 `0057852bfaa89a56745cba8c7296529d2fc39830`, `actions/upload-artifact` v4 `ea165f8d65b6e75b540449e92b4886f43607fa02`, and `dtolnay/rust-toolchain` stable snapshot `4360b52568e2003a75bf9bc1d59f33a8e3fc893c`. These execute only in GitHub-hosted CI and do not enter Starroom source/binaries. Their source/licenses and GitHub Actions terms must be reviewed when pins change.
+
+## Public RAW fixture assets
+
+| Project / author | Purpose | Source and fixed revision | License | Direct modification | Enters repository / CI | Distribution note |
+|---|---|---|---|---|---|---|
+| PIXLS.US `raw.pixls.us`; individual contributing photographers are not identified per file by the archive | Real camera sensor regression for NEF, ARW, CR2, CR3, native DNG and Fujifilm X-Trans RAF | [raw.pixls.us submission/repository page](https://raw.pixls.us/), Git LFS repository `https://raw.pixls.us/data.lfs.git`, commit `6f997cac925e9fe7dbf2a41d8e242398d8c9d4d4`; exact upstream paths, byte lengths and LFS/SHA-256 OIDs are in `fixtures/raw/manifest.json` | CC0-1.0. Uploaders declare full rights and release each accepted file into the public domain | No. Original camera files are byte-for-byte copies; CI verifies length and SHA-256 and RAW tests verify decode does not mutate them | **Yes**, six files / 73,425,204 bytes | **Low.** CC0 permits public redistribution and CI use. Preserve source URL, archive commit, upstream path, camera metadata and hash in the manifest. No people were selected, matching the archive's legal-safety policy. |
+
+## Public photographic Golden assets
+
+The machine-readable record is `fixtures/golden/manifest.json` schema 3. CI verifies every byte
+length and SHA-256 before the photographs reach the Native render graph. CC0 and CC-BY-SA legal
+texts are retained beside the manifest. NASA imagery is acknowledged as NASA material; the
+identifiable-person image is an engineering fixture, not an endorsement or advertising asset.
+
+| Project / author | Purpose | Source and fixed revision | License | Direct modification | Enters repository / CI | Distribution note |
+|---|---|---|---|---|---|---|
+| NASA / Eileen Collins image, distributed by scikit-image | Daylight portrait, white/black material and skin/tone regression | [`skimage.data.astronaut`](https://scikit-image.org/docs/0.26.x/api/skimage.data.html#skimage.data.astronaut), scikit-image `v0.26.0`, commit `ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8`; SHA-256 `88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5` | U.S. Government public domain / no known copyright restriction | No; upstream 512x512 PNG is retained byte-for-byte | Yes | Acknowledge NASA, do not imply endorsement, and do not use the identifiable person for commercial promotion without a separate publicity review. |
+| Luc Viatour / Google WebP Gallery image 5 | Low-key/backlight portrait and mixed-temperature stress | [Google WebP Gallery](https://developers.google.com/speed/webp/gallery1), page revision dated 2025-08-07; SHA-256 `e7273a6e8842280c3e291297f3c6e3f7d94bb4c0993d771341ec5e22532e6411` | CC-BY-SA-3.0 | No Starroom modification; Google's documented 1024px JPEG derivative is retained | Yes | Attribute Luc Viatour, preserve ShareAlike terms and retained license. |
+| Dgmsaikat / Wikimedia Commons | ISO-800 night-city, high-dynamic-range and point-light regression | [Commons file page](https://commons.wikimedia.org/wiki/File:The_view_of_midnight_in_a_city.jpg), oldid `1151659368`; Apple iPhone 15; SHA-256 `a93ab0e301a8f470be8603f7103a42cbfecb9b8c79334ae020c681e59ab7ed63` | CC0-1.0 | No; original 2160x1620 JPEG is retained | Yes | Low redistribution risk; retain source/author/license record despite attribution not being required. |
+| JINDONG H / Wikimedia Commons pre-2017 Unsplash archive | ISO-2500 neon/night/high-ISO regression | [Commons file page](https://commons.wikimedia.org/wiki/File:Neon_streets_(Unsplash).jpg), oldid `1011422921`; Nikon D7100; SHA-256 `401ba941fd51c203b79f734d76c2279ffde61d8c2f644a53bf3130370cab22d7` | CC0-1.0, published on Unsplash before its 2017 license change | No; original 4496x3000 JPEG is retained | Yes | Preserve the Commons license-review provenance and pre-2017 date evidence. |
+| Benjamin Gimmel / Google WebP Gallery image 4 | Fine foliage/edge texture regression | [Google WebP Gallery](https://developers.google.com/speed/webp/gallery1), page revision dated 2025-08-07; SHA-256 `5c734b26f04c8317c18e0b6c41fc940a97f8ef76ab46576d692b8a05d1de8107` | CC-BY-SA-3.0 | No Starroom modification; Google's documented 1024px JPEG derivative is retained | Yes | Attribute Benjamin Gimmel, preserve ShareAlike terms and retained license. |
+
+## Public color-reference data
+
+| Project / author | Purpose | Source and fixed revision | License | Direct modification | Enters repository / CI | Distribution note |
+|---|---|---|---|---|---|---|
+| Colour Developers / `colour-science/colour` | M3 ColorChecker camera-profile and D50/D65 regression oracle | [`chromaticity_coordinates.py`](https://github.com/colour-science/colour/blob/v0.4.7/colour/characterisation/datasets/colour_checkers/chromaticity_coordinates.py), symbol `DATA_BABELCOLOR_AVERAGE`, v0.4.7 tag object `7082a604a6d988d314576c0343c7f5008b4b5171`, Git blob `2469643b3fbc4ca2eb54cef98068cb1e08d99cc2` | BSD-3-Clause, Copyright 2013 Colour Developers | Values copied unchanged into JSON at upstream four-decimal precision; metadata wrapper is Starroom-authored | **Yes**, numerical fixture and retained license; no executable code | **Low.** Retain copyright, conditions and disclaimer; no endorsement. This is an active numerical oracle, not a photograph or visual Golden baseline. |
+
+## Current Rust image/color dependency closure
+
+The authoritative resolved versions are in `Cargo.lock`. “Direct” means declared by a Starroom crate; transitive codecs still enter the binary and therefore remain listed.
+
+| Dependency | Purpose / Starroom integration | Fixed version | License | Derivation | Binary | Distribution note |
+|---|---|---:|---|---|---|---|
+| `rayon` | M30 parallel execution of independent per-pixel white-balance, tone, curve, mixer, grading, output-gamut and LittleCMS transform stages in the shared CPU render graph | 1.12.0, exact workspace/lockfile pin; crates.io checksum `fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d`; [rayon-rs/rayon](https://github.com/rayon-rs/rayon) | MIT OR Apache-2.0 | No; Starroom uses the public parallel-iterator API without copying scheduler or image algorithms | Yes, through `starroom-pipeline` and `starroom-color-management` | Low. Retain the selected permissive notices. Parallelism does not change stage ordering, pixel math, cache identity, output dimensions or Preview/Export graph identity; LittleCMS uses its documented thread-safe `NO_CACHE` transform mode and error-producing local-mask work remains serial. |
+| `lcms2` | Safe ICC provider API in `starroom-color-management` | 6.1.1, tag `03972e3b4e6a3e7ebc76765079a98d5e6f8c6b9a` | MIT | No | Yes | Ship MIT notice. |
+| `lcms2-sys` | FFI and static LittleCMS build | 4.0.7, tag `2aff9f7ac9576327efbb112de3f6ec1adf1aa2af` | MIT; vendored LittleCMS MIT | No | Yes | Ship both wrapper and LittleCMS notices; static build is intentional for reproducibility. |
+| `image` | Rendered JPEG/PNG/TIFF decode and JPEG encode in `starroom-imageio` | 0.25.10 | MIT OR Apache-2.0 | No | Yes | Record chosen notice set; enabled features are exactly `jpeg`, `png`, `tiff`. |
+| `zune-jpeg`, `zune-core` | JPEG codec selected transitively by `image` | 0.5.15 / 0.5.3 | MIT OR Apache-2.0 OR Zlib | No | Yes | Retain chosen permissive notices. |
+| `png` | PNG codec; `0.18.1` is in the image path and `0.17.16` is also resolved elsewhere in the desktop closure | 0.18.1 and 0.17.16 | MIT OR Apache-2.0 | No | Yes | Keep both resolved versions visible until dependency deduplication. |
+| `tiff` | TIFF codec selected transitively by `image` | 0.11.3 | MIT | No | Yes | Retain MIT notice. |
+| `moxcms`, `pxfm` | Numeric/color support selected transitively by `image` | 0.8.1 / 0.1.30 | BSD-3-Clause OR Apache-2.0 | No | Yes | This is not Starroom's ICC provider; retain chosen notices. |
+| `fdeflate`, `flate2`, `miniz_oxide` | PNG/DEFLATE implementation closure | 0.3.7 / 1.1.9 / 0.8.9 | permissive multi-license | No | Yes | Retain the selected MIT/Apache/Zlib notices. |
+| `crc32fast` | Direct M27 PNG XMP iTXt CRC generation plus existing codec closure | 1.5.0 | MIT OR Apache-2.0 | No | Yes | Retain the selected permissive notice; used only for PNG container integrity, not image math. |
+| `byteorder-lite` | TIFF/image byte-order support | 0.1.0 | Unlicense OR MIT | No | Yes | Prefer MIT notice for predictable external distribution records. |
+| `cc` | Compiles the pinned, unmodified LibRaw C++ sources and Starroom's narrow C ABI bridge on the target toolchain | resolved by `Cargo.lock` (1.2 series) | MIT OR Apache-2.0 | No | Build-time only; resulting LibRaw objects enter the binary | Retain the chosen permissive notice; compiler flags must remain reproducible across Windows CI. |
+| `sha2` | SHA-256 fingerprint of the exact resolved camera-profile ID/version/matrix policy persisted in projects and reported by Native export | resolved by `Cargo.lock` (0.10 series) | MIT OR Apache-2.0 | No | Yes | Retain the selected permissive notice; profile fingerprints are reproducibility identifiers, not security signatures. |
+| `windows-sys` | Direct M28 Windows process Working Set / lifetime peak telemetry through `GetProcessMemoryInfo`; only `ProcessStatus` and `Threading` feature groups are enabled directly | 0.61.2; crates.io checksum `ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc`; [microsoft/windows-rs](https://github.com/microsoft/windows-rs) | MIT OR Apache-2.0 | No; Starroom calls generated raw Win32 declarations | Yes on Windows; the same version already existed transitively | Low. Retain the selected permissive notice. Telemetry is local and process-only; no samples, paths or metadata leave the machine. Other transitive `windows-sys` versions remain lockfile-visible until their owners converge. |
+| `tempfile` | M29 atomic Session replacement plus production Export exclusive/random temporary creation, atomic replacement and no-clobber persistence | 3.27.0; crates.io checksum `32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd`; [Stebalien/tempfile](https://github.com/Stebalien/tempfile) | MIT OR Apache-2.0 | No; Starroom uses the public safe API | Yes, through `starroom-session` and `starroom-export` | Low. Retain the selected permissive notice. Export temps are exclusively created beside the chosen destination and contain only the new encoded output; only owned temps are cleaned on failure. Source files are protected separately. Session payloads contain UI/project identity only, never photo pixels. |
+| `quick-xml` | Streaming parser for the embedded, pinned Lensfun XML database | 0.41.0 | MIT | No | Yes | Retain MIT notice; malformed database input is a typed provider error, not a fallback. |
+| `kamadak-exif` | Extract camera/lens/focal/aperture/distance metadata from rendered JPEG/TIFF EXIF for Lensfun matching | 0.6.1 | BSD-2-Clause | No | Yes | Retain BSD-2-Clause notice; missing or invalid EXIF remains an explicit profile status. |
+| `rusqlite` | M24 local-first asset/workflow catalog, typed parameterized queries and migrations | 0.37.0 | MIT | No | Yes | Uses the `bundled` feature for a reproducible SQLite engine; retain rusqlite and SQLite public-domain notices and re-audit compile options on upgrade. |
+| `libsqlite3-sys` / SQLite | FFI and bundled SQLite engine selected by `rusqlite` | 0.35.0 / lockfile-pinned bundled source | MIT wrapper / SQLite public domain | No | Yes | Database files are runtime user data and never shipped in source or release assets; migrations remain Starroom-owned GPL code. |
+
+## Current desktop transport dependencies
+
+| Dependency | Purpose / Starroom integration | Fixed version | License | Derivation | Binary | Distribution note |
+|---|---|---:|---|---|---|---|
+| `tauri-plugin-dialog` | Desktop source/output path selection for Native preview/export; selected paths enter the narrow Tauri command contract | 2.7.2 | MIT OR Apache-2.0 | No | Yes | Official Tauri plugin; retain the selected permissive notice and capability allowlist. |
+| `http-range` | Transitive byte-range support enabled by Tauri's `protocol-asset` feature for scoped native thumbnails | 0.1.5 | MIT | No | Yes | Retain MIT notice; this is transport support, not image processing. |
+| `@tauri-apps/api` | Frontend `invoke`, runtime detection and scoped asset URL bridge; no image processing | 2.11.1 | MIT OR Apache-2.0 | No | Bundled JS | Official Tauri package; retain the selected permissive notice. |
+| `@tauri-apps/plugin-dialog` | Typed frontend binding for the native dialog plugin; no image processing | 2.7.2 | MIT OR Apache-2.0 | No | Bundled JS | Keep JS and Rust plugin versions compatible and review permissions on upgrades. |
+| `@tauri-apps/cli` | M30 reproducible Windows release/NSIS build orchestration | 2.11.4, exact package-lock pin; [tauri-apps/tauri](https://github.com/tauri-apps/tauri) | MIT OR Apache-2.0 | No | Build-time only | Does not enter photo processing or the shipped JS bundle. Retain the selected permissive notice and keep the CLI/config schema aligned with Tauri 2 runtime crates. |
+
+## Current JavaScript image-related dependencies
+
+There is currently **no third-party JavaScript image-processing dependency**. The browser fallback uses platform `CanvasRenderingContext2D`, `Image`, `ImageData`, Blob and object-URL APIs in `src/imagePipeline.ts` and `src/App.tsx`; real desktop-photo processing enters the Rust graph. The official Tauri JS packages listed above provide transport/dialog bindings only. React, Lucide, Vite and test/lint packages are UI/tooling dependencies, not image algorithms. Their exact versions remain pinned by `package-lock.json` and require the normal release notice audit, but they are outside this image-foundation inventory.
+
+## October development-tool security repair (2026-10-02)
+
+These MIT dependencies are development/test tools, not image algorithms and not shipped in the
+desktop executable or production JavaScript. `package-lock.json` records resolved URLs and
+integrity hashes; the release license report is regenerated after this lockfile change.
+
+| Dependency | Upstream | Locked version | Purpose / derivation | Security repair / distribution |
+|---|---|---|---|---|
+| `vitest` and `@vitest/*` | [vitest-dev/vitest](https://github.com/vitest-dev/vitest) | 4.1.11 (exact direct pin) | Test runner; public API only, no port | [Official GHSA-82fw-gwwq-j7x9](https://github.com/vitest-dev/vitest/security/advisories/GHSA-82fw-gwwq-j7x9) fixes redirect-mock path traversal. Not bundled. |
+| `brace-expansion` | [isaacs/brace-expansion](https://github.com/isaacs/brace-expansion) | 5.0.12 | ESLint/minimatch transitive glob tooling; no port | Addresses reported nested-brace/expansion denial-of-service advisories. Not bundled. |
+
+The post-update npm audit reports zero known vulnerabilities; this is a time-specific dependency
+registry check, not a guarantee that future advisories cannot exist. No Rust or production npm
+dependency changed.
+
+## Provenance rule for future integrations
+
+Every new adapter or port must add: upstream file/module, immutable tag/SHA, original license header, integration mode (`link`, `adapter`, `behavioral reference`, `direct port`, or `generated reference data`), Starroom destination files, binary/data packaging, modifications, and external-distribution decision. “Looked at upstream” is not enough to classify a direct translation as independent work.
