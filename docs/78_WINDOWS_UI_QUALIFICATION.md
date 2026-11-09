@@ -59,14 +59,36 @@ evidence, not replaced by the three transport tests.
 The independent supplementary workflow is path-targeted; existing/unknown critical
 workflow changes retain broad validation and all final release gates are unchanged.
 
+First real run42625884494 reached the built executable but failed before any tone
+operation: EdgeDriver's DevToolsActivePort negotiation did not complete. This is
+a harness setup failure, not product tone failure or external runner outage.
+Review also identified that bare cargo build lacks Tauri's custom-protocol feature
+and therefore is not sufficient standalone-frontend evidence. The next run uses
+the pinned Tauri CLI build --no-bundle (its production-protocol feature), an owned
+application/profile with loopback WebView2 debugging, and Microsoft's documented
+attach approach. It requires a production tauri origin, not a development server.
+One PageUp input per control matches one physical History gesture; four separate
+arrow presses cannot be asserted to undo as a single drag. Completed native builds
+will be cached even when a later UI assertion fails, avoiding repeated cold builds.
+The revised transport/guard tests pass4 cases. This remains unaccepted until the
+real workflow passes.
+Full local Vitest241/35files and TypeScript pass for the batched repair.
+d4ff25f Full42625884357/secondary42625892911 succeeded independently; its
+green Rust/Web checks do not override the failed real UI workflow.
+
 ## Previous performance group
 
 1d7e114 Full42621317707/secondary42621327038 SUCCESS. Local FullRust1794228710901,
 FullWeb1794228773739 (237 tests), and actual D750 RAW157 same-tier GPU/CPU/export
 comparisons1794229651092 pass(maxRGB8delta1). At512, exposure median/p9515.075/
 17.611ms, shadows16.889/18.862ms, Tone+NR+Detail17.558/18.374ms; Native only.
-The local MSVC production executable headless self-test passed Library/History/
+The local MSVC release-profile executable headless self-test passed Library/History/
 Session/NativeExport with deterministic outputs and immutable source in
 output/qualification/core-2LWMwq/qualification.json, executableSHA256
 23eee0149c2c91c20d49b893e154f25b96c4a74b79a194ca59debc6e8531fee9.
-It is not installed/AI-bundling or whole-UI acceptance.
+It is not standalone UI-protocol, installed/AI-bundling or whole-UI acceptance.
+The same executable also completed real CPU Subject inference, pinned modelSHA
+5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333,
+with finite1024x1024 model-resolution output, exit0. Saved evidence:
+output/qualification/ai-verified-VyiZgl/ai-qualification.json.
+This does not validate DirectML, photographic mask quality or installed availability.

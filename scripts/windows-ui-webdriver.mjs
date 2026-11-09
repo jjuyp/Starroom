@@ -35,6 +35,18 @@ export class WindowsUiWebDriver {
     await this.command(`/session/${this.session}/timeouts`, { script: 120_000, pageLoad: 120_000 })
   }
 
+  async attach(debuggerAddress) {
+    if (this.session || !/^127\.0\.0\.1:[0-9]+$/.test(debuggerAddress)) {
+      throw new Error('UiGateInvalid: an unused loopback debugging endpoint is required')
+    }
+    const result = await this.command('/session', { capabilities: { alwaysMatch: {
+      browserName: 'webview2', 'ms:edgeOptions': { debuggerAddress },
+    } } })
+    if (!result?.sessionId) throw new Error('UiGateWebDriverFailed: missing attached session id')
+    this.session = result.sessionId
+    await this.command(`/session/${this.session}/timeouts`, { script: 120_000, pageLoad: 120_000 })
+  }
+
   async execute(script, args = [], async = false) {
     if (!this.session) throw new Error('UiGateInvalid: no application session')
     return this.command(`/session/${this.session}/execute/${async ? 'async' : 'sync'}`, { script, args })

@@ -39,3 +39,16 @@ it('uses production WebView2 capabilities, typed W3C elements, real input and ex
   expect(request.mock.lastCall?.[1].method).toBe('DELETE')
   expect(driver.session).toBeNull()
 })
+
+it('attaches only to an owned loopback WebView2 endpoint without changing the application', async () => {
+  const request = vi.fn()
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ value: { sessionId: 'attached' } }) })
+    .mockResolvedValue({ ok: true, json: async () => ({ value: null }) })
+  const driver = new WindowsUiWebDriver('http://127.0.0.1:9515/', request)
+  await expect(driver.attach('example.org:9223')).rejects.toThrow('UiGateInvalid')
+  expect(request).not.toHaveBeenCalled()
+  await driver.attach('127.0.0.1:9223')
+  expect(JSON.parse(request.mock.calls[0][1].body).capabilities.alwaysMatch)
+    .toEqual({ browserName: 'webview2', 'ms:edgeOptions': { debuggerAddress: '127.0.0.1:9223' } })
+  await driver.close()
+})

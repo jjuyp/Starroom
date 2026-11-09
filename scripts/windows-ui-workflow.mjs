@@ -70,9 +70,10 @@ export async function runWindowsUiWorkflow(driver, fixture) {
     await driver.execute('window.__STARROOM_UI_GATE_CONTROL__=arguments[0]', [label])
     const selector = `input[type="range"][aria-label="${label}"]`
     const element = await driver.element(selector)
-    // Native key input goes through React onKeyDown/onChange/gesture/history.
+    // One physical adjustment gesture per control. Four separate ArrowRight
+    // presses are four undoable gestures, not one drag/history command.
     await driver.command(`/session/${driver.session}/element/${element}/value`, {
-      text: '\uE014\uE014\uE014\uE014', value: ['\uE014', '\uE014', '\uE014', '\uE014'],
+      text: '\uE00E', value: ['\uE00E'],
     })
     const current = await waitForUi(driver, `
       const s=document.querySelector(".canvas-footer")?.textContent || '';

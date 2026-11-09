@@ -1,5 +1,16 @@
 # Implementation Notes
 
+## UI qualification setup repair — 2026-11-09
+
+First Windows UI run42625884494 failed before tone operations at EdgeDriver
+DevToolsActivePort negotiation. Review found bare cargo release lacked Tauri's
+production protocol; use pinned Tauri CLI --no-bundle and owned-profile SDK
+attach with an explicit production-origin check. No product algorithm changed.
+Single PageUp events match one History gesture. Completed native build artifacts
+are retained after later UI test failures to avoid cold recompilation.
+Local241 tests/TypeScript/lint/PS AST/YAML/infra pass. Real UI qualification
+remains pending; existing Full d4ff25f42625884357 is SUCCESS. See doc78.
+
 ## Real Windows UI gate — under qualification,2026-11-09
 
 Supplemental CI operates the actual production WebView2/Native application with

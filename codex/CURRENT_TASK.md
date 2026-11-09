@@ -1,5 +1,15 @@
 # Current Task
 
+2026-11-09: d4ff25f Full42625884357/secondary42625892911 SUCCESS.
+UI42625884494 failed at DevToolsActivePort before photo/tone actions, not an
+external runner outage. Batched harness repair: production Tauri CLI no-bundle,
+owned-profile attach, one PageUp/History gesture, screenshots and save completed
+native build caches after later UI failure.241 tests/35files + TypeScript/lint/
+PS AST/YAML/infra pass; next real UI run required. App imaging code unchanged.
+Actual local CPU Subject inference exit0 is recorded in
+output/qualification/ai-verified-VyiZgl/ai-qualification.json; finite1024x1024,
+pinned model; not installed/DirectML/photo-quality acceptance. See doc78.
+
 2026-11-09: 1d7e114 Full42621317707/secondary42621327038 SUCCESS, actual D750
 RAW157frame same-tier GPU/CPU/export regression1794229651092 maxRGB8delta1,
 source unchanged. MSVC headless core self-test passes; doc78 records scope/hash.

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { WindowsUiWebDriver } from './windows-ui-webdriver.mjs'
-import { runWindowsUiWorkflow } from './windows-ui-workflow.mjs'
+import { runWindowsUiWorkflow, waitForUi } from './windows-ui-workflow.mjs'
 
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
   || process.env.RUNNER_OS !== 'Windows' || process.env.STARROOM_WINDOWS_UI_GATE !== '1') {
@@ -44,6 +44,7 @@ for (const stream of [child.stdout, child.stderr]) {
 let launchError
 child.once('error', (error) => { launchError = error })
 const driver = new WindowsUiWebDriver('http://127.0.0.1:9515/')
+let application
 let report
 let failure
 try {
@@ -58,13 +59,44 @@ try {
     await delay(250)
   }
   if (!ready) throw new Error('UiGateSetupUnavailable: driver never became ready')
-  await driver.launch(executable)
+  // Launch owns the explicit fresh WebView profile. Attach avoids EdgeDriver's
+  // temporary DevToolsActivePort directory conflicting with that SDK override.
+  // The isolated CI window must paint and receive real input; the top-level
+  // guard forbids this path on a user desktop. The driver console stays hidden.
+  application = spawn(executable, [], { env: {
+    ...env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+      '--remote-debugging-port=9223 --remote-debugging-address=127.0.0.1',
+  }, windowsHide: false, stdio: ['ignore', 'pipe', 'pipe'] })
+  let applicationError
+  application.once('error', (error) => { applicationError = error })
+  for (const stream of [application.stdout, application.stderr]) {
+    stream.on('data', (data) => { diagnostic = (diagnostic + data.toString()).slice(-1024 * 1024) })
+  }
+  let debuggerReady = false
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (applicationError || application.exitCode !== null) {
+      throw new Error(`UiGateApplicationExited: production executable exited before WebView2 initialization (code=${application.exitCode}, error=${applicationError ?? 'none'})`)
+    }
+    try {
+      const response = await fetch('http://127.0.0.1:9223/json/version', { signal: AbortSignal.timeout(1000) })
+      debuggerReady = response.ok && !!(await response.json()).webSocketDebuggerUrl
+      if (debuggerReady) break
+    } catch { /* only the owned application's startup is pending */ }
+    await delay(250)
+  }
+  if (!debuggerReady) throw new Error('UiGateSetupUnavailable: owned WebView2 debugger did not initialize')
+  await driver.attach('127.0.0.1:9223')
+  await waitForUi(driver,
+    "return location.hostname==='tauri.localhost' || location.protocol==='tauri:'", [], 30_000)
   report = await runWindowsUiWorkflow(driver, fixture)
   if (sha256(fixture) !== originalHash) throw new Error('UiGateSourceMutated: public fixture changed')
+  const screenshot = await driver.command(`/session/${driver.session}/screenshot`, undefined, 'GET')
+  if (typeof screenshot !== 'string') throw new Error('UiGateCaptureFailed: actual WebView2 screenshot missing')
+  writeFileSync(join(root, 'success.png'), Buffer.from(screenshot, 'base64'))
   writeFileSync(join(root, 'ui-qualification.json'), JSON.stringify({
     schemaVersion: 1, generatedAt: new Date().toISOString(), revision: process.env.GITHUB_SHA,
     executableSha256: sha256(executable), fixtureSha256: originalHash,
-    driver: identity, ...report,
+    driver: identity, ...report, screenshot: 'success.png',
   }, null, 2) + '\n')
   console.log('STARROOM_WINDOWS_UI ' + JSON.stringify(report))
 } catch (error) {
@@ -84,6 +116,7 @@ try {
     diagnostic += '\nCleanup: ' + String(closeError)
     if (!failure) throw closeError
   } finally {
+    application?.kill()
     child.kill()
     writeFileSync(join(root, 'driver.log'), diagnostic)
   }
