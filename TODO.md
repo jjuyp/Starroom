@@ -924,5 +924,8 @@ approval as a blocker for the current repair/verification/package batch.
 
 - [x] Reuse matching fit/zoom Canvas backing store; real Native frame44 exact
   Chromium comparisons and transparent-pixel replacement; doc75.
+- [x] Eligible encoded1:1 source ROI decode reuse: exact Native changed-exposure
+  frames/fresh graph parity, bounded LRU, source identity/dimension/oversize tests,
+  MSVC Release timing1794228340005 and FullRust1794228710901; doc76.
 - [ ] Installed edit-to-display latency, first1:1 RAW, GPU-resident presentation
   and original full production release gates remain unverified/open.

@@ -1536,6 +1536,7 @@ struct NativePreviewScheduler {
     cancellation_times: Mutex<BTreeMap<String, Instant>>,
     workers: PreviewWorkerPool,
     decoded: Mutex<VecDeque<(String, u32, Arc<DecodedSourceImage>)>>,
+    decoded_regions: Mutex<VecDeque<(String, Arc<DecodedSourceImage>)>>,
     prepared: SourcePreparationCache,
     viewport_frames: Mutex<VecDeque<(String, Vec<u8>)>>,
     gpu: Mutex<Option<Result<Arc<GpuRenderer>, String>>>,
@@ -1852,6 +1853,70 @@ fn cache_decoded_source(
     Ok(())
 }
 
+const REGION_DECODE_CACHE_BUDGET: u64 = 32 * 1024 * 1024;
+
+/// Parameter changes do not change immutable source pixels. Cache only the
+/// exact expanded ROI, never a rendered edit or a lower-resolution substitute.
+fn decoded_encoded_preview_region(
+    scheduler: &NativePreviewScheduler,
+    path: &Path,
+    source_identity: &str,
+    region: PreviewViewportRequest,
+) -> Result<Arc<DecodedSourceImage>, String> {
+    let key = format!(
+        "{source_identity}:roi-v1:{}:{}:{}:{}:{}:{}",
+        region.source_width, region.source_height, region.x, region.y, region.width, region.height
+    );
+    {
+        let mut cache = scheduler
+            .decoded_regions
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned region decode cache".to_owned())?;
+        if let Some(index) = cache.iter().position(|(identity, _)| identity == &key) {
+            let entry = cache
+                .remove(index)
+                .ok_or("PreviewCacheFailed: region disappeared")?;
+            let image = Arc::clone(&entry.1);
+            cache.push_back(entry);
+            profiling::record_cache(true);
+            return Ok(image);
+        }
+    }
+    profiling::record_cache(false);
+    let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
+        decode_source_region(path, region.x, region.y, region.width, region.height)
+    })
+    .map_err(|error| format!("native high-resolution region decode failed: {error}"))?;
+    if decoded.source_width != region.source_width || decoded.source_height != region.source_height
+    {
+        return Err(
+            "PreviewViewportInvalid: source dimensions changed since Library registration".into(),
+        );
+    }
+    let image = Arc::new(decoded.image);
+    let bytes = u64::from(image.width()) * u64::from(image.height()) * 16;
+    if bytes <= REGION_DECODE_CACHE_BUDGET {
+        let mut cache = scheduler
+            .decoded_regions
+            .lock()
+            .map_err(|_| "PreviewCacheFailed: poisoned region decode cache".to_owned())?;
+        cache.retain(|(identity, _)| identity != &key);
+        while !cache.is_empty()
+            && (cache.len() >= 4
+                || cache
+                    .iter()
+                    .map(|(_, image)| u64::from(image.width()) * u64::from(image.height()) * 16)
+                    .sum::<u64>()
+                    + bytes
+                    > REGION_DECODE_CACHE_BUDGET)
+        {
+            cache.pop_front();
+        }
+        cache.push_back((key, Arc::clone(&image)));
+    }
+    Ok(image)
+}
+
 /// Process-local M16 model/session and soft-mask cache. It never crosses the Tauri boundary:
 /// IPC transports face geometry and a compact cache reference, while Preview/Export resolve the
 /// source-space R16Float-compatible mask in the Native shared graph.
@@ -2009,6 +2074,7 @@ impl Default for NativePreviewScheduler {
             cancellation_times: Mutex::new(BTreeMap::new()),
             workers: PreviewWorkerPool::new(2),
             decoded: Mutex::new(VecDeque::new()),
+            decoded_regions: Mutex::new(VecDeque::new()),
             prepared: SourcePreparationCache::default(),
             viewport_frames: Mutex::new(VecDeque::new()),
             gpu: Mutex::new(None),
@@ -4088,19 +4154,15 @@ fn native_preview_inner(
             let crop = full
                 .crop(expanded.x, expanded.y, expanded.width, expanded.height)
                 .map_err(|error| format!("native high-resolution RAW crop failed: {error}"))?;
-            (dimensions.0, dimensions.1, crop)
+            (dimensions.0, dimensions.1, Arc::new(crop))
         } else {
-            let decoded = profiling::measure(ProfileStage::RawDecode, 0, || {
-                decode_source_region(
-                    &request.source_path,
-                    expanded.x,
-                    expanded.y,
-                    expanded.width,
-                    expanded.height,
-                )
-            })
-            .map_err(|error| format!("native high-resolution region decode failed: {error}"))?;
-            (decoded.source_width, decoded.source_height, decoded.image)
+            let image = decoded_encoded_preview_region(
+                scheduler,
+                &request.source_path,
+                &source_identity,
+                expanded,
+            )?;
+            (expanded.source_width, expanded.source_height, image)
         };
         if source_width != viewport.source_width || source_height != viewport.source_height {
             return Err(
@@ -4108,7 +4170,7 @@ fn native_preview_inner(
                     .into(),
             );
         }
-        Some((viewport, expanded, Arc::new(image)))
+        Some((viewport, expanded, image))
     } else {
         None
     };
@@ -7999,6 +8061,222 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn encoded_roi_cache_reuses_immutable_pixels_and_separates_source_and_region() {
+        for relative in [
+            "fixtures/golden/sources/astronaut-eileen-collins.png",
+            "fixtures/golden/sources/neon-streets-nikon-d7100.jpg",
+        ] {
+            let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(relative);
+            let before = source_content_hash(&source).unwrap();
+            let dimensions = starroom_imageio::encoded_dimensions(&source).unwrap();
+            let region = PreviewViewportRequest {
+                source_width: dimensions.0,
+                source_height: dimensions.1,
+                x: 0,
+                y: 0,
+                width: 32,
+                height: 32,
+            };
+            let identity = preview_source_identity(&source).unwrap();
+            let scheduler = NativePreviewScheduler::default();
+            let first =
+                decoded_encoded_preview_region(&scheduler, &source, &identity, region).unwrap();
+            let (again, profile) = profiling::capture(|| {
+                decoded_encoded_preview_region(&scheduler, &source, &identity, region).unwrap()
+            });
+            assert!(Arc::ptr_eq(&first, &again));
+            assert!(!profile.stages.contains_key(&ProfileStage::RawDecode));
+            let direct = decode_source_region(&source, 0, 0, 32, 32).unwrap();
+            let settings = neutral_settings().validated().unwrap();
+            assert_eq!(
+                render_source_export_to_srgb8(&again, &settings)
+                    .unwrap()
+                    .data,
+                render_source_export_to_srgb8(&direct.image, &settings)
+                    .unwrap()
+                    .data
+            );
+            let changed = decoded_encoded_preview_region(
+                &scheduler,
+                &source,
+                &format!("{identity}:new-revision"),
+                region,
+            )
+            .unwrap();
+            assert!(!Arc::ptr_eq(&first, &changed));
+            let invalid = PreviewViewportRequest {
+                source_width: dimensions.0 + 1,
+                ..region
+            };
+            assert!(
+                decoded_encoded_preview_region(&scheduler, &source, &identity, invalid)
+                    .unwrap_err()
+                    .contains("PreviewViewportInvalid")
+            );
+            for x in 1..=5 {
+                decoded_encoded_preview_region(
+                    &scheduler,
+                    &source,
+                    &identity,
+                    PreviewViewportRequest { x, ..region },
+                )
+                .unwrap();
+            }
+            let cache = scheduler.decoded_regions.lock().unwrap();
+            assert_eq!(cache.len(), 4);
+            assert!(
+                cache
+                    .iter()
+                    .map(|(_, image)| u64::from(image.width()) * u64::from(image.height()) * 16)
+                    .sum::<u64>()
+                    <= REGION_DECODE_CACHE_BUDGET
+            );
+            drop(cache);
+            let evicted =
+                decoded_encoded_preview_region(&scheduler, &source, &identity, region).unwrap();
+            assert!(!Arc::ptr_eq(&first, &evicted));
+            if dimensions.0 >= 2048 && dimensions.1 >= 1100 {
+                let oversized = PreviewViewportRequest {
+                    width: 2048,
+                    height: 1100,
+                    ..region
+                };
+                let retained = scheduler.decoded_regions.lock().unwrap().len();
+                let large =
+                    decoded_encoded_preview_region(&scheduler, &source, &identity, oversized)
+                        .unwrap();
+                assert!(
+                    u64::from(large.width()) * u64::from(large.height()) * 16
+                        > REGION_DECODE_CACHE_BUDGET
+                );
+                assert_eq!(scheduler.decoded_regions.lock().unwrap().len(), retained);
+            }
+            assert_eq!(source_content_hash(&source).unwrap(), before);
+        }
+    }
+
+    #[test]
+    #[ignore = "opt-in real codec/cache timing; run alone in MSVC release mode"]
+    fn encoded_roi_cache_real_codec_timing() {
+        assert_eq!(std::env::var("STARROOM_ROI_CACHE_GATE").as_deref(), Ok("1"));
+        assert!(
+            !std::hint::black_box(cfg!(debug_assertions)),
+            "timing requires release mode"
+        );
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/neon-streets-nikon-d7100.jpg");
+        let hash = source_content_hash(&source).unwrap();
+        let dimensions = starroom_imageio::encoded_dimensions(&source).unwrap();
+        let identity = preview_source_identity(&source).unwrap();
+        let region = PreviewViewportRequest {
+            source_width: dimensions.0,
+            source_height: dimensions.1,
+            x: 0,
+            y: 0,
+            width: dimensions.0.min(512),
+            height: dimensions.1.min(512),
+        };
+        let scheduler = NativePreviewScheduler::default();
+        let mut cold = Vec::new();
+        let mut warm = Vec::new();
+        for index in 0..22 {
+            let started = Instant::now();
+            let reference =
+                decode_source_region(&source, region.x, region.y, region.width, region.height)
+                    .unwrap();
+            let cold_ms = started.elapsed().as_secs_f64() * 1000.;
+            let started = Instant::now();
+            let cached =
+                decoded_encoded_preview_region(&scheduler, &source, &identity, region).unwrap();
+            let warm_ms = started.elapsed().as_secs_f64() * 1000.;
+            let mut edit = neutral_settings();
+            edit.exposure = index as f32 / 10.;
+            let settings = edit.validated().unwrap();
+            assert_eq!(
+                render_source_export_to_srgb8(&reference.image, &settings)
+                    .unwrap()
+                    .data,
+                render_source_export_to_srgb8(&cached, &settings)
+                    .unwrap()
+                    .data
+            );
+            if index >= 2 {
+                cold.push(cold_ms);
+                warm.push(warm_ms);
+            }
+        }
+        cold.sort_by(f64::total_cmp);
+        warm.sort_by(f64::total_cmp);
+        println!(
+            "ROI_CACHE_PERF source={}x{} roi={}x{} comparisons=22 cold_median_ms={:.4} cold_p95_ms={:.4} warm_median_ms={:.4} warm_p95_ms={:.4}",
+            dimensions.0,
+            dimensions.1,
+            region.width,
+            region.height,
+            (cold[9] + cold[10]) / 2.,
+            cold[18],
+            (warm[9] + warm[10]) / 2.,
+            warm[18]
+        );
+        assert_eq!(source_content_hash(&source).unwrap(), hash);
+    }
+
+    #[test]
+    fn actual_native_roi_edits_skip_decode_and_match_fresh_shared_graph_frames() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/sources/astronaut-eileen-collins.png");
+        let hash = source_content_hash(&source).unwrap();
+        let dimensions = starroom_imageio::encoded_dimensions(&source).unwrap();
+        let scheduler = NativePreviewScheduler::default();
+        let portrait = NativePortraitRuntime::default();
+        let masks = NativeAiMaskRuntime::default();
+        let denoise = NativeAiDenoiseRuntime::default();
+        let render = |scheduler: &NativePreviewScheduler, exposure| {
+            let mut settings = neutral_settings();
+            settings.exposure = exposure;
+            let response = native_preview_inner(
+                scheduler,
+                &portrait,
+                &masks,
+                &denoise,
+                NativePreviewRequest {
+                    request_id: format!("roi-{exposure}"),
+                    source_path: source.clone(),
+                    payload_format: PreviewPayloadFormat::Jpeg,
+                    max_edge: 1024,
+                    prefer_gpu: false,
+                    interaction_phase: PreviewInteractionPhase::Final,
+                    resolution_mode: PreviewResolutionMode::HighResolution,
+                    viewport: Some(PreviewViewportRequest {
+                        source_width: dimensions.0,
+                        source_height: dimensions.1,
+                        x: 64,
+                        y: 64,
+                        width: 128,
+                        height: 128,
+                    }),
+                    settings,
+                },
+            )
+            .unwrap();
+            let tauri::ipc::InvokeResponseBody::Raw(bytes) =
+                tauri::ipc::IpcResponse::body(response).unwrap()
+            else {
+                panic!("binary frame required")
+            };
+            bytes
+        };
+        render(&scheduler, 0.1);
+        let (cached, profile) = profiling::capture(|| render(&scheduler, 0.2));
+        assert!(!profile.stages.contains_key(&ProfileStage::RawDecode));
+        assert_eq!(scheduler.decoded_regions.lock().unwrap().len(), 1);
+        assert_eq!(cached, render(&NativePreviewScheduler::default(), 0.2));
+        assert_eq!(source_content_hash(&source).unwrap(), hash);
     }
 
     #[test]

@@ -1,5 +1,15 @@
 # Implementation Notes
 
+## Encoded viewport decode reuse — 2026-11-09
+
+Exact immutable high-resolution encoded ROIs now have a4-entry/32MiB float-pixel
+LRU, separate from low-resolution proxies and rendered edits. Existing mature
+codec, source identity, source dimensions and expanded halo/coordinates remain
+authoritative; RAW/export unchanged. See doc76: real Native changed-exposure
+frames match fresh shared graph, and Release report1794228340005 measures
+JPEG decoder159.8815ms versus0.0090ms median cache retrieval. Not whole-UI
+latency or firstRAW1:1 acceptance. Full group verification is in progress.
+
 ## Canvas presentation reuse — 2026-11-09
 
 Fit/zoom publication no longer resets matching Canvas backing dimensions.

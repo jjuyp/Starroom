@@ -1,5 +1,14 @@
 # Current Task
 
+2026-11-09: 5f00d9d Full42617130421 SUCCESS (secondary42617139853 SUCCESS).
+Canvas follow-upb8562e3 pushed, its CI42619548158 is being checked. Encoded
+ROI cache doc76 has actual Native changed-exposure/fresh-graph equivalence,
+public PNG/JPEG LRU/identity/dimension/oversize tests and MSVC Release timing
+1794228340005 (159.8815->0.0090ms median immutable decode retrieval only).
+Full Rust1794228710901 has format/Clippy/workspace tests/doc tests all exit0.
+No new installer or complete phase. Display histogram loop is a separate
+uncommitted follow-up with exact real-frame counting and browser timing.
+
 2026-11-09: adaptive Native tiers have completed local Rust qualification:
 report1793968079528 format/Clippy/workspace tests all exit0; see doc74.
 Canvas backing-store reuse is a separate uncommitted follow-up, with three

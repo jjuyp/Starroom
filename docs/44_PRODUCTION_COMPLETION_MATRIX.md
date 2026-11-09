@@ -2,6 +2,15 @@
 
 Status: **Phase 0 audit in progress; Final Acceptance is NOT achieved.**
 
+2026-11-09: adaptive tiers5f00d9d have local FullRust1793968079528 and
+FullWeb1793966360774 qualification; own Full42617130421 succeeded at5f00d9d.
+Canvas-only follow-upb8562e3 has236 frontend tests/fullWeb1794227379470,
+44 byte-exact real Native SRP4/Chromium comparisons and transparent replacement;
+doc75 bounds its modest draw/readback speedup2.45->2.05ms to the diagnostic.
+Encoded1:1 ROI decode reuse is under targeted qualification, not yet accepted.
+No installed five-second complaint, full GPU residency, firstRAW1:1 or Final gate
+has been reclassified as complete by these component checks.
+
 2026-11-06, Phases 6/14/16/25: doc74 records real D750 RAW same-tier CPU/export
 comparisons, 157 each at 512 and 1024, max RGB8 delta1. Native exposure p95 was
 14.55ms at512 and 67.01ms at1024. Neither figure includes pointer input, IPC or
@@ -289,7 +298,7 @@ buffer bytes do not verify end-to-end latency, physical VRAM, 100MP or GPU direc
 | 3 WB / saturation / vibrance / mixer / grading | LittleCMS measured/relative CAT, protected chroma, Native mixer/grading | CPU reference / fused GPU globals / prepared local CAT | Connected | Connected | Matrix + real portrait/RAW CPU/GPU/shared/local tests | Exact neutral/black/axes/picker/finite/circular bands/true grayscale/protected vibrance | 512px Native controls ~30–32ms median; not full UI latency | OPEN | Relative and sampled WB now use CAT; physical editable RAW camera gains, robust sampling and full perceptual/end-to-end acceptance remain open. |
 | 4 GPU residency / direct presentation | `GpuRenderer::apply_creative`, Native binary JPEG frame, canvas presentation | GPU compute -> CPU float readback -> ICC/JPEG -> WebView | Hybrid, not direct surface | CPU reference | GPU basic parity only | Resource reuse/readback counters | One readback + CPU conversions per frame | OPEN | Audit practical Native presentation, remove avoidable transfers/allocations/polls; retain correctness and typed fallback. |
 | 5 Shader fusion | Tone/curves/mixer/grading/relative color/vignette fused | GPU | Globals fused; local/spatial CPU | CPU same operators | Fusion tests cover selected combinations | Shader/parity tests | Fused wall-time measurement | OPEN | Vignette currently precedes downstream local/detail work on GPU but follows it on CPU; verify cross-combinations and fix order. Remove unused old WGSL tone routine. |
-| 6 Interactive proxy / HQ refine | Native request phase, bounded 1024 edge, Fit/high-resolution contracts | Native CPU/GPU | Real proxy + final | Full source | Final graph common | Interactive edge/final tests | Engine samples, not pointer-to-paint | REVIEW | Adaptive capability/viewport tiers, no accidental full source interaction and real UI response metrics. |
+| 6 Interactive proxy / HQ refine | Native phase, adaptive512/1024/2048 display budget, Fit/high-resolution contracts | Native CPU/GPU | Real proxy + final | Full source | Final graph common | Interactive edge/final tests, actual same-tier CPU/export oracle | doc74 Native tier timings, not whole-UI | REVIEW | Validate adaptive policy in real UI, no accidental full source interaction, and full input-to-display metrics. |
 | 7 Latest-wins | `latestPreviewQueue`, Native cancellation, paint-generation checks | JS interaction / Native work | Intermediate same-source frames; latest final | Not a distinct export engine | New continuous-input/source/final/JPEG tests | 184 Vitest total at baseline | Synthetic actual-App drag published frames; not GPU speed | REVIEW | Real-photo installed drag under new latency target; ensure no old frame overwrites an already newer/final frame. |
 | 8 Tiles / priority / prefetch / LRU | scheduler primitives; Tauri viewport rendering; imageio region decoding | CPU planning / hybrid render | Eligible viewport processing | Full-frame renderer | Existing ROI/full-reference tests | Halo/source coordinates/seams/scale plans | 100% and 200% samples | PARTIAL | Validate actual prefetch/dirty execution, not only plans; eliminate repeated full decode and full-frame export memory. |
 | 9 Dependency cache | Actual bounded prepared source pixels/maps, corrected StageStateIdentity, decoded tiers and GPU/frame cache | Native CPU/GPU | Real source/lens/geometry reuse; picker remains downstream | Fresh full graph, same preparation kernels | Exact CPU/export, real RAW/Lensfun/GPU and Native-request tests | Actual reuse/dependency/weak/LRU/budget tests | Same-binary counters/timings in doc 46 | PARTIAL | Complete downstream tone/color/local result reuse, ROI decoded identity, dirty/prefetch tiles; reduce remaining hashing/copies and prove full UI latency. |
