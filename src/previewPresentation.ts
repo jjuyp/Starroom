@@ -29,13 +29,21 @@ export function calculateHistogram(imageData: DisplayPixels, bins = 48) {
 export interface DisplayHistogram { luminance: number[]; red: number[]; green: number[]; blue: number[] }
 /** Display-channel counts only: this never changes or color-transforms image pixels. */
 export function calculateDisplayHistogram(imageData: DisplayPixels, bins = 128): DisplayHistogram {
-  const channels = [0, 1, 2].map(() => Array.from({ length: bins }, () => 0))
-  const stride = Math.max(4, Math.floor(imageData.data.length / 300_000 / 4) * 4)
-  for (let index = 0; index < imageData.data.length; index += stride) {
-    if (imageData.data[index + 3] === 0) continue
-    channels.forEach((channel, component) => { channel[Math.min(bins - 1, Math.floor(imageData.data[index + component] * bins / 256))] += 1 })
+  const redCounts = Array.from({ length: bins }, () => 0)
+  const greenCounts = Array.from({ length: bins }, () => 0)
+  const blueCounts = Array.from({ length: bins }, () => 0)
+  const pixels = imageData.data
+  const stride = Math.max(4, Math.floor(pixels.length / 300_000 / 4) * 4)
+  // Avoid allocating/invoking a forEach closure for every sampled display pixel.
+  // This counts already-rendered bytes only; no source or display color transform.
+  for (let index = 0; index < pixels.length; index += stride) {
+    if (pixels[index + 3] === 0) continue
+    redCounts[Math.min(bins - 1, Math.floor(pixels[index] * bins / 256))] += 1
+    greenCounts[Math.min(bins - 1, Math.floor(pixels[index + 1] * bins / 256))] += 1
+    blueCounts[Math.min(bins - 1, Math.floor(pixels[index + 2] * bins / 256))] += 1
   }
-  const maximum = Math.max(1, ...channels.flat())
-  const [red, green, blue] = channels.map((channel) => channel.map((value) => value / maximum))
+  const maximum = Math.max(1, ...redCounts, ...greenCounts, ...blueCounts)
+  const [red, green, blue] = [redCounts, greenCounts, blueCounts]
+    .map((channel) => channel.map((value) => value / maximum))
   return { red, green, blue, luminance: calculateHistogram(imageData, bins) }
 }

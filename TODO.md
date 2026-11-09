@@ -927,5 +927,8 @@ approval as a blocker for the current repair/verification/package batch.
 - [x] Eligible encoded1:1 source ROI decode reuse: exact Native changed-exposure
   frames/fresh graph parity, bounded LRU, source identity/dimension/oversize tests,
   MSVC Release timing1794228340005 and FullRust1794228710901; doc76.
+- [x] Display histogram count-loop overhead: exact tier/channel regressions,
+  32 real Native/Chromium histogram comparisons,7.10->5.25ms median counting;
+  FullWeb1794228773739 passes237 tests; doc77.
 - [ ] Installed edit-to-display latency, first1:1 RAW, GPU-resident presentation
   and original full production release gates remain unverified/open.

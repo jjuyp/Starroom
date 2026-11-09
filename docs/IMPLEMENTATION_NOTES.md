@@ -1,5 +1,12 @@
 # Implementation Notes
 
+## Display histogram counting — 2026-11-09
+
+Removed per-sampled-pixel callback overhead without changing the sample count,
+bins, alpha handling, normalization or luminance. Real Native frame32 exact
+Chromium comparisons: median7.10->5.25ms counting only; doc77. FullWeb1794228773739
+passes237 tests/lint/build. No new image/color math, dependency or whole-UI claim.
+
 ## Encoded viewport decode reuse — 2026-11-09
 
 Exact immutable high-resolution encoded ROIs now have a4-entry/32MiB float-pixel
