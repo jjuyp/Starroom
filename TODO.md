@@ -919,3 +919,10 @@ release blockers until fixed and requalified in the rebuilt desktop executable:
 
 The user will open the final software themselves. Do not treat another desktop-launch
 approval as a blocker for the current repair/verification/package batch.
+
+# 2026-11-09 qualification increment
+
+- [x] Reuse matching fit/zoom Canvas backing store; real Native frame44 exact
+  Chromium comparisons and transparent-pixel replacement; doc75.
+- [ ] Installed edit-to-display latency, first1:1 RAW, GPU-resident presentation
+  and original full production release gates remain unverified/open.

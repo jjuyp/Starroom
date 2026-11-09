@@ -1,6 +1,24 @@
 import type { NativePreviewResult } from './nativeRender'
 import { calculateDisplayHistogram, type DisplayPixels } from './previewPresentation'
 
+/** Both the fit and zoom canvases present whole frames. Setting either dimension,
+ * even to its current value, discards the entire backing store and drawing state. */
+export function presentPreviewFrame(context: CanvasRenderingContext2D, image: CanvasImageSource,
+  width: number, height: number): void {
+  const { canvas } = context
+  if (canvas.width !== width) canvas.width = width
+  if (canvas.height !== height) canvas.height = height
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  // Replace rather than blend: a transparent pixel must never retain an older edit.
+  context.globalCompositeOperation = 'copy'
+  try {
+    context.drawImage(image, 0, 0)
+  } finally {
+    context.globalCompositeOperation = 'source-over'
+  }
+}
+
 /** Analyze already-transformed display bytes without a second full canvas readback.
  * JPEG retains the explicit decoded-canvas path; no pixel transform is performed here. */
 export function nativePreviewDisplayHistogram(result: NativePreviewResult, readback: () => DisplayPixels) {

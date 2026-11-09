@@ -1,5 +1,13 @@
 # Implementation Notes
 
+## Canvas presentation reuse — 2026-11-09
+
+Fit/zoom publication no longer resets matching Canvas backing dimensions.
+Copy compositing prevents stale transparent pixels and is restored after drawing.
+See doc75: actual Native1024x680 frame,44 exact browser comparisons, median
+draw+diagnostic readback2.45->2.05ms. Full Web1794227379470 passes236 tests/build.
+No Native processing changes or new dependency; no installed/e2e acceptance implied.
+
 ## Adaptive render budget — 2026-11-06
 
 Interaction scheduling uses actual display demand and observed request-to-draw

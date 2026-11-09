@@ -9,7 +9,7 @@ import { adjustmentKeys, HistoryCommandQueue, HistoryGestureBoundary, nativeHist
 import { appendWithinCapacity, EditorRequestGate } from './editorRequestGate'
 import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
-import { decodeNativePreviewPayload, nativePreviewDisplayHistogram } from './nativePreviewPresentation'
+import { decodeNativePreviewPayload, nativePreviewDisplayHistogram, presentPreviewFrame } from './nativePreviewPresentation'
 import { previewLatency } from './previewLatency'
 import { InteractivePreviewBudget } from './interactivePreviewBudget'
 import {
@@ -757,11 +757,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           const tileCanvas = tileCanvasRef.current
           const tileContext = tileCanvas?.getContext('2d')
           if (!tileCanvas || !tileContext) throw new Error('Native viewport tile canvas is unavailable.')
-          tileCanvas.width = renderedWidth
-          tileCanvas.height = renderedHeight
-          tileContext.imageSmoothingEnabled = true
-          tileContext.imageSmoothingQuality = 'high'
-          tileContext.drawImage(rendered, 0, 0)
+          presentPreviewFrame(tileContext, rendered, renderedWidth, renderedHeight)
           setTileRegion({
             x: nativeResult.tileX / nativeResult.sourceWidth,
             y: nativeResult.tileY / nativeResult.sourceHeight,
@@ -769,11 +765,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             height: nativeResult.height / nativeResult.sourceHeight,
           })
         } else {
-          canvas.width = renderedWidth
-          canvas.height = renderedHeight
-          context.imageSmoothingEnabled = true
-          context.imageSmoothingQuality = 'high'
-          context.drawImage(rendered, 0, 0)
+          presentPreviewFrame(context, rendered, renderedWidth, renderedHeight)
           displayedSource.current = photo.id
           setAspect(renderedWidth / renderedHeight)
           setTileRegion(null)

@@ -1,12 +1,34 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NativePreviewResult } from './nativeRender'
-import { nativePreviewDisplayHistogram } from './nativePreviewPresentation'
+import { nativePreviewDisplayHistogram, presentPreviewFrame } from './nativePreviewPresentation'
 import { calculateDisplayHistogram } from './previewPresentation'
 
 const preview = (format: 'rgba8' | 'jpeg', bytes: Uint8Array): NativePreviewResult => ({
   width: 2, height: 1, sourceWidth: 6000, sourceHeight: 4000, tileX: 0, tileY: 0,
   isTile: false, tileOptimized: false, acceleration: 'gpu', inputProfile: 'assumed sRGB',
   cameraProfileId: null, payload: { format, bytes },
+})
+
+describe('preview frame presentation', () => {
+  it('does not reset a matching canvas, resizes only changed axes, and replaces transparent pixels', () => {
+    const writes: string[] = []
+    const canvas = new Proxy({ width: 512, height: 342 }, {
+      set(target, key, value) { writes.push(String(key)); return Reflect.set(target, key, value) },
+    })
+    const modes: string[] = []
+    const context = { canvas, globalCompositeOperation: 'source-over',
+      drawImage() { modes.push(this.globalCompositeOperation) } }
+    const draw = (width: number, height: number) => presentPreviewFrame(
+      context as unknown as CanvasRenderingContext2D, {} as CanvasImageSource, width, height)
+    draw(512, 342)
+    expect(writes).toEqual([])
+    draw(512, 512)
+    expect(writes).toEqual(['height'])
+    draw(2048, 1368)
+    expect(writes).toEqual(['height', 'width', 'height'])
+    expect(modes).toEqual(['copy', 'copy', 'copy'])
+    expect(context.globalCompositeOperation).toBe('source-over')
+  })
 })
 
 describe('Native display histogram ownership', () => {
