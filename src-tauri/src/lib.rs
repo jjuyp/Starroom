@@ -1493,7 +1493,9 @@ enum PreviewResolutionMode {
 fn preview_requested_edge(max_edge: u32, phase: PreviewInteractionPhase) -> u32 {
     match phase {
         // Keep drag feedback detailed enough for modern HiDPI displays while remaining bounded.
-        PreviewInteractionPhase::Interactive => max_edge.min(1024),
+        PreviewInteractionPhase::Interactive => {
+            max_edge.min(preview_transport::INTERACTIVE_MAX_EDGE)
+        }
         PreviewInteractionPhase::Final => max_edge,
     }
     .clamp(256, 4096)
@@ -1740,7 +1742,7 @@ fn cached_derived_interactive_preview(
     source_identity: &str,
     edge: u32,
 ) -> Result<Option<(Arc<DecodedSourceImage>, String)>, String> {
-    if edge > 1024 {
+    if edge > preview_transport::INTERACTIVE_MAX_EDGE {
         return Ok(None);
     }
     let prefix = format!("{source_identity}{DERIVED_PREVIEW_POLICY}");
@@ -7249,7 +7251,11 @@ mod tests {
                         } else {
                             PreviewPayloadFormat::Jpeg
                         },
-                        max_edge: 1800,
+                        max_edge: if phase == PreviewInteractionPhase::Interactive {
+                            1024 // idle priming prepares the default first-drag tier
+                        } else {
+                            1800
+                        },
                         prefer_gpu: false,
                         interaction_phase: phase,
                         resolution_mode: PreviewResolutionMode::Fit,
@@ -7309,6 +7315,7 @@ mod tests {
                 panic!("binary frame expected")
             };
             let profile_len = u16::from_le_bytes(frame[32..34].try_into().unwrap()) as usize;
+            assert_eq!(frame[40 + profile_len..].len() / 4, expected.data.len() / 3);
             for (pixel, expected) in frame[40 + profile_len..]
                 .as_chunks::<4>()
                 .0
@@ -8068,9 +8075,19 @@ mod tests {
 
     #[test]
     fn m28_interactive_preview_is_bounded_and_final_restores_requested_quality() {
+        for edge in [512, 1024, 2048] {
+            assert_eq!(
+                preview_requested_edge(edge, PreviewInteractionPhase::Interactive),
+                edge
+            );
+        }
+        assert_eq!(
+            preview_requested_edge(9000, PreviewInteractionPhase::Interactive),
+            2048
+        );
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Interactive),
-            1024
+            1800
         );
         assert_eq!(
             preview_requested_edge(1800, PreviewInteractionPhase::Final),
@@ -8147,6 +8164,11 @@ mod tests {
             Ok("rgba8") | Err(_) => PreviewPayloadFormat::Rgba8,
             Ok(other) => panic!("invalid explicit performance transport {other}"),
         };
+        let interactive_edge: u32 = std::env::var("STARROOM_PREVIEW_PERF_EDGE")
+            .unwrap_or_else(|_| "1024".into())
+            .parse()
+            .expect("numeric interactive edge");
+        assert!([512, 1024, 2048].contains(&interactive_edge));
         eprintln!(
             "NATIVE_PREVIEW_PAYLOAD_FORMAT interactive={interactive_format:?} final=Jpeg96 scope=native_request_excludes_ipc_and_presentation"
         );
@@ -8192,7 +8214,13 @@ mod tests {
                                     PreviewPayloadFormat::Jpeg
                                 },
                                 source_path: source.clone(),
-                                max_edge: 1800,
+                                max_edge: if interaction_phase
+                                    == PreviewInteractionPhase::Interactive
+                                {
+                                    interactive_edge
+                                } else {
+                                    1800
+                                },
                                 prefer_gpu: true,
                                 interaction_phase,
                                 resolution_mode,
@@ -8235,11 +8263,24 @@ mod tests {
             if interaction_phase == PreviewInteractionPhase::Interactive
                 && let Some(cpu_settings) = cpu_settings
             {
+                let frame_width = u32::from_le_bytes(frame[8..12].try_into().unwrap());
+                let frame_height = u32::from_le_bytes(frame[12..16].try_into().unwrap());
+                assert!(
+                    frame_width.max(frame_height) <= interactive_edge,
+                    "actual interactive frame exceeded requested tier"
+                );
+                if request_id == "interactive-exposure" {
+                    assert_eq!(
+                        frame_width.max(frame_height),
+                        interactive_edge.min(source_width.max(source_height)),
+                        "exposure-only frame must realize selected tier"
+                    );
+                }
                 let identity = preview_source_identity(&source).unwrap();
-                let decoded = cached_decoded_source(&scheduler, &identity, 1024)
+                let decoded = cached_decoded_source(&scheduler, &identity, interactive_edge)
                     .unwrap()
                     .or_else(|| {
-                        cached_derived_interactive_preview(&scheduler, &identity, 1024)
+                        cached_derived_interactive_preview(&scheduler, &identity, interactive_edge)
                             .unwrap()
                             .map(|(image, _)| image)
                     })
@@ -8395,9 +8436,34 @@ mod tests {
             dragged,
         );
         let raw_full_tier = is_raw_source(&source);
+        // The 1800px Final/Fit request decodes the 2048 pyramid level. At the
+        // same edge interaction must borrow that authoritative source, not
+        // insert a second decoded image under a derived identity.
+        let fit_decode_edge =
+            starroom_render::scheduler::PreviewLevel::for_requested_edge(1800).max_edge();
+        let shared_fit_decode = fit_decode_edge == interactive_edge;
+        if shared_fit_decode {
+            let identity = preview_source_identity(&source).unwrap();
+            assert!(
+                cached_decoded_source(&scheduler, &identity, fit_decode_edge)
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                !scheduler
+                    .decoded
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(key, edge, _)| {
+                        *edge == interactive_edge
+                            && key.starts_with(&format!("{identity}{DERIVED_PREVIEW_POLICY}"))
+                    })
+            );
+        }
         assert_eq!(
             scheduler.decoded.lock().unwrap().len(),
-            if raw_full_tier { 4 } else { 3 }
+            2 + usize::from(raw_full_tier) + usize::from(!shared_fit_decode)
         );
         assert_eq!(
             cached_decoded_source(
@@ -8579,7 +8645,7 @@ mod tests {
             }
             samples.sort_by(f64::total_cmp);
             eprintln!(
-                "NATIVE_CONTROL_PERF control={name} changed_samples=5 edge=1024 median_ms={:.3} p95_ms={:.3}",
+                "NATIVE_CONTROL_PERF control={name} changed_samples=5 edge={interactive_edge} median_ms={:.3} p95_ms={:.3}",
                 samples[2], samples[4]
             );
         }
@@ -8644,7 +8710,7 @@ mod tests {
                 }
                 samples.sort_by(f64::total_cmp);
                 eprintln!(
-                    "NATIVE_COMBINED_PERF control={name} changed_samples=5 edge=1024 median_ms={:.3} p95_ms={:.3}",
+                    "NATIVE_COMBINED_PERF control={name} changed_samples=5 edge={interactive_edge} median_ms={:.3} p95_ms={:.3}",
                     samples[2], samples[4]
                 );
             }

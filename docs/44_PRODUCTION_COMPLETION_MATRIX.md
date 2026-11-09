@@ -2,6 +2,13 @@
 
 Status: **Phase 0 audit in progress; Final Acceptance is NOT achieved.**
 
+2026-11-06, Phases 6/14/16/25: doc74 records real D750 RAW same-tier CPU/export
+comparisons, 157 each at 512 and 1024, max RGB8 delta1. Native exposure p95 was
+14.55ms at512 and 67.01ms at1024. Neither figure includes pointer input, IPC or
+display. Lower-tier interactive detail is not full-resolution quality. Exact Final
+restoration is separately tested, but the installed five-second complaint, first
+1:1 decode, complete GPU residency, all 100MP and Windows release gates remain open.
+
 2026-10-23 evidence increment: doc72 bounds official LCMS output acceleration to
 verified sRGB samples; real Native157frame parity passes and median CMM improves.
 This does not verify GPU-resident display/monitor ICC, wholeUI latency, all-profile

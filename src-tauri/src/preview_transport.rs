@@ -2,7 +2,7 @@
 //! Legacy/final JPEG is SRP3. Explicit bounded interactive RGBA8 is SRP4/format 1.
 use serde::Deserialize;
 
-pub const INTERACTIVE_MAX_EDGE: u32 = 1024;
+pub const INTERACTIVE_MAX_EDGE: u32 = 2048;
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -170,10 +170,22 @@ mod tests {
 
     #[test]
     fn rgba_transport_is_bounded_and_never_silently_downgrades() {
+        for edge in [512, 1024, 2048] {
+            let pixels = vec![37; edge as usize * 3];
+            let frame = rgba_preview_frame(header(edge, 1), "", &pixels).unwrap();
+            assert_eq!(frame.len(), 40 + edge as usize * 4);
+            assert!(
+                frame[40..]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|pixel| *pixel == [37, 37, 37, 255])
+            );
+        }
         for (width, height, rgb) in [
             (0, 1, vec![]),
             (1, 1, vec![0, 1]),
-            (1025, 1, vec![0; 1025 * 3]),
+            (2049, 1, vec![0; 2049 * 3]),
             (1, u32::MAX, vec![]),
         ] {
             assert!(

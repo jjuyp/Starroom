@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Qualify adaptive interactive preview on real sources and installed UI (doc74).
+  D750 512/1024 Native parity passed. At 512, exposure p95 14.55ms and heavy p95
+  26.80ms; first 1:1 still 3171ms. Do not count component times as user-visible latency.
+
 - [ ] Installed edit-to-visible regression: local bounded timing instrumentation
   added;81 focused/229 web tests pass. Not yet measured in the user's installed
   64f005f binary. Do not equate Native probe time with whole-UI latency.

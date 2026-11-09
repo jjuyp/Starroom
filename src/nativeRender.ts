@@ -536,7 +536,7 @@ export function parseNativePreviewFrame(value: ArrayBuffer | Uint8Array): Native
     || HEADER_BYTES + profileLength + payloadLength !== bytes.byteLength) {
     throw new Error('Native preview returned inconsistent dimensions or payload length.')
   }
-  if (version === 4 && (width > 1024 || height > 1024 || payloadLength !== width * height * 4)) {
+  if (version === 4 && (width > 2048 || height > 2048 || payloadLength !== width * height * 4)) {
     throw new Error('Native preview returned invalid bounded RGBA8 dimensions or sample count.')
   }
   const profileStart = HEADER_BYTES

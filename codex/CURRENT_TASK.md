@@ -1,5 +1,20 @@
 # Current Task
 
+2026-11-09: adaptive Native tiers have completed local Rust qualification:
+report1793968079528 format/Clippy/workspace tests all exit0; see doc74.
+Canvas backing-store reuse is a separate uncommitted follow-up, with three
+focused unit tests, TypeScript/ESLint and real Chromium transparency checks passed.
+No new installer, whole-UI latency acceptance or production release claimed.
+
+2026-11-06: telemetry b2eff7a pushed, own Actions40002457902/40002450042 SUCCESS.
+Adaptive tier work in progress: see doc74. Actual 512 and 1024 Native reports
+1793966120772/1793966199146 passed 157 CPU/export frames each at max RGB8 delta1.
+2048 initial cache-count failure1793966206525 retained; distinguish shared 2048
+Fit source from a new decoded tier. Full Web1793966360774 passed235 tests/build.
+Not whole-UI latency, equal-resolution IQ, installed acceptance, or release.
+Corrected 2048 report1793966689003 passed157/delta1 with exact shared cache count;
+2048 exposure p95 199.41ms and heavy p95 354.31ms are not interactive on this device.
+
 2026-10-24: 8157eef pushed; Full39972894162 SUCCESS, PR2 Open/Draft sameSHA.
 New uncommitted frontend diagnostics measure handler-to-Canvas draw with bounded
 private numeric records, queue/IPC/decode breakdown; not OS pointer-to-present.

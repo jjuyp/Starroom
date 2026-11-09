@@ -55,7 +55,7 @@ impl DecodedSourceImage {
     /// callers keep the authoritative file decode until their separate policies are qualified.
     /// No source-sized clone is created; only output/intermediate pixels and metadata copy.
     pub fn derive_interactive_preview(&self, max_edge: u32) -> Result<Option<Self>, ImageIoError> {
-        if max_edge == 0 || max_edge > 1024 || self.width() == 0 || self.height() == 0 {
+        if max_edge == 0 || max_edge > 2048 || self.width() == 0 || self.height() == 0 {
             return Err(ImageIoError::InvalidResizeDimensions);
         }
         let scale = f64::from(max_edge) / f64::from(self.width().max(self.height()));
@@ -797,7 +797,8 @@ mod tests {
             Err(ImageIoError::NonFiniteResize)
         ));
         assert!(source.derive_interactive_preview(0).is_err());
-        assert!(source.derive_interactive_preview(2048).is_err());
+        assert!(source.derive_interactive_preview(2048).is_ok());
+        assert!(source.derive_interactive_preview(2049).is_err());
         let mut malformed = image;
         malformed.rgba.pop();
         assert!(matches!(

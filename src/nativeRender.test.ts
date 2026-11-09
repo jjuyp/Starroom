@@ -38,6 +38,15 @@ describe('Library export selection contract', () => {
 const defaultMask = { x: .5, y: .5, width: .42, height: .42, rotation: 0 }
 
 describe('native preview contract', () => {
+  it('accepts all adaptive transport tiers without copying pixel bytes', () => {
+    for (const edge of [512, 1024, 2048]) {
+      const frame = new Uint8Array(40 + edge * 4), view = new DataView(frame.buffer)
+      frame.set([83, 82, 80, 52]); view.setUint16(4, 4, true); view.setUint16(6, 8, true)
+      for (const [offset, value] of [[8, edge], [12, 1], [16, edge], [20, 1]]) view.setUint32(offset, value, true)
+      view.setUint16(34, 1, true); view.setUint32(36, edge * 4, true)
+      expect(parseNativePreviewFrame(frame).payload.bytes.buffer).toBe(frame.buffer)
+    }
+  })
   const rgbaFrame = () => {
     // Nonzero view offset and odd UTF-8 profile length must not imply aligned pixel storage.
     const profile = new TextEncoder().encode('相機')
@@ -71,7 +80,7 @@ describe('native preview contract', () => {
       (view: DataView) => view.setUint32(36, 7, true),
       (view: DataView) => view.setUint32(8, 0, true),
       (view: DataView) => view.setUint32(24, 1, true),
-      (view: DataView) => { view.setUint32(8, 1025, true); view.setUint32(16, 1025, true) },
+      (view: DataView) => { view.setUint32(8, 2049, true); view.setUint32(16, 2049, true) },
     ]) {
       const frame = rgbaFrame()
       corrupt(new DataView(frame.buffer, frame.byteOffset, frame.byteLength))

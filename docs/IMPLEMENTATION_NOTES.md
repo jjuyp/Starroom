@@ -1,5 +1,16 @@
 # Implementation Notes
 
+## Adaptive render budget — 2026-11-06
+
+Interaction scheduling uses actual display demand and observed request-to-draw
+cost to choose bounded Native proxy levels. The shared color/tone/RAW pipeline,
+source files, HQ/1:1 contract and export are unchanged. Rust and the UI enforce
+the 2048 binary-frame cap; status shows returned size. Smaller source/viewport
+frames may downshift on sustained misses but never promote an unmeasured larger
+tier. No new dependency/license or frontend image processing. See doc74 for
+real-source timings, exact transport/cache checks and the still-open acceptance
+limits. Frontend full report1793966360774 passed235 tests and production build.
+
 ## 2026-10-24 — Local edit-to-draw diagnostics
 
 The user confirms the last supplied installer, 64f005f; newer source performance

@@ -11,6 +11,7 @@ import { countAdditionalEditIntent } from './editIntent'
 import { needsRawMetadataRepair } from './libraryMetadata'
 import { decodeNativePreviewPayload, nativePreviewDisplayHistogram } from './nativePreviewPresentation'
 import { previewLatency } from './previewLatency'
+import { InteractivePreviewBudget } from './interactivePreviewBudget'
 import {
   Aperture, Blend, ChevronDown, Columns2, Contrast, Crop, Download, Folder,
   Grid2X2, ImagePlus, Library, PanelBottomClose, PanelBottomOpen, PanelLeftClose,
@@ -623,6 +624,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tileCanvasRef = useRef<HTMLCanvasElement>(null)
   const previewSurface = useRef({})
+  const interactiveBudget = useRef(new InteractivePreviewBudget())
   const latencyPhoto = useRef(photo)
   useLayoutEffect(() => { latencyPhoto.current = photo }, [photo])
   const displayedSource = useRef('')
@@ -686,6 +688,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         let nativeProfile = ''
         let nativeAcceleration: 'gpu' | 'cpuFallback' = 'cpuFallback'
         let nativeResult: NativePreviewResult | null = null
+        let requestedInteractiveEdge = 0
         if (photo.renderBackend === 'native') {
           if (!photo.sourcePath) throw new Error('Native photo is missing its source path; Browser fallback was not used.')
           const previewLayers = maskPreview && !before ? [
@@ -706,10 +709,11 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           const displayEdge = Math.max(baseRect?.width ?? 0, baseRect?.height ?? 0)
             * Math.max(1, window.devicePixelRatio || 1)
           const viewport = nativePreviewViewportContract(zoom, zoomScale, sourceWidth, sourceHeight, visible, displayEdge)
+          requestedInteractiveEdge = interactiveBudget.current.edge(displayEdge, Math.max(sourceWidth, sourceHeight))
           const result = await renderNativePreview(photo.sourcePath, adjustments, curvePoints, mask,
             before ? 'sourceDefault' : photo.whiteBalanceMode, before ? null : photo.whiteBalanceSample,
             before ? defaultCurveChannels() : photo.curveChannels, before ? defaultNativeOpticsState : photo.opticsState,
-            before ? [] : previewLayers, viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
+            before ? [] : previewLayers, interactionPhase === 'interactive' ? requestedInteractiveEdge : viewport.maxEdge, before ? defaultNativeSkinRetouch() : photo.skinRetouch, before ? [] : photo.healingOperations, interactionPhase, previewSurface.current,
             viewport.resolutionMode, viewport.viewport, before ? defaultNativeRenderConstants : photo.nativeRenderConstants,
             before ? null : photo.rawWhiteBalance)
           nativeResult = result
@@ -775,6 +779,10 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           setTileRegion(null)
         }
         const drawnAt = performance.now()
+        if (interactionPhase === 'interactive' && nativeResult?.timing) {
+          interactiveBudget.current.observe(requestedInteractiveEdge,
+            drawnAt - nativeResult.timing.dispatchedAt, nativeResult.acceleration === 'gpu')
+        }
         const latency = !before && nativeResult?.timing
           ? previewLatency.drawn(measuredPhoto, previewSurface.current, interactionPhase, nativeResult.timing, drawnAt) : null
         window.requestAnimationFrame(() => {
@@ -796,7 +804,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           })
           onDimensions(nativeResult ? `${nativeResult.sourceWidth} × ${nativeResult.sourceHeight}` : `${renderedWidth} × ${renderedHeight}`)
           onStatus(photo.renderBackend === 'native'
-            ? `${nativeAcceleration === 'gpu' ? '原生 GPU' : '原生 CPU 備援'} · ${nativeProfile}${interactionPhase === 'interactive' ? ' · 即時預覽 1024' : nativeResult?.isTile ? nativeResult.tileOptimized ? ' · 可視區域圖塊' : ' · 可視區域圖塊 · 全幅相容' : ' · 最終品質'}${before ? ' · 原圖' : ''}`
+            ? `${nativeAcceleration === 'gpu' ? '原生 GPU' : '原生 CPU 備援'} · ${nativeProfile}${interactionPhase === 'interactive' ? ` · 即時預覽 ${Math.max(renderedWidth, renderedHeight)}` : nativeResult?.isTile ? nativeResult.tileOptimized ? ' · 可視區域圖塊' : ' · 可視區域圖塊 · 全幅相容' : ' · 最終品質'}${before ? ' · 原圖' : ''}`
             + (latency ? ` · 編輯至繪製 ${Math.round(latency.editToDrawMs)} ms` : '')
             : '唯讀示範圖 · 不套用影像調整')
         }

@@ -7,6 +7,9 @@ import { extname } from 'node:path'
 const format = process.argv.find((argument) => argument.startsWith('--format='))?.slice(9) ?? 'rgba8'
 const prime = process.argv.includes('--prime')
 const combined = process.argv.includes('--combined')
+const interactiveEdge = Number(process.argv.find((argument) => argument.startsWith('--edge='))?.slice(7) ?? 1024)
+if (![512, 1024, 2048].includes(interactiveEdge)) throw new Error('Choose --edge=512,1024,2048')
+if (prime && interactiveEdge !== 1024) throw new Error('Existing completed-prime benchmark is qualified only at1024; use cold tier measurement for other edges')
 if (!['jpeg', 'rgba8'].includes(format)) throw new Error('Choose --format=jpeg or --format=rgba8')
 const localSourceArgument = process.argv.find((argument) => argument.startsWith('--source='))
 const localSource = localSourceArgument?.slice(9)
@@ -51,6 +54,7 @@ const result = spawnSync('cargo', args, { encoding: 'utf8', maxBuffer: 16 * 1024
   env: { ...process.env, STARROOM_RC2_PERFORMANCE_GATE: '1', STARROOM_PREVIEW_PERF_FORMAT: format,
     STARROOM_PREVIEW_PERF_PRIME: prime ? '1' : '',
     STARROOM_PREVIEW_PERF_COMBINED: combined ? '1' : '',
+    STARROOM_PREVIEW_PERF_EDGE: String(interactiveEdge),
     ...(localSource ? { STARROOM_PREVIEW_PERF_SOURCE: localSource, STARROOM_PREVIEW_PERF_DIMENSIONS: dimensions }
       : { STARROOM_PREVIEW_PERF_SOURCE: '', STARROOM_PREVIEW_PERF_DIMENSIONS: '' }) } })
 const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
@@ -92,6 +96,7 @@ const failure = changedDuringRun ? 'Source changed during compilation/measuremen
       : localSource && (!localParity || localParity.comparedFrames !== (combined ? 157 : 137) || localParity.maxRgb8Delta > 1)
         ? 'Actual local photo CPU/GPU parity did not complete' : null)
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), revision, dirty, format, compiler,
+  interactiveEdge,
   sources, changedDuringRun, sourcePhoto, localParity, priming, gpuPriming, gpuDenoise, gpuSpatial, initializationProfiles,
   scope: `Real MSVC Release Native requests on24MP ${localSource ? 'private read-only original' : 'synthetic source'}, excludes Tauri IPC/browser/OS presentation`,
   command: ['cargo', ...args], exitCode: result.status, failure, firstInteractive, controls, combinedControls, output }
