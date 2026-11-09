@@ -13,7 +13,9 @@ const rustLabels = {
 
 const rules = {
   desktop: [/^src-tauri\//],
-  web: [/^src\//, /^src-tauri\//, /^scripts\/tests\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./],
+  web: [/^src\//, /^src-tauri\//, /^scripts\/tests\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./,
+    /^\.github\/workflows\/windows-ui-qualification\.yml$/,
+    /^scripts\/(?:windows-ui-.*\.mjs|prepare-windows-ui-driver\.ps1)$/],
   library: [/^crates\/starroom-library\//],
   history: [/^crates\/starroom-history\//],
   export: [/^crates\/starroom-export\//],
@@ -29,7 +31,9 @@ const rules = {
 const broadRules = [
   /^Cargo\.toml$/, /^Cargo\.lock$/, /^crates\/starroom-core\//,
   /^crates\/starroom-(?:pipeline|render|project)\//,
-  /^\.github\/workflows\//, /^scripts\/(?:test-target|test-target-config|ci-changed-paths|validate-development-infrastructure)\.mjs$/,
+  // Only the additive UI-only workflow is targeted. Existing/unknown release
+  // workflows retain broad checks; final Release Candidate gates are unchanged.
+  /^\.github\/workflows\/(?!windows-ui-qualification\.yml$)/, /^scripts\/(?:test-target|test-target-config|ci-changed-paths|validate-development-infrastructure)\.mjs$/,
 ]
 
 export function classifyPaths(paths) {

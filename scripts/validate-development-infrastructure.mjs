@@ -26,4 +26,18 @@ if (!classifyPaths(['vendor/lcms-fast-float-2.19/src/fast_float_matsh.c']).color
 if (!classifyPaths(['src-tauri/src/lib.rs']).desktop) throw new Error('Native IPC changes must compile and test the desktop crate')
 if (Object.values(shared).some((enabled) => !enabled)) throw new Error('Shared graph changes must broaden all targeted checks')
 
+for (const path of ['.github/workflows/windows-ui-qualification.yml',
+  'scripts/windows-ui-workflow.mjs', 'scripts/prepare-windows-ui-driver.ps1']) {
+  const flags = classifyPaths([path])
+  if (!flags.web || Object.entries(flags).some(([name, enabled]) => name !== 'web' && enabled)) {
+    throw new Error('Additive UI tooling must run Web/transport checks without unrelated Rust fan-out')
+  }
+}
+for (const path of ['.github/workflows/release-candidate.yml', '.github/workflows/blueprint-check.yml',
+  '.github/workflows/future-unknown.yml']) {
+  if (Object.values(classifyPaths([path])).some((enabled) => !enabled)) {
+    throw new Error('Critical and unknown workflows must retain full validation breadth')
+  }
+}
+
 console.log(`OK acceleration infrastructure (${Object.keys(targets).length} targets, ${goldenTags.length} tags)`)

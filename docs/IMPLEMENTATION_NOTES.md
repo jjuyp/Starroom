@@ -1,5 +1,16 @@
 # Implementation Notes
 
+## Real Windows UI gate — under qualification,2026-11-09
+
+Supplemental CI operates the actual production WebView2/Native application with
+a Microsoft-signed Runtime-matched external driver, fresh owned profile and public
+fixture. Six tone controls must each change pixels; undo/redo must restore exact
+canvas signatures. No product plugin, mock graph or new package. Driver archives
+are not shipped or uploaded. Local launch-guard/transport tests3 and full Vitest240,
+TypeScript, lint/PowerShell/YAML checks pass; real CI is pending. See doc78.
+The additive workflow is targeted; core/unknown release workflows retain broad
+validation and the final release gates remain mandatory.
+
 ## Display histogram counting — 2026-11-09
 
 Removed per-sampled-pixel callback overhead without changing the sample count,

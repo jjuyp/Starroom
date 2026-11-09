@@ -930,5 +930,7 @@ approval as a blocker for the current repair/verification/package batch.
 - [x] Display histogram count-loop overhead: exact tier/channel regressions,
   32 real Native/Chromium histogram comparisons,7.10->5.25ms median counting;
   FullWeb1794228773739 passes237 tests; doc77.
+- [ ] Real production Windows WebView2 six-tone/undo/redo operation (doc78):
+  local240 tests/transport/launch guard pass; actual CI must run before acceptance.
 - [ ] Installed edit-to-display latency, first1:1 RAW, GPU-resident presentation
   and original full production release gates remain unverified/open.

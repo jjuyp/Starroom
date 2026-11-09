@@ -4,6 +4,19 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-11-09 development-only UI qualification: Microsoft Edge WebDriver, vendor
+[download and terms](https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/),
+closed-source vendor executable, not an OSS algorithm integration. Its exact
+four-part version must match the CI-installed WebView2 Runtime build; each run
+records Runtime/driver version, SHA-256 and valid Microsoft Authenticode signer
+in driver-identity.json before execution. No upstream public source repo/commit
+is claimed. Used only as an external CI automation process through the W3C
+protocol, no derived/ported code, no linking into Starroom, no binary/archive
+committed or placed in installers. Microsoft vendor terms apply; future public
+redistribution is prohibited by project policy unless independently reviewed.
+Original Node client/test code uses built-in APIs only; no new Cargo/npm package.
+Reference: [Microsoft WebView2 automation](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/webdriver).
+
 2026-10-23 integration under validation: LittleCMS Fast Float 2.19,
 [upstream source](https://github.com/mm2/Little-CMS/tree/21c582a594fe5279f90c0b93437c398f93bf62b0/plugins/fast_float),
 commit `21c582a594fe5279f90c0b93437c398f93bf62b0`, GPL-3.0-or-later,

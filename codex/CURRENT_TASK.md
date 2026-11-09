@@ -1,5 +1,12 @@
 # Current Task
 
+2026-11-09: 1d7e114 Full42621317707/secondary42621327038 SUCCESS, actual D750
+RAW157frame same-tier GPU/CPU/export regression1794229651092 maxRGB8delta1,
+source unchanged. MSVC headless core self-test passes; doc78 records scope/hash.
+New real Windows UI qualification tooling is under validation, not complete:
+240 Vitest/35files, lint, TypeScript, PS AST/YAML and19-target infra pass locally.
+It never launches a user desktop; actual Windows CI operation is next. No installer.
+
 2026-11-09: 5f00d9d Full42617130421 SUCCESS (secondary42617139853 SUCCESS).
 Canvas follow-upb8562e3 pushed, its CI42619548158 is being checked. Encoded
 ROI cache doc76 has actual Native changed-exposure/fresh-graph equivalence,
