@@ -1,0 +1,10 @@
+[package]
+name = "starroom-detail"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rayon.workspace = true
+serde.workspace = true

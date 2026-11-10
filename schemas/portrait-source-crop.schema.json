@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Starroom Native Portrait Source Crop v1",
+  "description": "Compact Native detector/parser source-pixel crop metadata for exact same-source restart rehydration; no pixel raster or model weights. Coordinates and side are source pixels, not normalized viewport coordinates.",
+  "type": "object",
+  "required": ["version", "centerX", "centerY", "side", "rotationDegrees"],
+  "properties": {
+    "version": { "const": 1 },
+    "centerX": { "type": "number" },
+    "centerY": { "type": "number" },
+    "side": { "type": "number", "exclusiveMinimum": 1 },
+    "rotationDegrees": { "type": "number", "minimum": -90, "maximum": 90 }
+  },
+  "additionalProperties": false
+}
