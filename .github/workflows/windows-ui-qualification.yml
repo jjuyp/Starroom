@@ -8,6 +8,7 @@ on:
       - 'scripts/prepare-windows-ui-driver.ps1'
       - 'scripts/capture-windows-ui-startup.ps1'
       - 'scripts/windows-ui-*.mjs'
+      - 'scripts/windows-ui-browser-policy.ps1'
 
 permissions:
   contents: read
@@ -64,6 +65,7 @@ jobs:
             output/qualification/windows-ui-*/driver.log
             output/qualification/windows-ui-*/ui-failure.json
             output/qualification/windows-ui-*/startup-processes.json
+            output/qualification/windows-ui-*/browser-policy.json
             output/qualification/windows-ui-*/failure.png
             output/qualification/windows-ui-*/success.png
           if-no-files-found: warn

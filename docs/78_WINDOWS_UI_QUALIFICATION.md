@@ -78,6 +78,17 @@ green Rust/Web checks do not override the failed real UI workflow.
 
 ## Previous performance group
 
+Run42821073424 at8256dc5 produced the missing startup evidence: the production
+window and WebView2 browser/renderer are alive, but browser command line has no
+remote-debugging switch and port9223 is refused. This is not a product rendering
+failure. Microsoft documents that elevated WebView2 hosts ignore environment and
+HKCU overrides (security guidance updated2026-09-11). The isolated harness now
+records elevation and uses the documented exact-application HKLM override only
+when elevated, refuses existing policy values, and removes only its owned value
+and newly-created empty leaf key during cleanup. Normal app code/config and the
+user's Windows policies are unchanged. Actual operation still needs qualification.
+Reference: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security
+
 2026-11-10: production-protocol build succeeded at25e72d6, but actual UI
 run42631004275 failed before session attach: debugger readiness timed out.
 Blueprint42631014913/42631004261 succeeded; they do not qualify real UI.

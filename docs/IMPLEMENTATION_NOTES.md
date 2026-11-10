@@ -2181,3 +2181,15 @@ reuse React state. Paint measurements also reject old photos. Targeted17 tests,
 FullWeb245/35files (1794316169140), TypeScript/ESLint and canonical fresh ASCII-alias
 production build pass. No Native image math or Export changes. Actual Windows UI
 qualification and broader geometry/DPI/installed latency remain unaccepted.
+
+## 2026-11-10 — Isolated elevated WebView2 override
+
+Run42821073424 captured a responsive production window and live WebView2 children,
+but no remote-debugging argument and no9223 listener. It failed before UI actions.
+Microsoft's current security guidance says elevated hosts ignore environment/HKCU
+overrides. The CI harness now records elevation and applies the documented exact
+application HKLM override only if elevated. Existing policies are never overwritten;
+an owned receipt controls cleanup, which removes only that value and an owned empty
+leaf key. CI-only/root containment guards, PS AST, five transport tests, lint,
+TypeScript, infrastructure and workflow YAML pass. No user-machine registry or
+production browser configuration changes. Actual UI acceptance remains pending.

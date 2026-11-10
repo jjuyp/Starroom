@@ -49,6 +49,15 @@ let application
 let report
 let failure
 let debuggerProbe
+const browserPolicy = (action) => {
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive',
+    '-File', resolve('scripts/windows-ui-browser-policy.ps1'), '-Action', action, '-OutputRoot', root], {
+    env, windowsHide: true, encoding: 'utf8', timeout: 30_000,
+  })
+  if (result.error || result.status !== 0) {
+    throw new Error(`UiGateSetupInvalid: browser policy ${action} failed: ${result.error ?? result.stderr}`)
+  }
+}
 try {
   let ready = false
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -61,6 +70,7 @@ try {
     await delay(250)
   }
   if (!ready) throw new Error('UiGateSetupUnavailable: driver never became ready')
+  browserPolicy('Enable')
   // Launch owns the explicit fresh WebView profile. Attach avoids EdgeDriver's
   // temporary DevToolsActivePort directory conflicting with that SDK override.
   // The isolated CI window must paint and receive real input; the top-level
@@ -134,6 +144,11 @@ try {
   } finally {
     application?.kill()
     child.kill()
-    writeFileSync(join(root, 'driver.log'), diagnostic)
+    try { browserPolicy('Disable') } catch (cleanupError) {
+      diagnostic += '\nPolicy cleanup: ' + String(cleanupError)
+      if (!failure) throw cleanupError
+    } finally {
+      writeFileSync(join(root, 'driver.log'), diagnostic)
+    }
   }
 }
