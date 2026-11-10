@@ -1,5 +1,17 @@
 # Current Task
 
+2026-11-11: next exact-HEAD Windows UI operation is required. At a724a02,
+Blueprint42823519081/42823529123 succeeded. UI42823518779 attached successfully
+and imported a public image; real Search was intercepted by CSS zero-track
+auto-placement (product defect, not infrastructure). Doc81 fixes main grid/drawer
+state and passes48 production-browser layout cases; Web245/fresh build pass.
+Doc80 RAW owner transfer has36 exact pre/post f32/metadata decodes, lower peak
+memory in12 cases and RAW62 tests; full local Rust1794330135797 passes499 ordinary
+tests/five existing opt-ins plus format/Clippy/docs. No image math/lockfile change.
+The whole original Phase0–30 goal remains active: no Final, installer, firstRAW1:1,
+wholeUI latency or GPU-resident presentation completion is claimed. Never launch
+the user's desktop; isolated Windows CI only. Keep PR2Open/Draft and main unmerged.
+
 2026-11-09: d4ff25f Full42625884357/secondary42625892911 SUCCESS.
 UI42625884494 failed at DevToolsActivePort before photo/tone actions, not an
 external runner outage. Batched harness repair: production Tauri CLI no-bundle,

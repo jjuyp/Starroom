@@ -43,6 +43,15 @@ export async function runWindowsUiWorkflow(driver, fixture) {
   `)
   await driver.clickText('圖庫', 'header button')
   await waitForUi(driver, 'return !!document.querySelector(".library-actions button:not(:disabled)")')
+  const libraryLayout = await driver.execute(`
+    const main=document.querySelector('.library-browser'), button=main.querySelector('.library-actions button');
+    const r=main.getBoundingClientRect(), b=button.getBoundingClientRect();
+    return {width:r.width,height:r.height,column:getComputedStyle(main).gridColumnStart,
+      searchReceivesPointer:document.elementFromPoint(b.x+b.width/2,b.y+b.height/2)===button};
+  `)
+  if (libraryLayout.width < 320 || libraryLayout.column !== '2' || !libraryLayout.searchReceivesPointer) {
+    throw new Error('UiGateLayoutFailed: production Library is not physically usable: ' + JSON.stringify(libraryLayout))
+  }
   const imported = await driver.execute(`
     const done = arguments[arguments.length - 1];
     window.__TAURI_INTERNALS__.invoke('library_import_folder', {root:null, paths:[arguments[0]]})
@@ -117,7 +126,7 @@ export async function runWindowsUiWorkflow(driver, fixture) {
   const timings = await driver.execute('return window.__STARROOM_UI_GATE_TIMINGS__')
   if (errors.length) throw new Error('UiGateApplicationFailed: application reported a typed failure')
   return { scope: 'Production WebView2 UI + Native import and tone controls, not full installed/latency acceptance',
-    controls, dimensions: [after.width, after.height], pixelsChanged: true,
+    libraryLayout, controls, dimensions: [after.width, after.height], pixelsChanged: true,
     undoRedoDeterministic: true, unexpectedAlerts: errors.length,
     functionalProbeTimings: timings,
     timingScope: 'UI handler-to-Canvas draw under functional-test readbacks; not physical input/presentation or a standalone latency gate' }

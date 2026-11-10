@@ -9,6 +9,11 @@ on:
       - 'scripts/capture-windows-ui-startup.ps1'
       - 'scripts/windows-ui-*.mjs'
       - 'scripts/windows-ui-browser-policy.ps1'
+      - 'src/App.tsx'
+      - 'src/styles.css'
+      - 'src/glass.css'
+      - 'src/latestPreviewQueue.ts'
+      - 'src/nativePreviewPresentation.ts'
 
 permissions:
   contents: read

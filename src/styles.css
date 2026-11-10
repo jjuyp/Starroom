@@ -58,6 +58,11 @@ button:disabled { opacity: .35; cursor: default; }
 .export-button { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 14px; margin-left: 5px; border-radius: var(--radius-md); color: #17181b; font-weight: 650; font-size: 11px; background: linear-gradient(105deg, #d3a8ff, #adbaff 48%, #8ad2ff); box-shadow: 0 1px 8px rgba(173,186,255,.18); }
 
 .workspace { --left-panel-width: 224px; --right-panel-width: 420px; height: calc(100% - 44px); display: grid; grid-template-columns: var(--left-panel-width) minmax(420px, 1fr) var(--right-panel-width); grid-template-rows: 1fr; position: relative; }
+/* A responsive sidebar may leave grid flow (floating drawer). Main/inspector
+   must keep their explicit tracks instead of auto-filling the zero-width left track. */
+.workspace > .library-panel { grid-column: 1; grid-row: 1; }
+.workspace > .canvas-area, .workspace > .library-browser { grid-column: 2; grid-row: 1; }
+.workspace > .inspector-panel { grid-column: 3; grid-row: 1; }
 .workspace.left-collapsed { grid-template-columns: 0 minmax(420px, 1fr) var(--right-panel-width); }
 .workspace { --library-inspector-width: 0px; }
 .workspace.library-inspector-open { --library-inspector-width: 300px; }
@@ -356,8 +361,11 @@ button:disabled { opacity: .35; cursor: default; }
 .compact-warning { display: none; }
 
 @media (max-width: 1180px) {
-  .workspace { grid-template-columns: 0 minmax(410px, 1fr) 326px; }
-  .library-panel { transform: translateX(-100%); opacity: 0; pointer-events: none; }
+  .workspace, .workspace.left-collapsed { grid-template-columns: 0 minmax(410px, 1fr) 326px; }
+  .workspace.view-library, .workspace.view-library.left-collapsed { grid-template-columns: 0 minmax(0, 1fr) var(--library-inspector-width); }
+  .library-panel { position: absolute; inset: 0 auto 0 0; width: var(--left-panel-width); z-index: 20; transform: none; opacity: 1; pointer-events: auto; }
+  .workspace.left-collapsed .library-panel { transform: translateX(-100%); opacity: 0; pointer-events: none; }
+  .panel-resizer-left { display: none; }
   .topbar nav { display: flex; }
   .topbar nav button { padding-inline: 8px; font-size: 11px; }
   .brand { min-width: auto; }

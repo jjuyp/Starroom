@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Actual Windows responsive Library/Native control acceptance (doc81): fix
+  zero-track main placement and Gray/Light drawer state;48 real browser layout
+  cases,245 Web tests and fresh build pass. Native CI rerun remains required.
+
 - [ ] Qualify LibRaw processed-image ownership (doc80): no duplicate RGB16 copy;
   all36 full/half fixture decodes match baseline f32 bits/metadata, peak memory
   decreases in12 cases. RAW62 tests and FullRust499 ordinary/five opt-ins pass;

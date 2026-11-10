@@ -1,5 +1,11 @@
 # Real Windows UI qualification
 
+2026-11-11 update: run42823518779 ata724a02 confirms elevation and successful
+official per-app override/cleanup, CDP attach and real public-image import.
+It then catches a production CSS Library click interception; doc81 records the
+root cause and fix. Both Blueprint42823519081/42823529123 pass independently.
+Real Native tone/Undo/Redo operation still requires the next same-HEAD UI run.
+
 2026-11-09. Status: under qualification; real CI execution is required.
 
 ## Gap

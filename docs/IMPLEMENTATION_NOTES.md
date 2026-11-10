@@ -2213,3 +2213,16 @@ large-image memory and Windows UI/installer acceptance remain open.
 Full Rust1794330135797 completes format, warning-denied workspace Clippy and
 tests/doc-tests exit0:499 ordinary passed/five existing opt-ins (504 registered).
 The prior interrupted process had no completion report and was not counted.
+
+## 2026-11-11 — Responsive Library physical usability (doc81)
+
+Actual Windows UI42823518779 ata724a02 passed production WebView2 attach/import;
+its real Search click was blocked because CSS auto-placement put Library into the
+compact zero-width left track. Explicit column/row placement fixes the production
+main area. Gray/Light floating drawers now honor React open/close state instead
+of unconditional CSS hiding. Headless production React layout passes48 combinations,
+with the old rule reproducing contentWidth0/sidebar interception. FullWeb245
+(1794330185706), TypeScript/lint and fresh canonical build pass. The real Windows
+workflow asserts physical Search hit testing without script-click workarounds;
+UI-critical App/CSS/queue/presentation changes now trigger that supplementary gate.
+No image math change. Actual Native tone/Undo/Redo and final release remain pending.
