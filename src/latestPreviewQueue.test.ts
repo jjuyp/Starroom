@@ -1,11 +1,48 @@
 import { describe, expect, it, vi } from 'vitest'
-import { LatestPreviewQueue, PreviewSuperseded, previewFrameMayPublish } from './latestPreviewQueue'
+import { LatestPreviewQueue, PreviewSuperseded, previewFrameMayPublish, publishCurrentPreviewFrame } from './latestPreviewQueue'
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((yes) => { resolve = yes })
   return { promise, resolve }
 }
+
+describe('pixel and layout publication boundary', () => {
+  const frame = { photoId: 'a', before: false, interactive: false, generation: 1 }
+  it('rejects stale pixels AND dimensions after decode, source and Before/After races', async () => {
+    for (const current of [
+      { ...frame, generation: 2, publishedGeneration: 0 },
+      { ...frame, generation: 2, publishedGeneration: 2 },
+      { ...frame, photoId: 'b', publishedGeneration: 0 },
+      { ...frame, before: true, publishedGeneration: 0 },
+    ]) {
+      const bitmap = deferred<void>()
+      const effects: string[] = []
+      const pending = bitmap.promise.then(() => publishCurrentPreviewFrame(frame, current, () => {
+        effects.push('pixels', 'dimensions', 'aspect', 'published-generation')
+      }))
+      bitmap.resolve()
+      expect(await pending).toBe(false)
+      expect(effects).toEqual([])
+    }
+  })
+  it('preserves completed interactive frames without allowing an older frame to replace them', () => {
+    const current = { ...frame, interactive: true, generation: 3, publishedGeneration: 0 }
+    const commit = vi.fn(() => { current.publishedGeneration = 2 })
+    expect(publishCurrentPreviewFrame({ ...frame, interactive: true, generation: 2 }, current, commit)).toBe(true)
+    expect(publishCurrentPreviewFrame({ ...frame, interactive: true }, current, commit)).toBe(false)
+    expect(commit).toHaveBeenCalledOnce()
+    current.interactive = false
+    expect(publishCurrentPreviewFrame({ ...frame, interactive: true, generation: 3 }, current, commit)).toBe(true)
+  })
+  it('propagates drawing failures so failed presentation cannot be acknowledged', () => {
+    const current = { ...frame, publishedGeneration: 0 }
+    expect(() => publishCurrentPreviewFrame(frame, current, () => {
+      throw new Error('Canvas unavailable')
+    })).toThrow('Canvas unavailable')
+    expect(current.publishedGeneration).toBe(0)
+  })
+})
 
 describe('LatestPreviewQueue', () => {
   it('never sends Native cancel commands for work that was never dispatched', async () => {

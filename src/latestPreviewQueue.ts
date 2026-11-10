@@ -8,6 +8,24 @@ export function previewFrameMayPublish(generation: number, published: number, la
   return generation > published && (generation === latest || interactive && latestInteractive)
 }
 
+interface PreviewFrameIdentity {
+  photoId: string
+  before: boolean
+  interactive: boolean
+  generation: number
+}
+
+/** Pixels and their layout metadata cross the same synchronous publication boundary.
+ * A Native response alone is not publication: bitmap decode may finish out of order. */
+export function publishCurrentPreviewFrame(frame: PreviewFrameIdentity,
+  current: PreviewFrameIdentity & { publishedGeneration: number }, present: () => void): boolean {
+  if (frame.photoId !== current.photoId || frame.before !== current.before
+    || !previewFrameMayPublish(frame.generation, current.publishedGeneration, current.generation,
+      frame.interactive, current.interactive)) return false
+  present()
+  return true
+}
+
 interface Request<T> {
   generation: number
   run: () => Promise<T>

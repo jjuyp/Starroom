@@ -50,7 +50,7 @@ import { resolveCommandShortcut, searchCommands, type CommandId } from './comman
 import { formatUserError } from './errorPresentation'
 import { clientPointToNormalized } from './viewportCoordinates'
 import { importNativeLibraryPaths } from './nativeRender'
-import { LatestPreviewQueue, PreviewSuperseded, previewFrameMayPublish } from './latestPreviewQueue'
+import { LatestPreviewQueue, PreviewSuperseded, publishCurrentPreviewFrame } from './latestPreviewQueue'
 import {
   appendInteractiveHistory,
   prependInteractiveHistory,
@@ -644,7 +644,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
     return clientPointToNormalized(event, event.currentTarget.getBoundingClientRect())
   }
 
-  useEffect(() => { activePhotoId.current = photo.id }, [photo.id])
+  useLayoutEffect(() => { activePhotoId.current = photo.id }, [photo.id])
   useEffect(() => {
     const surface = previewSurface.current
     previewLatency.mount(surface, previewLatency.beginEdit())
@@ -717,10 +717,6 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
             viewport.resolutionMode, viewport.viewport, before ? defaultNativeRenderConstants : photo.nativeRenderConstants,
             before ? null : photo.rawWhiteBalance)
           nativeResult = result
-          if (activePhotoId.current === photo.id) {
-            nativeDimensions.current = { id: photo.id, width: result.sourceWidth, height: result.sourceHeight }
-            setSourceDisplaySize({ width: result.sourceWidth, height: result.sourceHeight })
-          }
           const presentation = await decodeNativePreviewPayload(result)
           release = presentation.release
           rendered = presentation.image
@@ -740,36 +736,44 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
           renderedHeight = original.naturalHeight
           onStatus('僅顯示原圖 · 編輯需要原生桌面版')
         }
-        if (activePhotoId.current !== photo.id || !canvasRef.current
-          || latestPaintIntent.current.before !== before
-          || !previewFrameMayPublish(generation, publishedGeneration.current, previewGeneration.current,
-            interactionPhase === 'interactive', latestPaintIntent.current.interactive)) {
-          return
-        }
-        finalPublished = true
         const canvas = canvasRef.current
+        if (!canvas) return
         const context = canvas.getContext('2d')
         if (!context) {
           throw new Error('Canvas 2D is unavailable.')
         }
-        publishedGeneration.current = generation
-        if (nativeResult?.isTile) {
-          const tileCanvas = tileCanvasRef.current
-          const tileContext = tileCanvas?.getContext('2d')
-          if (!tileCanvas || !tileContext) throw new Error('Native viewport tile canvas is unavailable.')
-          presentPreviewFrame(tileContext, rendered, renderedWidth, renderedHeight)
-          setTileRegion({
-            x: nativeResult.tileX / nativeResult.sourceWidth,
-            y: nativeResult.tileY / nativeResult.sourceHeight,
-            width: nativeResult.width / nativeResult.sourceWidth,
-            height: nativeResult.height / nativeResult.sourceHeight,
-          })
-        } else {
-          presentPreviewFrame(context, rendered, renderedWidth, renderedHeight)
-          displayedSource.current = photo.id
-          setAspect(renderedWidth / renderedHeight)
-          setTileRegion(null)
-        }
+        const published = publishCurrentPreviewFrame({ photoId: photo.id, before,
+          interactive: interactionPhase === 'interactive', generation }, {
+          photoId: activePhotoId.current, ...latestPaintIntent.current,
+          generation: previewGeneration.current, publishedGeneration: publishedGeneration.current,
+        }, () => {
+          if (nativeResult?.isTile) {
+            const tileCanvas = tileCanvasRef.current
+            const tileContext = tileCanvas?.getContext('2d')
+            if (!tileCanvas || !tileContext) throw new Error('Native viewport tile canvas is unavailable.')
+            presentPreviewFrame(tileContext, rendered, renderedWidth, renderedHeight)
+            setTileRegion({
+              x: nativeResult.tileX / nativeResult.sourceWidth,
+              y: nativeResult.tileY / nativeResult.sourceHeight,
+              width: nativeResult.width / nativeResult.sourceWidth,
+              height: nativeResult.height / nativeResult.sourceHeight,
+            })
+          } else {
+            presentPreviewFrame(context, rendered, renderedWidth, renderedHeight)
+            displayedSource.current = photo.id
+            setAspect(renderedWidth / renderedHeight)
+            setTileRegion(null)
+          }
+          if (nativeResult) {
+            nativeDimensions.current = { id: photo.id, width: nativeResult.sourceWidth, height: nativeResult.sourceHeight }
+            const { width, height } = nativeDimensions.current
+            setSourceDisplaySize((previous) => previous.width === width && previous.height === height
+              ? previous : { width, height })
+          }
+          publishedGeneration.current = generation
+          finalPublished = true
+        })
+        if (!published) return
         const drawnAt = performance.now()
         if (interactionPhase === 'interactive' && nativeResult?.timing) {
           interactiveBudget.current.observe(requestedInteractiveEdge,
@@ -778,7 +782,7 @@ function PreviewCanvas({ photo, before, zoom, zoomScale = 1, pan = { x: 0, y: 0 
         const latency = !before && nativeResult?.timing
           ? previewLatency.drawn(measuredPhoto, previewSurface.current, interactionPhase, nativeResult.timing, drawnAt) : null
         window.requestAnimationFrame(() => {
-          if (!canvasRef.current || publishedGeneration.current !== generation) return
+          if (!canvasRef.current || activePhotoId.current !== photo.id || publishedGeneration.current !== generation) return
           if (latency) previewLatency.paintOpportunity(latency.sequence, latency.phase,
             latency.editToDrawMs + performance.now() - drawnAt)
           setCanvasBounds({ left: canvasRef.current.offsetLeft, top: canvasRef.current.offsetTop,

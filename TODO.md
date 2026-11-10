@@ -2,6 +2,10 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Qualify unified pixel/layout publication (doc79): source dimensions no longer
+  update before decode/latest-frame validation;245 Web tests and fresh production
+  build pass. Real Windows UI/rotation/DPI and installed qualification remain open.
+
 - [ ] Qualify adaptive interactive preview on real sources and installed UI (doc74).
   D750 512/1024 Native parity passed. At 512, exposure p95 14.55ms and heavy p95
   26.80ms; first 1:1 still 3171ms. Do not count component times as user-visible latency.

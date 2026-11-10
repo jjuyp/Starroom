@@ -2171,3 +2171,13 @@ qualification harness: official automation environment/capabilities, CDP metadat
 readiness, endpoint diagnostics and bounded owned-process capture. Targeted tests5,
 TypeScript/ESLint, infrastructure and PowerShell syntax pass; actual CI operation
 must still pass. No product rendering change or tolerance relaxation.
+
+## 2026-11-10 — Preview layout publication race (doc79)
+
+Native source dimensions previously reached React before bitmap decode and stale
+frame rejection. Fit/tile pixels and dimensions now share a photo/Before/generation
+publication boundary; acknowledgement follows successful draw, and stable dimensions
+reuse React state. Paint measurements also reject old photos. Targeted17 tests,
+FullWeb245/35files (1794316169140), TypeScript/ESLint and canonical fresh ASCII-alias
+production build pass. No Native image math or Export changes. Actual Windows UI
+qualification and broader geometry/DPI/installed latency remain unaccepted.
