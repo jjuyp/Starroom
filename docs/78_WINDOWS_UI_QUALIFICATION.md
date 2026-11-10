@@ -78,6 +78,18 @@ green Rust/Web checks do not override the failed real UI workflow.
 
 ## Previous performance group
 
+2026-11-10: production-protocol build succeeded at25e72d6, but actual UI
+run42631004275 failed before session attach: debugger readiness timed out.
+Blueprint42631014913/42631004261 succeeded; they do not qualify real UI.
+The next batched harness repair uses official TAURI_WEBVIEW_AUTOMATION and
+ms:edgeChromium capabilities, recognizes CDP version metadata without requiring
+a browser-level WebSocket, and records the actual endpoint response/error.
+On failure an isolated-CI-only capture records the owned application's bounded
+descendant process tree and listening ports, never the user's desktop or secrets.
+Five targeted transport/readiness tests, TypeScript, ESLint, infrastructure
+validation and PowerShell AST pass. Actual interaction acceptance remains pending.
+No color math, image tolerance, final render quality or Release gate was changed.
+
 1d7e114 Full42621317707/secondary42621327038 SUCCESS. Local FullRust1794228710901,
 FullWeb1794228773739 (237 tests), and actual D750 RAW157 same-tier GPU/CPU/export
 comparisons1794229651092 pass(maxRGB8delta1). At512, exposure median/p9515.075/

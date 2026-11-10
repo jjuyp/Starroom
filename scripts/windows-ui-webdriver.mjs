@@ -1,3 +1,10 @@
+export function webViewDebuggerIsReady(info) {
+  // WebView2 may expose page targets without a browser-level WebSocket URL.
+  // Session attach and actual UI assertions remain mandatory after readiness.
+  return typeof info?.Browser === 'string' && info.Browser.length > 0
+    && typeof info?.['Protocol-Version'] === 'string' && info['Protocol-Version'].length > 0
+}
+
 // W3C transport only. Microsoft Edge WebDriver can launch a production WebView2
 // executable directly; no test plugin, renderer mock or localhost dev server.
 export class WindowsUiWebDriver {
@@ -28,7 +35,7 @@ export class WindowsUiWebDriver {
   async launch(executable) {
     if (this.session) throw new Error('UiGateInvalid: an application session is already active')
     const result = await this.command('/session', { capabilities: { alwaysMatch: {
-      browserName: 'webview2', 'ms:edgeOptions': { binary: executable },
+      browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { binary: executable },
     } } })
     if (!result?.sessionId) throw new Error('UiGateWebDriverFailed: missing session id')
     this.session = result.sessionId
@@ -40,7 +47,7 @@ export class WindowsUiWebDriver {
       throw new Error('UiGateInvalid: an unused loopback debugging endpoint is required')
     }
     const result = await this.command('/session', { capabilities: { alwaysMatch: {
-      browserName: 'webview2', 'ms:edgeOptions': { debuggerAddress },
+      browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { debuggerAddress },
     } } })
     if (!result?.sessionId) throw new Error('UiGateWebDriverFailed: missing attached session id')
     this.session = result.sessionId

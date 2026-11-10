@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { WindowsUiWebDriver } from './windows-ui-webdriver.mjs'
+import { WindowsUiWebDriver, webViewDebuggerIsReady } from './windows-ui-webdriver.mjs'
 import { runWindowsUiWorkflow, waitForUi } from './windows-ui-workflow.mjs'
 
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
@@ -30,6 +30,7 @@ Object.assign(env, {
   APPDATA: join(root, 'roaming'), LOCALAPPDATA: join(root, 'local'),
   WEBVIEW2_USER_DATA_FOLDER: join(root, 'webview'),
   STARROOM_LOCAL_MODELS: join(root, 'private-models-not-bundled'),
+  TAURI_WEBVIEW_AUTOMATION: 'true',
 })
 for (const path of [env.APPDATA, env.LOCALAPPDATA, env.WEBVIEW2_USER_DATA_FOLDER]) {
   mkdirSync(path, { recursive: true })
@@ -47,6 +48,7 @@ const driver = new WindowsUiWebDriver('http://127.0.0.1:9515/')
 let application
 let report
 let failure
+let debuggerProbe
 try {
   let ready = false
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -79,9 +81,13 @@ try {
     }
     try {
       const response = await fetch('http://127.0.0.1:9223/json/version', { signal: AbortSignal.timeout(1000) })
-      debuggerReady = response.ok && !!(await response.json()).webSocketDebuggerUrl
+      const info = await response.json()
+      debuggerProbe = { status: response.status, info }
+      debuggerReady = response.ok && webViewDebuggerIsReady(info)
       if (debuggerReady) break
-    } catch { /* only the owned application's startup is pending */ }
+    } catch (error) {
+      debuggerProbe = { error: String(error), cause: String(error.cause ?? '') }
+    }
     await delay(250)
   }
   if (!debuggerReady) throw new Error('UiGateSetupUnavailable: owned WebView2 debugger did not initialize')
@@ -96,12 +102,22 @@ try {
   writeFileSync(join(root, 'ui-qualification.json'), JSON.stringify({
     schemaVersion: 1, generatedAt: new Date().toISOString(), revision: process.env.GITHUB_SHA,
     executableSha256: sha256(executable), fixtureSha256: originalHash,
-    driver: identity, ...report, screenshot: 'success.png',
+    driver: identity, ...report, screenshot: 'success.png', debuggerProbe,
   }, null, 2) + '\n')
   console.log('STARROOM_WINDOWS_UI ' + JSON.stringify(report))
 } catch (error) {
   failure = error
   const details = { scope: 'Isolated CI public fixture only', message: String(error) }
+  details.debuggerProbe = debuggerProbe ?? null
+  if (application?.pid) {
+    const snapshot = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive',
+      '-File', resolve('scripts/capture-windows-ui-startup.ps1'),
+      '-ApplicationId', String(application.pid), '-OutputRoot', root], {
+      env, windowsHide: true, encoding: 'utf8', timeout: 30_000,
+    })
+    details.startupCaptureExitCode = snapshot.status
+    details.startupCaptureDiagnostic = (snapshot.stderr ?? '').slice(-2000)
+  }
   if (driver.session) {
     try {
       details.visibleText = await driver.execute('return document.body.innerText.slice(0,20000)')

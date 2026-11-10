@@ -15,7 +15,7 @@ const rules = {
   desktop: [/^src-tauri\//],
   web: [/^src\//, /^src-tauri\//, /^scripts\/tests\//, /^package(?:-lock)?\.json$/, /^vite\.config\./, /^tsconfig/, /^eslint\.config\./,
     /^\.github\/workflows\/windows-ui-qualification\.yml$/,
-    /^scripts\/(?:windows-ui-.*\.mjs|prepare-windows-ui-driver\.ps1)$/],
+    /^scripts\/(?:windows-ui-.*\.mjs|prepare-windows-ui-driver\.ps1|capture-windows-ui-startup\.ps1)$/],
   library: [/^crates\/starroom-library\//],
   history: [/^crates\/starroom-history\//],
   export: [/^crates\/starroom-export\//],

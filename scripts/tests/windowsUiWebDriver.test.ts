@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { WindowsUiWebDriver } from '../windows-ui-webdriver.mjs'
+import { WindowsUiWebDriver, webViewDebuggerIsReady } from '../windows-ui-webdriver.mjs'
 
 it('refuses to launch any desktop application outside an explicitly isolated CI runner', () => {
   const result = spawnSync(process.execPath, ['scripts/windows-ui-qualification.mjs',
@@ -32,7 +32,7 @@ it('uses production WebView2 capabilities, typed W3C elements, real input and ex
   const driver = new WindowsUiWebDriver('http://127.0.0.1:9515/', request)
   await driver.launch('installed.exe')
   expect(JSON.parse(request.mock.calls[0][1].body).capabilities.alwaysMatch)
-    .toEqual({ browserName: 'webview2', 'ms:edgeOptions': { binary: 'installed.exe' } })
+    .toEqual({ browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { binary: 'installed.exe' } })
   await driver.click('button')
   expect(request.mock.calls[3][0]).toBe('http://127.0.0.1:9515/session/owned/element/button/click')
   await driver.close()
@@ -49,6 +49,13 @@ it('attaches only to an owned loopback WebView2 endpoint without changing the ap
   expect(request).not.toHaveBeenCalled()
   await driver.attach('127.0.0.1:9223')
   expect(JSON.parse(request.mock.calls[0][1].body).capabilities.alwaysMatch)
-    .toEqual({ browserName: 'webview2', 'ms:edgeOptions': { debuggerAddress: '127.0.0.1:9223' } })
+    .toEqual({ browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { debuggerAddress: '127.0.0.1:9223' } })
   await driver.close()
+})
+
+it('recognizes CDP version metadata without requiring a browser-level WebSocket', () => {
+  expect(webViewDebuggerIsReady({ Browser: 'Edg/156.0', 'Protocol-Version': '1.3' })).toBe(true)
+  expect(webViewDebuggerIsReady(null)).toBe(false)
+  expect(webViewDebuggerIsReady({ webSocketDebuggerUrl: 'ws://127.0.0.1/' })).toBe(false)
+  expect(webViewDebuggerIsReady({ Browser: 'unrelated service' })).toBe(false)
 })

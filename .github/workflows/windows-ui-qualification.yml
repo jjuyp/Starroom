@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/windows-ui-qualification.yml'
       - 'scripts/prepare-windows-ui-driver.ps1'
+      - 'scripts/capture-windows-ui-startup.ps1'
       - 'scripts/windows-ui-*.mjs'
 
 permissions:
@@ -62,6 +63,7 @@ jobs:
             output/qualification/windows-ui-*/ui-qualification.json
             output/qualification/windows-ui-*/driver.log
             output/qualification/windows-ui-*/ui-failure.json
+            output/qualification/windows-ui-*/startup-processes.json
             output/qualification/windows-ui-*/failure.png
             output/qualification/windows-ui-*/success.png
           if-no-files-found: warn

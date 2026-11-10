@@ -2162,3 +2162,12 @@ RAW milestone passed report 1791695941265, including warning-denied workspace Cl
 local Rust/workspace/doc tests and Web pass reports 1791699838178 / 1791699550246;
 Web has 205 passing tests. Remote acceptance remains pending. This does not qualify extra profiles/n>3,
 physical RAW controls, complete photographic IQ, installed latency or Final release.
+
+## 2026-11-10 — Windows UI qualification startup diagnostics
+
+The25e72d6 production build succeeded but UI run42631004275 never attached to
+WebView2. This is not accepted UI latency evidence. Updated only the isolated
+qualification harness: official automation environment/capabilities, CDP metadata
+readiness, endpoint diagnostics and bounded owned-process capture. Targeted tests5,
+TypeScript/ESLint, infrastructure and PowerShell syntax pass; actual CI operation
+must still pass. No product rendering change or tolerance relaxation.
