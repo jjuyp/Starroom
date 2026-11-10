@@ -84,7 +84,7 @@ jobs:
           $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
           "compiler=$hash" >> $env:GITHUB_OUTPUT
       - id: cargo-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -99,10 +99,22 @@ jobs:
         run: Write-Output "Cargo cache hit = ${{ steps.cargo-cache.outputs.cache-hit }}"
       - run: node scripts/test-target.mjs ${{ matrix.target }} --rust-only
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
         with:
           name: timing-${{ matrix.target }}-${{ github.run_id }}
           path: .starroom-reports/*.json
           include-hidden-files: true
+      - name: Retain compiler work after targeted validation failures
+        if: always() && !cancelled() && steps.cargo-cache.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            .starroom-cache/lensfun
+            .starroom-cache/models
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   full-check-rust:
     name: Full Check / Rust
@@ -123,7 +135,7 @@ jobs:
           $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
           "compiler=$hash" >> $env:GITHUB_OUTPUT
       - id: cargo-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -140,10 +152,22 @@ jobs:
         env:
           STARROOM_PERFORMANCE_GATE: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
         with:
           name: timing-full-rust-${{ github.run_id }}
           path: .starroom-reports/*.json
           include-hidden-files: true
+      - name: Retain compiler work after full validation failures
+        if: always() && !cancelled() && steps.cargo-cache.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            .starroom-cache/lensfun
+            .starroom-cache/models
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   full-check-web:
     name: Full Check / Web

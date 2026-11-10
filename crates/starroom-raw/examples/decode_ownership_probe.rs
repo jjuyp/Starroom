@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut hash = Sha256::new();
     let mut block = [0_u8; 4096];
     for samples in image.rgb.chunks(1024) {
-        for (sample, bytes) in samples.iter().zip(block.chunks_exact_mut(4)) {
+        for (sample, bytes) in samples.iter().zip(block.as_chunks_mut::<4>().0) {
             if !sample.is_finite() {
                 return Err("non-finite RAW output".into());
             }
