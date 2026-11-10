@@ -2193,3 +2193,23 @@ an owned receipt controls cleanup, which removes only that value and an owned em
 leaf key. CI-only/root containment guards, PS AST, five transport tests, lint,
 TypeScript, infrastructure and workflow YAML pass. No user-machine registry or
 production browser configuration changes. Actual UI acceptance remains pending.
+
+## 2026-11-10 — LibRaw processed-image owner transfer (doc80)
+
+Use the pinned upstream dcraw_clear_mem ownership API instead of malloc/memcpy of
+another RGB16 frame; release compressed source bytes before working-f32 allocation.
+The bridge checks ABI size before output writes and validates sample count/alignment/
+slice-size bounds. Rust RAII releases the actual processed-image owner on all paths.
+No image math, color/profile/demosaic policy, dependency or lockfile change.
+Before1794316984597 vs sequential after1794317343944:36 isolated full/half decodes,
+all f32 bits/metadata exact and immutable sources. All12 peak medians decrease;
+CR3 full451.39→357.36MiB, RAF374.52→286.43MiB. Decode speed is not universally
+improved (DNG full1656.53→1663.65ms); no first-1:1 or wholeUI latency claim.
+Earlier concurrent diagnostic1794317193342 is retained but not performance evidence.
+rustfmt, warning-denied RAW Clippy and canonical RAW gate1794317456590 pass62 tests,
+including sensor/ColorChecker/headroom/shared/forward graphs. CI/full-release,
+large-image memory and Windows UI/installer acceptance remain open.
+
+Full Rust1794330135797 completes format, warning-denied workspace Clippy and
+tests/doc-tests exit0:499 ordinary passed/five existing opt-ins (504 registered).
+The prior interrupted process had no completion report and was not counted.

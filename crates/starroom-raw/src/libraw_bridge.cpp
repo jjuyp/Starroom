@@ -53,9 +53,12 @@ struct SrRawResult {
   char lens_make[128];
   char lens_model[128];
   char decoder[128];
-  uint16_t *rgb16;
+  const uint16_t *rgb16;
   size_t rgb16_length;
+  libraw_processed_image_t *rgb16_owner;
 };
+
+size_t sr_libraw_result_size() { return sizeof(SrRawResult); }
 
 static void sr_copy_text(char *destination, size_t capacity, const char *source) {
   if (!destination || capacity == 0) {
@@ -248,24 +251,25 @@ int sr_libraw_decode_buffer(const uint8_t *bytes, size_t byte_length,
 
   const size_t sample_count = static_cast<size_t>(image->width) *
                               static_cast<size_t>(image->height) * 3;
-  auto *copy = static_cast<uint16_t *>(std::malloc(sample_count * sizeof(uint16_t)));
-  if (!copy) {
+  if (sample_count == 0 || image->data_size != sample_count * sizeof(uint16_t)) {
     LibRaw::dcraw_clear_mem(image);
-    return sr_fail(LIBRAW_UNSUFFICIENT_MEMORY, "copy", error, error_capacity);
+    return sr_fail(LIBRAW_DATA_ERROR, "processed image sample count", error, error_capacity);
   }
-  std::memcpy(copy, image->data, sample_count * sizeof(uint16_t));
+  // Pinned LibRaw mem_image.cpp allocates this image independently of processor.
+  // Transfer that allocation to Rust RAII, rather than copying another full RGB16
+  // frame. Only dcraw_clear_mem may release the original processed-image owner.
   result->width = image->width;
   result->height = image->height;
-  result->rgb16 = copy;
+  result->rgb16 = reinterpret_cast<const uint16_t *>(image->data);
   result->rgb16_length = sample_count;
+  result->rgb16_owner = image;
   result->process_milliseconds =
       std::chrono::duration<double, std::milli>(process_end - process_start)
           .count();
-  LibRaw::dcraw_clear_mem(image);
   return LIBRAW_SUCCESS;
 }
 
-void sr_libraw_free(uint16_t *buffer) { std::free(buffer); }
+void sr_libraw_free(libraw_processed_image_t *owner) { LibRaw::dcraw_clear_mem(owner); }
 
 const char *sr_libraw_version() { return libraw_version(); }
 

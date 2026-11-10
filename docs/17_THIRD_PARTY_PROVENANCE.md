@@ -4,6 +4,23 @@ Status: F0 quality-gate baseline, verified 2026-08-11. Versions in this document
 
 ## Foundation selections
 
+2026-11-11 external development-only layout QA: cached `@playwright/cli`0.1.23,
+upstream https://github.com/microsoft/playwright-cli, Apache-2.0, with pinned
+playwright/playwright-core1.65.0-alpha-2026-10-30 (Microsoft Playwright, Apache-2.0).
+Used as an external headless automation tool, not linked/derived/ported or included
+in Starroom binary/installers. Chrome is an installed vendor QA browser, not a
+redistributed asset. No new Cargo/npm lockfile entry or runtime dependency. Any
+future tool/browser redistribution requires its own license/notices review.
+
+2026-11-10 LibRaw ownership optimization (doc80): uses the existing pinned
+LibRaw0.22.2 processed-image allocation and `dcraw_clear_mem` API from upstream
+`src/postprocessing/mem_image.cpp`, commit `b93f6e45c194f5df9b02a43b1af9a54b4f41f33f`.
+No vendor source or algorithm port/change; the Starroom C ABI adapter transfers
+the original owner to Rust RAII instead of memcpy'ing a second RGB16 frame.
+Existing CDDL-1.0 selection, binary inclusion and redistribution notices apply
+unchanged. No new dependency/license or model; public CC0 fixture identities stay
+in the existing RAW manifest. Same-compiler f32-bit/metadata equivalence is tested.
+
 2026-11-09 development-only UI qualification: Microsoft Edge WebDriver, vendor
 [download and terms](https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/),
 closed-source vendor executable, not an OSS algorithm integration. Its exact

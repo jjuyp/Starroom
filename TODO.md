@@ -2,6 +2,12 @@
 
 ## Production completion / color perfection pass (2026-10-06, active)
 
+- [ ] Qualify LibRaw processed-image ownership (doc80): no duplicate RGB16 copy;
+  all36 full/half fixture decodes match baseline f32 bits/metadata, peak memory
+  decreases in12 cases. RAW62 tests and FullRust499 ordinary/five opt-ins pass;
+  own CI and final large-image acceptance pending;
+  first-RAW zoom and whole-UI latency are not resolved by this memory change.
+
 - [ ] Qualify unified pixel/layout publication (doc79): source dimensions no longer
   update before decode/latest-frame validation;245 Web tests and fresh production
   build pass. Real Windows UI/rotation/DPI and installed qualification remain open.

@@ -15,7 +15,13 @@ pub use profile::{
 
 use serde::{Deserialize, Serialize};
 use starroom_color_management::{Xyz, xyz_d65_to_rec2020_linear};
-use std::{ffi::CStr, fs, os::raw::c_char, path::Path, slice};
+use std::{
+    ffi::{CStr, c_void},
+    fs,
+    os::raw::c_char,
+    path::Path,
+    slice,
+};
 use thiserror::Error;
 
 pub const LIBRAW_PINNED_VERSION: &str = "0.22.2";
@@ -39,6 +45,8 @@ pub enum RawDecodeError {
     MemoryLimit { code: i32, detail: String },
     #[error("RAW decoder returned an invalid RGB buffer")]
     InvalidRgbBuffer,
+    #[error("RAW bridge ABI layout does not match the pinned native adapter")]
+    BridgeAbiMismatch,
     #[error("RAW decoder returned invalid white balance headroom scaling")]
     InvalidWhiteBalanceScaling,
     #[error("RAW decoder returned a non-finite sample")]
@@ -219,8 +227,9 @@ struct BridgeResult {
     lens_make: [c_char; 128],
     lens_model: [c_char; 128],
     decoder: [c_char; 128],
-    rgb16: *mut u16,
+    rgb16: *const u16,
     rgb16_length: usize,
+    rgb16_owner: *mut c_void,
 }
 
 impl Default for BridgeResult {
@@ -240,11 +249,12 @@ unsafe extern "C" {
         error: *mut c_char,
         error_capacity: usize,
     ) -> i32;
-    fn sr_libraw_free(buffer: *mut u16);
+    fn sr_libraw_free(owner: *mut c_void);
+    fn sr_libraw_result_size() -> usize;
     fn sr_libraw_version() -> *const c_char;
 }
 
-struct OwnedBridgeBuffer(*mut u16);
+struct OwnedBridgeBuffer(*mut c_void);
 
 impl Drop for OwnedBridgeBuffer {
     fn drop(&mut self) {
@@ -343,6 +353,9 @@ fn decode_inner_with_memory_limit(
 ) -> Result<DecodedRawImage, RawDecodeError> {
     let path = path.as_ref();
     let format = RawFormat::from_path(path)?;
+    if unsafe { sr_libraw_result_size() } != std::mem::size_of::<BridgeResult>() {
+        return Err(RawDecodeError::BridgeAbiMismatch);
+    }
     let read_start = std::time::Instant::now();
     let bytes = fs::read(path)?;
     let read_elapsed = read_start.elapsed();
@@ -360,18 +373,35 @@ fn decode_inner_with_memory_limit(
             error.len(),
         )
     };
+    // LibRaw's processor and open_buffer view are gone after the bridge returns.
+    // Do not retain compressed source bytes while allocating the working f32 frame.
+    drop(bytes);
+    let owned = OwnedBridgeBuffer(bridge.rgb16_owner);
     if code != 0 {
         let detail = unsafe { CStr::from_ptr(error.as_ptr()) }
             .to_string_lossy()
             .into_owned();
         return Err(decode_error(code, detail));
     }
-    let owned = OwnedBridgeBuffer(bridge.rgb16);
-    let expected = bridge.width as usize * bridge.height as usize * 3;
-    if owned.0.is_null() || bridge.rgb16_length != expected {
+    let expected = (bridge.width as usize)
+        .checked_mul(bridge.height as usize)
+        .and_then(|pixels| pixels.checked_mul(3))
+        .ok_or(RawDecodeError::InvalidRgbBuffer)?;
+    if expected
+        .checked_mul(std::mem::size_of::<u16>())
+        .is_none_or(|bytes| bytes > isize::MAX as usize)
+    {
         return Err(RawDecodeError::InvalidRgbBuffer);
     }
-    let source = unsafe { slice::from_raw_parts(owned.0, bridge.rgb16_length) };
+    if expected == 0
+        || owned.0.is_null()
+        || bridge.rgb16.is_null()
+        || !bridge.rgb16.is_aligned()
+        || bridge.rgb16_length != expected
+    {
+        return Err(RawDecodeError::InvalidRgbBuffer);
+    }
+    let source = unsafe { slice::from_raw_parts(bridge.rgb16, bridge.rgb16_length) };
     if !bridge.wb_headroom_scale.is_finite() || bridge.wb_headroom_scale < 1.0 {
         return Err(RawDecodeError::InvalidWhiteBalanceScaling);
     }
@@ -511,6 +541,41 @@ fn matches_pinned_libraw_version(version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_processed_image_bridge_layout_matches_before_any_output_write() {
+        assert_eq!(
+            unsafe { sr_libraw_result_size() },
+            std::mem::size_of::<BridgeResult>()
+        );
+        let result = BridgeResult::default();
+        assert!(result.rgb16.is_null());
+        assert!(result.rgb16_owner.is_null());
+        drop(OwnedBridgeBuffer(result.rgb16_owner));
+    }
+
+    #[test]
+    fn corrupt_sensor_input_does_not_publish_or_allocate_a_processed_image_owner() {
+        let input = [0_u8; 16];
+        let mut result = BridgeResult::default();
+        let mut error = [0_i8; 512];
+        let status = unsafe {
+            sr_libraw_decode_buffer(
+                input.as_ptr(),
+                input.len(),
+                0,
+                0,
+                &mut result,
+                error.as_mut_ptr(),
+                error.len(),
+            )
+        };
+        assert_ne!(status, 0);
+        assert!(result.rgb16.is_null());
+        assert!(result.rgb16_owner.is_null());
+        assert_eq!(result.rgb16_length, 0);
+        drop(OwnedBridgeBuffer(result.rgb16_owner));
+    }
 
     #[test]
     fn extension_contract_is_explicit() {

@@ -2,6 +2,18 @@
 
 Status: **Phase 0 audit in progress; Final Acceptance is NOT achieved.**
 
+2026-11-10, narrow follow-ups: doc79 unifies accepted pixel/layout publication
+(245 Web tests/fresh build); actual Windows UI still unqualified. Startup
+run42821073424 proved a live production/WebView2 process without the requested
+debugging switch; doc78 scopes the isolated elevated-host policy repair. Both
+Blueprint runs42821073335/42821083783 succeeded at8256dc5, not UI acceptance.
+Doc80 removes the redundant LibRaw RGB16 copy using upstream processed-image
+ownership:36 full/half decodes retain exact f32 bits/metadata and12 fixture peak
+medians decrease; RAW62 tests/shared graphs pass1794317456590. Full Rust1794330135797
+passes499 ordinary tests/five existing opt-ins, format/Clippy/doc-tests; own CI
+remains pending. This does not close firstRAW1:1,100MP, photographic IQ, wholeUI
+latency, GPU-resident presentation, installer or any complete original phase.
+
 2026-11-09: adaptive tiers5f00d9d have local FullRust1793968079528 and
 FullWeb1793966360774 qualification; own Full42617130421 succeeded at5f00d9d.
 Canvas-only follow-upb8562e3 has236 frontend tests/fullWeb1794227379470,
