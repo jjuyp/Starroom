@@ -2226,3 +2226,25 @@ with the old rule reproducing contentWidth0/sidebar interception. FullWeb245
 workflow asserts physical Search hit testing without script-click workarounds;
 UI-critical App/CSS/queue/presentation changes now trigger that supplementary gate.
 No image math change. Actual Native tone/Undo/Redo and final release remain pending.
+
+## 2026-11-11 — Thumbnail occlusion and CI diagnostic batch
+
+786dd59 UI42861560921 passed Library Search/import/query but real first-thumbnail
+click was intercepted by the open compact sidebar. Reserve the real Library left
+track while open (all themes); collapsed alone uses zero. Strengthened48-case
+production-browser matrix asserts mainLeft>=drawerRight, all pass. Updated Web245
+report1794331396519/fresh build pass. No forced script clicks or processing changes.
+Full CI42861560828 separately failed in the diagnostic example on Rust1.99's new
+chunks_exact_to_as_chunks lint, not product pixels. Adopt as_chunks_mut rather than
+allowing the warning; local targeted Clippy/format pass. Original ownership probe
+reports retain their original tool hashes; strict tool-identity comparison remains.
+Blueprint Rust jobs now preserve compiler cache and timing artifacts after failures
+without marking failed gates green; compiler/lock/target cache keys and all validation
+commands remain unchanged. YAML and infrastructure validation pass.
+
+Current actual D750 Native benchmark1794330791917 at clean786dd59 passes157 same-tier
+GPU/CPU/export comparisons maxRGB8delta1,10 NR/20 spatial hardware frames, immutable
+source/implementation.512 Exposure median/p9514.872/16.123ms, Shadows12.038/12.827ms,
+Tone+NR+Detail12.289/13.954ms (Native only, not UI). First1:1 still3211.532ms and
+first source fit2860.715ms remain explicit failures/limits; memory ownership does
+not establish a wholeUI latency improvement. No original phase is newly complete.

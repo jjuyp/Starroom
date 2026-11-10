@@ -12,6 +12,7 @@ async (page) => {
     const drawer = panel.getBoundingClientRect()
     return {
       mainWidth: rect.width, mainHeight: rect.height, mainColumn: getComputedStyle(main).gridColumnStart,
+      mainLeft: rect.left, drawerRight: drawer.right,
       searchReceivesPointer: document.elementFromPoint(target.x + target.width / 2,
         target.y + target.height / 2) === button,
       drawerVisible: drawer.right > 1 && drawer.left < innerWidth
@@ -41,7 +42,7 @@ async (page) => {
   // Reproduce the exact old auto-placement defect, then restore production CSS.
   const red = await page.evaluate(() => {
     const override = document.createElement('style')
-    override.textContent = '.workspace > .library-panel,.workspace > .library-browser,.workspace > .canvas-area,.workspace > .inspector-panel{grid-column:auto;grid-row:auto}'
+    override.textContent = '.workspace > .library-panel,.workspace > .library-browser,.workspace > .canvas-area,.workspace > .inspector-panel{grid-column:auto;grid-row:auto}.theme-dark .workspace.view-library{grid-template-columns:0 minmax(0,1fr) var(--library-inspector-width)}'
     document.head.append(override)
     try {
       const main = document.querySelector('.library-browser'), button = main.querySelector('.library-actions button')
@@ -76,6 +77,7 @@ async (page) => {
           const result = await read()
           if (result.mainWidth < 320 || result.mainHeight < 300 || result.mainColumn !== '2'
             || result.inspectorColumn !== '3' || !result.searchReceivesPointer
+            || drawer && result.mainLeft < result.drawerRight
             || result.drawerVisible !== drawer || result.collapsed === drawer) {
             throw new Error('LayoutProbeFailed: ' + JSON.stringify({ label, width, inspector, drawer, ...result }))
           }

@@ -45,11 +45,13 @@ export async function runWindowsUiWorkflow(driver, fixture) {
   await waitForUi(driver, 'return !!document.querySelector(".library-actions button:not(:disabled)")')
   const libraryLayout = await driver.execute(`
     const main=document.querySelector('.library-browser'), button=main.querySelector('.library-actions button');
-    const r=main.getBoundingClientRect(), b=button.getBoundingClientRect();
+    const r=main.getBoundingClientRect(), b=button.getBoundingClientRect(), panel=document.querySelector('.library-panel');
     return {width:r.width,height:r.height,column:getComputedStyle(main).gridColumnStart,
+      mainLeft:r.left,sidebarRight:panel.getBoundingClientRect().right,
       searchReceivesPointer:document.elementFromPoint(b.x+b.width/2,b.y+b.height/2)===button};
   `)
-  if (libraryLayout.width < 320 || libraryLayout.column !== '2' || !libraryLayout.searchReceivesPointer) {
+  if (libraryLayout.width < 320 || libraryLayout.column !== '2' || !libraryLayout.searchReceivesPointer
+    || libraryLayout.mainLeft < libraryLayout.sidebarRight) {
     throw new Error('UiGateLayoutFailed: production Library is not physically usable: ' + JSON.stringify(libraryLayout))
   }
   const imported = await driver.execute(`

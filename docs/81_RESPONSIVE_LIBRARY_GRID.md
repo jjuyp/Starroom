@@ -43,3 +43,16 @@ before import, retains real W3C clicks, and still requires each of six real tone
 controls to change Native pixels and exact Undo/Redo. UI-critical App/CSS/queue/
 presentation source changes trigger that supplementary workflow; installer and
 final release gates are unchanged. Same-SHA Windows acceptance remains pending.
+
+## Follow-up from the real thumbnail click
+
+Run42861560921 at786dd59 passed Search and loaded the actual public photograph,
+but its first thumbnail was still underneath the open floating sidebar. The
+Library now reserves the open sidebar's real left track at compact widths too;
+only the explicitly collapsed state has a zero left track. Editor drawers retain
+their responsive behavior. The48-case probe now additionally requires the entire
+main region to start at or beyond the visible sidebar's right edge; the Native
+workflow checks that invariant before physically clicking the real thumbnail.
+Updated evidence: `output/playwright/workspace-layout-no-occlusion-20261111.json`.
+FullWeb245/35files report1794331396519 and fresh production build pass. Native
+tone/Undo/Redo still requires the next actual Windows run, not script-click bypass.

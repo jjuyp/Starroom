@@ -1,5 +1,14 @@
 # Current Task
 
+2026-11-11 follow-up:786dd59 Native RAW benchmark1794330791917 PASS157/delta1,
+immutable source/core and actual GPU timestamps. First1:1 remains3211.532ms.
+Windows UI42861560921 now passes Search/load but thumbnail is behind open drawer;
+doc81 follow-up reserves Library left track and48 stronger no-occlusion cases pass.
+Full42861560828 failed only new Rust1.99 Clippy style lint in diagnostic example;
+fix uses as_chunks_mut (no allow). Batch retains failure compiler work/timing
+artifacts with unchanged gate commands/identities. Rerun exact-HEAD Full and real
+Windows UI after this batch. All original Phase0–30 requirements remain active.
+
 2026-11-11: next exact-HEAD Windows UI operation is required. At a724a02,
 Blueprint42823519081/42823529123 succeeded. UI42823518779 attached successfully
 and imported a public image; real Search was intercepted by CSS zero-track
